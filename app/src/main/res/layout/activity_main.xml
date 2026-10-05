@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_deep">
+
+    <!-- Ambient wash, driven by the most recently opened file. -->
+    <com.gan.spatialplayer.ui.AmbientGlowView
+        android:id="@+id/ambientScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="28dp"
+            android:paddingBottom="14dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/headerTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.22"
+                    android:text="@string/app_name"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:includeFontPadding="false" />
+
+                <TextView
+                    android:id="@+id/headerSubtitle"
+                    style="@style/Text.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="5dp"
+                    android:text="" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/buttonSpatialStatus"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_glass_button"
+                android:contentDescription="@string/audio_settings"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_spatial" />
+
+            <ImageButton
+                android:id="@+id/buttonRefresh"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="10dp"
+                android:background="@drawable/bg_glass_button"
+                android:contentDescription="@string/refresh"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_ambient" />
+        </LinearLayout>
+
+        <!-- Subtitle the device capability line, monospace. -->
+        <TextView
+            android:id="@+id/capabilityLine"
+            style="@style/Text.Mono.Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="12dp"
+            android:text=""
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/fileList"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="120dp"
+                android:scrollbars="none" />
+
+            <LinearLayout
+                android:id="@+id/emptyState"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingStart="48dp"
+                android:paddingEnd="48dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:alpha="0.5"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_folder" />
+
+                <TextView
+                    android:id="@+id/emptyTitle"
+                    style="@style/Text.Title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:gravity="center"
+                    android:text="@string/no_video_found" />
+
+                <TextView
+                    android:id="@+id/emptyBody"
+                    style="@style/Text.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:lineSpacingMultiplier="1.3"
+                    android:text="@string/empty_hint" />
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/scanProgress"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="center"
+                android:indeterminateTint="@color/accent"
+                android:visibility="gone" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Bottom action bar, floating glass. -->
+    <LinearLayout
+        android:id="@+id/actionBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="30dp"
+        android:background="@drawable/bg_glass_bar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="6dp">
+
+        <TextView
+            android:id="@+id/buttonOpenFile"
+            style="@style/GlassButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:drawableStart="@drawable/ic_folder"
+            android:drawablePadding="8dp"
+            android:drawableTint="@color/text_primary"
+            android:text="@string/open_file" />
+
+        <TextView
+            android:id="@+id/buttonPoweramp"
+            style="@style/GlassButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="@string/poweramp_library" />
+    </LinearLayout>
+</FrameLayout>

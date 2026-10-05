@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Spatial Player</string>
+
+    <!-- Library screen -->
+    <string name="open_file">Open file</string>
+    <string name="refresh">Refresh</string>
+    <string name="poweramp_library">Poweramp</string>
+    <string name="no_video_found">No video files found</string>
+    <string name="empty_hint">Open a file, or grant access to a folder to list what is in it.</string>
+    <string name="scanning">Scanning…</string>
+    <string name="poweramp_missing">Poweramp\'s database was not reachable. It may not be installed, or its provider may be disabled.</string>
+
+    <!-- Player controls -->
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="close">Close</string>
+    <string name="apply">Apply</string>
+    <string name="auto">Auto</string>
+    <string name="none">None</string>
+    <string name="off">Off</string>
+    <string name="on">On</string>
+    <string name="copy">Copy</string>
+    <string name="copied">Copied to clipboard</string>
+    <string name="retry">Retry</string>
+
+    <!-- Panel titles -->
+    <string name="inspection">Inspection</string>
+    <string name="metadata">Metadata</string>
+    <string name="decoder_settings">Decoder</string>
+    <string name="subtitle_settings">Subtitles</string>
+    <string name="audio_settings">Audio &amp; spatial</string>
+    <string name="aspect_settings">Scaling</string>
+
+    <!-- Decoder panel -->
+    <string name="decoder_policy">Decoder policy</string>
+    <string name="decoder_policy_hint">Changing this rebuilds the player and keeps your position.</string>
+    <string name="decoder_route">Route</string>
+    <string name="decoder_switch">Switching decoder…</string>
+
+    <!-- Audio panel -->
+    <string name="spatial_audio">Spatial audio</string>
+    <string name="spatial_audio_hint">Hands multichannel audio to Android\'s spatializer. Head tracking is controlled by the system, not by this app.</string>
+    <string name="spatial_unavailable">This output does not accept spatialised audio</string>
+    <string name="head_tracking_on">Head tracking available</string>
+    <string name="head_tracking_off">Head tracking not reported by the system</string>
+    <string name="head_tracking_how">Enable it in Settings › Sound &amp; vibration › Spatial audio.</string>
+    <string name="audio_track">Audio track</string>
+    <string name="output_device">Output device</string>
+    <string name="hdr_conversion">HDR conversion</string>
+
+    <!-- Subtitle panel -->
+    <string name="subtitle_track">Subtitle track</string>
+    <string name="subtitle_off">Off</string>
+    <string name="subtitle_external">Add external file…</string>
+    <string name="subtitle_styling">Styling</string>
+    <string name="subtitle_size">Size</string>
+    <string name="subtitle_bottom_padding">Vertical position</string>
+
+    <!-- Scaling -->
+    <string name="scale_fit">Fit</string>
+    <string name="scale_fill">Fill (no crop)</string>
+    <string name="scale_zoom">Zoom (crop)</string>
+    <string name="scale_stretch">Stretch</string>
+    <string name="ambient_glow">Ambient glow</string>
+
+    <!-- Errors -->
+    <string name="error_playback">Playback error</string>
+    <string name="error_open">Could not open the selected item</string>
+    <string name="error_no_decoder">No decoder on this device can play this track. Try the FFmpeg decoder policy.</string>
+
+    <!-- Misc -->
+    <string name="seek_back">Back 10 seconds</string>
+    <string name="seek_forward">Forward 10 seconds</string>
+    <string name="lock_controls">Lock controls</string>
+    <string name="unlock_controls">Unlock controls</string>
+    <string name="speed">Speed</string>
+    <string name="repeat">Repeat</string>
+    <string name="open_settings">Open sound settings</string>
+</resources>

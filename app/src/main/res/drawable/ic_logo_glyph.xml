@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spatial Player mark: a play head inside a spatial field, with a head-tracked
+     audio lobe orbiting outside the rings. Drawn on the 108dp adaptive-icon canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- outer ring -->
+    <path
+        android:pathData="M27,55 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0"
+        android:strokeColor="#A9D4FF"
+        android:strokeAlpha="0.15"
+        android:strokeWidth="2.4" />
+
+    <!-- inner ring -->
+    <path
+        android:pathData="M33,55 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0"
+        android:strokeColor="#A9D4FF"
+        android:strokeAlpha="0.32"
+        android:strokeWidth="2.4" />
+
+    <!-- head-tracked lobe -->
+    <path
+        android:pathData="M43.93 26.93 C48.95 25.31 54.31 25.06 59.45 26.21 C64.59 27.37 69.33 29.87 73.18 33.48 C77.02 37.08 79.83 41.65 81.31 46.71 C82.79 51.77 82.89 57.13 81.60 62.24"
+        android:strokeColor="#7FB2F7"
+        android:strokeWidth="5.6"
+        android:strokeLineCap="round" />
+
+    <!-- play head -->
+    <path
+        android:pathData="M46,43.5 L67,55 L46,66.5 Z"
+        android:fillColor="#8FBEFF" />
+</vector>

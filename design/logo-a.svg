@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Spatial Player mark, concept A: equalizer bars rising out of a spatial arc.
+     432x432 = 4x the 108dp adaptive-icon canvas; full-bleed background layer. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 108 108">
+  <defs>
+    <linearGradient id="accent" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#5B8DEF"/>
+      <stop offset="1" stop-color="#9FD0FF"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#14171D"/>
+      <stop offset="1" stop-color="#07080A"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="108" height="108" fill="url(#bg)"/>
+
+  <!-- spatial field: two concentric arcs sweeping around the lower-left -->
+  <g fill="none" stroke="#9FD0FF" stroke-linecap="round">
+    <path d="M 22 76 A 32 32 0 0 1 86 76" stroke-opacity="0.24" stroke-width="2.6"/>
+    <path d="M 30 76 A 24 24 0 0 1 78 76" stroke-opacity="0.45" stroke-width="2.6"/>
+  </g>
+
+  <!-- equalizer bars, symmetric about x = 54, resting on y = 76 -->
+  <g fill="url(#accent)">
+    <rect x="30" y="62" width="7" height="14" rx="3.5"/>
+    <rect x="41" y="52" width="7" height="24" rx="3.5"/>
+    <rect x="52" y="38" width="7" height="38" rx="3.5"/>
+    <rect x="63" y="52" width="7" height="24" rx="3.5"/>
+    <rect x="74" y="62" width="7" height="14" rx="3.5"/>
+  </g>
+</svg>

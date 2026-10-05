@@ -1,0 +1,16 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# Generated test media and smoke artifacts (reproducible via tools/*.sh)
+smoke/media/
+smoke/out/
+design/*.png

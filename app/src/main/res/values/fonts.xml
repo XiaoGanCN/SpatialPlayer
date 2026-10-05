@@ -1,0 +1,10 @@
+<!--
+  Two families are used across the app, matching the design brief:
+    * system default (sans-serif / Roboto) for all human-facing copy
+    * monospace for code blocks, timecodes and technical readouts
+  These aliases exist so layouts never hard-code a family name.
+-->
+<resources>
+    <string name="font_system" translatable="false">sans-serif</string>
+    <string name="font_mono" translatable="false">monospace</string>
+</resources>

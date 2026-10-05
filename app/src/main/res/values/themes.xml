@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.SpatialPlayer" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:colorBackground">@color/bg_deep</item>
+        <item name="colorSurface">@color/bg_base</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">#FF0B1220</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">@color/bg_deep</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <!-- System default (Roboto) for everything that is not technical. -->
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="materialAlertDialogTheme">@style/Theme.SpatialPlayer.Dialog</item>
+    </style>
+
+    <style name="Theme.SpatialPlayer.Player" parent="Theme.SpatialPlayer">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="p">shortEdges</item>
+    </style>
+
+    <style name="Theme.SpatialPlayer.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorSurface">@color/bg_raised</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+
+    <!-- Technical readouts: fixed-width, tabular so columns line up. -->
+    <style name="Text.Mono" parent="">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textColor">@color/text_mono</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:lineSpacingMultiplier">1.25</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="Text.Mono.Section" parent="Text.Mono">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing">0.14</item>
+    </style>
+
+    <style name="Text.Mono.Time" parent="Text.Mono">
+        <item name="android:textSize">12sp</item>
+        <item name="android:letterSpacing">0.06</item>
+    </style>
+
+    <!-- Human-facing copy: system default font, quiet hierarchy. -->
+    <style name="Text.Body" parent="">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="Text.Title" parent="Text.Body">
+        <item name="android:textSize">17sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.01</item>
+    </style>
+
+    <style name="Text.Label" parent="Text.Body">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <style name="GlassPanel" parent="">
+        <item name="android:background">@drawable/bg_glass_panel</item>
+        <item name="android:clipToOutline">false</item>
+        <item name="android:elevation">0dp</item>
+    </style>
+
+    <style name="GlassButton" parent="">
+        <item name="android:background">@drawable/bg_glass_button</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+</resources>
