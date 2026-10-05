@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Window background for the inspector sheet.
+
+  Only the top corners are rounded, because the sheet is anchored to the bottom edge. The fill is
+  deliberately light: on API 31+ the window also sets a background blur radius, so the backdrop
+  itself is blurred behind this layer and a heavy fill would hide it.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#47FFFFFF" />
+    <corners android:topLeftRadius="30dp" android:topRightRadius="30dp" />
+</shape>

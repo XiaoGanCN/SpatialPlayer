@@ -258,11 +258,15 @@ class AmbientGlowView @JvmOverloads constructor(
     private companion object {
         const val DURATION_MS = 900L
 
-        /** Peak opacity of the wash; higher starts to fight the picture. */
-        const val MAX_ALPHA = 168
+        /**
+         * Peak opacity of the wash, applied at the edge nearest the picture and fading to nothing
+         * across the band. Higher values start to read as a grey panel rather than as light
+         * spilling out of the frame.
+         */
+        const val MAX_ALPHA = 104
 
         /** How far the glow reaches into the empty band, as a fraction of screen height. */
-        const val BAND_FRACTION = 0.34f
+        const val BAND_FRACTION = 0.30f
 
         /** Horizontal overshoot so gradient corners do not band. */
         const val OVERDRAW = 4f

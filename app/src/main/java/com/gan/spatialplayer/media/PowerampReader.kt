@@ -7,12 +7,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Reads tracks out of Poweramp's library so this player can act as its video front-end.
+ * Reads tracks out of Poweramp's library so this player can act as its video/audio front-end.
  *
- * Poweramp exposes a read-only `ContentProvider` rather than a documented SDK, and its grant flow
- * is a broadcast the app must be installed to answer. Every step is therefore treated as optional:
- * if Poweramp is absent, or present but has not granted this app access, the caller gets an empty
- * list plus an explanation instead of an exception. This is a convenience door, not a dependency.
+ * Poweramp exposes a REST-style read-only provider at `com.maxmpz.audioplayer.data` rather than a
+ * documented SDK, and its schema is quirky in ways that are easy to get wrong:
+ *
+ *  * `content://…/files` only answers when given a `limit` parameter; without one it returns
+ *    nothing.
+ *  * `_id` is ambiguous across the provider's joins, so a projection must qualify it as
+ *    `folder_files._id`. Projecting a bare `_id` is an SQL error.
+ *  * Column names are suffixed (`title_tag`, `album_tag`, `artist_tag`) and `duration` must also be
+ *    qualified. There is no `_data` column; the file name lives in `name`, and `path` is the
+ *    *folder* path, not the file's.
+ *
+ * Everything is treated as optional: if Poweramp is missing, or present but has not granted this
+ * app access, the caller gets an empty list plus an explanation rather than an exception.
  */
 class PowerampReader(private val context: Context) {
 
@@ -24,93 +33,90 @@ class PowerampReader(private val context: Context) {
 
     private val authority = "com.maxmpz.audioplayer.data"
 
+    /**
+     * Columns that are known to exist on the `files` view.
+     *
+     * `_id`, `name` and `duration` all collide with the joined `folders` table, so they must be
+     * qualified as `folder_files.*` or the provider raises "ambiguous column name". `title_tag` and
+     * `folder_id` happen to be unambiguous, and the folder path is `folders.path`.
+     */
+    private val projection = arrayOf(
+        "folder_files._id",
+        "folder_files.name",
+        "title_tag",
+        "folder_files.duration",
+        "folder_id",
+        "folders.path",
+    )
+
+    /** Poweramp's `files` endpoint refuses queries without a limit. */
+    private val pageLimit = 500
+
     fun isInstalled(): Boolean = runCatching {
         context.packageManager.getPackageInfo(POWERAMP_PACKAGE, 0)
         true
     }.getOrDefault(false)
 
-    /**
-     * Queries the `files` table. Poweramp's schema puts the real path in `_data` and a stable
-     * identifier in `_id`, which together give a content URI this app can play via its own
-     * provider grant or via the raw file path.
-     */
     suspend fun readLibrary(): Result = withContext(Dispatchers.IO) {
         if (!isInstalled()) {
             return@withContext Result(emptyList(), "Poweramp is not installed.", false)
         }
 
         val entries = ArrayList<FileEntry>()
-        var lastError: String? = null
+        val attempt = runCatching { queryFiles(entries) }
 
-        for (uri in candidateUris()) {
-            val attempt = runCatching { query(uri, entries) }
-            if (attempt.isSuccess) {
-                return@withContext Result(
-                    entries = entries.sortedBy { it.displayName.lowercase() },
-                    status = if (entries.isEmpty()) {
-                        "Poweramp returned no entries."
-                    } else {
-                        "${entries.size} entries from Poweramp."
-                    },
-                    installed = true,
-                )
-            }
-            lastError = attempt.exceptionOrNull()?.message
+        if (attempt.isSuccess) {
+            return@withContext Result(
+                entries = entries.sortedBy { it.displayName.lowercase() },
+                status = if (entries.isEmpty()) {
+                    "Poweramp returned no entries."
+                } else {
+                    "${entries.size} entries from Poweramp."
+                },
+                installed = true,
+            )
         }
 
         Result(
             entries = emptyList(),
             status = buildString {
-                append("Poweramp is installed but did not grant access.")
-                lastError?.let { append(" (").append(it).append(")") }
+                append("Poweramp is installed but its library could not be read.")
+                attempt.exceptionOrNull()?.message?.let { append(" (").append(it).append(")") }
             },
             installed = true,
         )
     }
 
-    private fun candidateUris(): List<Uri> = listOf(
-        Uri.parse("content://$authority/files"),
-        Uri.parse("content://$authority/files/"),
-        Uri.parse("content://com.maxmpz.audioplayer/files"),
-    )
+    private fun queryFiles(out: MutableList<FileEntry>) {
+        val base = Uri.parse("content://$authority/files")
+        val uri = base.buildUpon().appendQueryParameter("limit", pageLimit.toString()).build()
 
-    private fun query(uri: Uri, out: MutableList<FileEntry>) {
-        val projection = arrayOf(
-            "_id",
-            "_data",
-            "title",
-            "album",
-            "artist",
-            "duration",
-            "folder",
-        )
         context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            // The provider reports these under their bare names even when projected qualified.
             val idIndex = cursor.getColumnIndex("_id")
-            val dataIndex = cursor.getColumnIndex("_data")
-            val titleIndex = cursor.getColumnIndex("title")
-            val folderIndex = cursor.getColumnIndex("folder")
+            val nameIndex = cursor.getColumnIndex("name")
+            val titleIndex = cursor.getColumnIndex("title_tag")
             val durationIndex = cursor.getColumnIndex("duration")
+            val folderPathIndex = cursor.getColumnIndex("path")
 
             while (cursor.moveToNext()) {
-                val path = if (dataIndex >= 0) cursor.getString(dataIndex) else null
-                val title = if (titleIndex >= 0) cursor.getString(titleIndex) else null
-                val folder = if (folderIndex >= 0) cursor.getString(folderIndex) else null
+                val name = when {
+                    nameIndex >= 0 -> cursor.getString(nameIndex)
+                    titleIndex >= 0 -> cursor.getString(titleIndex)
+                    else -> null
+                } ?: continue
 
-                val name = title
-                    ?: path?.substringAfterLast('/')
-                    ?: continue
+                val id = if (idIndex >= 0) cursor.getLong(idIndex) else -1L
 
-                // Prefer a playable content URI; fall back to the raw path.
-                val playUri: Uri = if (idIndex >= 0) {
-                    ContentUris.withAppendedId(uri, cursor.getLong(idIndex))
-                } else if (path != null) {
-                    Uri.parse("file://$path")
+                // The individual entry is addressable, which is what makes it playable.
+                val entryUri: Uri = if (id >= 0) {
+                    ContentUris.withAppendedId(base, id)
                 } else {
                     continue
                 }
 
                 out += FileEntry(
-                    uri = playUri,
+                    uri = entryUri,
                     displayName = name,
                     sizeBytes = 0L,
                     durationMs = if (durationIndex >= 0 && !cursor.isNull(durationIndex)) {
@@ -118,11 +124,38 @@ class PowerampReader(private val context: Context) {
                     } else {
                         0L
                     },
-                    mimeType = context.contentResolver.getType(playUri),
+                    // The provider does not report a MIME type; derive it from the file name so
+                    // Media3 can pick the right extractor.
+                    mimeType = mimeForName(name),
                     source = FileEntry.Source.POWERAMP,
-                    subtitleHint = folder,
+                    subtitleHint = if (folderPathIndex >= 0) cursor.getString(folderPathIndex) else null,
                 )
             }
+        }
+    }
+
+    /** Best-effort MIME for a Poweramp entry, from its extension. */
+    private fun mimeForName(name: String): String? {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "flac" -> "audio/flac"
+            "mp3" -> "audio/mpeg"
+            "m4a", "aac" -> "audio/mp4a-latm"
+            "opus" -> "audio/opus"
+            "ogg", "oga" -> "audio/ogg"
+            "wav" -> "audio/wav"
+            "alac" -> "audio/alac"
+            "wma" -> "audio/x-ms-wma"
+            "ape" -> "audio/x-ape"
+            "dsf", "dff" -> "audio/dsd"
+            // Video containers, so Poweramp's video entries work too.
+            "mp4", "m4v" -> "video/mp4"
+            "mkv" -> "video/x-matroska"
+            "webm" -> "video/webm"
+            "avi" -> "video/x-msvideo"
+            "mov" -> "video/quicktime"
+            "ts", "m2ts" -> "video/mp2t"
+            else -> null
         }
     }
 

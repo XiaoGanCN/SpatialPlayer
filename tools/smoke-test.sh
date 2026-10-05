@@ -41,6 +41,12 @@ sh_() { "$ADB" shell "$@" 2>/dev/null | tr -d '\r'; }
 # Host-side adb (no `shell` subcommand), for get-state / install / logcat / exec-out.
 adb_() { "$ADB" "$@" 2>/dev/null | tr -d '\r'; }
 capture() { "$ADB" exec-out screencap -p > "$OUT_DIR/$1.png" 2>/dev/null; }
+# `dumpsys window` contains several focus records including a stale `mCurrentFocus=null`, so scan
+# for the last non-null one instead of taking the first match.
+focused_window() {
+  sh_ dumpsys window | grep -oE "mCurrentFocus=Window\{[^}]*\}" | grep -v "null" | tail -1
+}
+
 logcat_dump() { "$ADB" logcat -d -v time > "$OUT_DIR/$1.txt" 2>/dev/null; touch "$OUT_DIR/$1.txt"; }
 
 # pidof alone can report nothing for a cached process, so fall back to ps and to the process
@@ -122,7 +128,7 @@ capture "01-library"
 if [ "$LOCKED" = "yes" ]; then
   skip "library focus assertion (device locked)"
 else
-  FOCUSED=$(sh_ dumpsys window | grep -m1 -i "mCurrentFocus")
+  FOCUSED=$(focused_window)
   if echo "$FOCUSED" | grep -q "$PKG_DEBUG"; then
     pass "library screen focused"
   else
@@ -263,7 +269,7 @@ else
   if [ "$LOCKED" = "yes" ]; then
     skip "player focus assertion (device locked)"
   else
-    FOCUS=$(sh_ dumpsys window | grep -m1 -i "mCurrentFocus")
+    FOCUS=$(focused_window)
     if echo "$FOCUS" | grep -q "$PKG_DEBUG"; then
       pass "player focused"
     else

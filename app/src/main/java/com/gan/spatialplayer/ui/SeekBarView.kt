@@ -54,8 +54,13 @@ class SeekBarView @JvmOverloads constructor(
     @ColorInt private var bufferedColor: Int = Color.argb(110, 255, 255, 255)
     @ColorInt private var thumbColor: Int = Color.parseColor("#F2F4F7")
 
-    /** 0..1 */
+    /** 0..1, the value actually drawn. */
     private var progress = 0f
+
+    /** Where the animation is heading; playback may report the next tick before it arrives. */
+    private var targetProgress = 0f
+
+    private var progressAnimator: ValueAnimator? = null
 
     /** 0..1 */
     private var buffered = 0f
@@ -100,13 +105,52 @@ class SeekBarView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** Current playback position as a fraction of duration. Ignored while the user is scrubbing. */
+    /**
+     * Current playback position as a fraction of duration. Ignored while the user is scrubbing.
+     *
+     * The value is eased toward rather than snapped to. Playback position arrives on a polling
+     * tick (and in coarse jumps on some streams), so assigning it directly makes the bar step
+     * visibly; interpolating gives a continuous sweep without ever running ahead of the truth.
+     */
     fun setProgress(fraction: Float) {
         if (scrubbing) return
         val clamped = fraction.coerceIn(0f, 1f)
-        if (clamped == progress) return
-        progress = clamped
-        invalidate()
+
+        val distance = kotlin.math.abs(clamped - progress)
+        if (distance < MIN_VISIBLE_DELTA) {
+            // Below a pixel or so there is nothing to smooth; avoid pointless animation churn.
+            progress = clamped
+            invalidate()
+            return
+        }
+
+        targetProgress = clamped
+
+        // A large jump (a seek, or a stream restart) should arrive quickly and directly; the
+        // smoothing is for the small increments of ordinary playback.
+        if (distance > LARGE_JUMP) {
+            progressAnimator?.cancel()
+            progress = clamped
+            invalidate()
+            return
+        }
+
+        startProgressAnimation()
+    }
+
+    private fun startProgressAnimation() {
+        progressAnimator?.cancel()
+        val from = progress
+        val to = targetProgress
+        progressAnimator = ValueAnimator.ofFloat(from, to).apply {
+            duration = PROGRESS_ANIMATION_MS
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { animator ->
+                progress = animator.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
     }
 
     /** Buffered position as a fraction of duration. */
@@ -119,7 +163,9 @@ class SeekBarView @JvmOverloads constructor(
 
     /** Bypasses the scrub lock, for the caller to re-sync after a seek completes. */
     fun forceProgress(fraction: Float) {
+        progressAnimator?.cancel()
         progress = fraction.coerceIn(0f, 1f)
+        targetProgress = progress
         invalidate()
     }
 
@@ -240,11 +286,24 @@ class SeekBarView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         thumbAnimator?.cancel()
         thumbAnimator = null
+        progressAnimator?.cancel()
+        progressAnimator = null
         super.onDetachedFromWindow()
     }
 
     override fun performClick(): Boolean {
         super.performClick()
         return true
+    }
+
+    private companion object {
+        /** How long the bar takes to ease to a newly reported position. */
+        const val PROGRESS_ANIMATION_MS = 260L
+
+        /** Below this fraction there is nothing visible to smooth. */
+        const val MIN_VISIBLE_DELTA = 0.0008f
+
+        /** Above this fraction the change is a seek, not playback drift, so jump straight there. */
+        const val LARGE_JUMP = 0.05f
     }
 }

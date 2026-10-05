@@ -122,6 +122,28 @@
                     android:shadowDy="1"
                     android:shadowRadius="3" />
             </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/buttonInspect"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_glass_button"
+                android:contentDescription="@string/inspection"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_inspect" />
+
+            <ImageButton
+                android:id="@+id/buttonMetadata"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_glass_button"
+                android:contentDescription="@string/metadata"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_info" />
         </LinearLayout>
 
         <Space
@@ -259,15 +281,10 @@
                     android:padding="10dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_audio" />
+
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>
-
-    <!-- Inspection + metadata + decoder panels (shared sheet) -->
-    <com.gan.spatialplayer.ui.InspectorSheet
-        android:id="@+id/inspectorSheet"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
 
     <!-- Transient error card -->
     <LinearLayout

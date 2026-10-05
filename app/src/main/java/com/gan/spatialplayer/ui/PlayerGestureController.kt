@@ -148,13 +148,13 @@ class PlayerGestureController(
                     }
 
                     Mode.BRIGHTNESS -> {
-                        val delta = (lastY - event.y) / viewHeight
+                        val delta = (lastY - event.y) / viewHeight * VERTICAL_GAIN
                         lastY = event.y
                         host.onBrightnessDelta(delta)
                     }
 
                     Mode.VOLUME -> {
-                        val delta = (lastY - event.y) / viewHeight
+                        val delta = (lastY - event.y) / viewHeight * VERTICAL_GAIN
                         lastY = event.y
                         host.onVolumeDelta(delta)
                     }
@@ -183,6 +183,14 @@ class PlayerGestureController(
 
     private companion object {
         const val SLOP_DP = 14f
+
+        /**
+         * Fraction of the full range that one screen-height drag covers.
+         *
+         * At 1.0 a quarter-screen flick changed volume by 25%, which felt twitchy. 0.6 makes a
+         * full-height drag cover 60% of the range, so small adjustments are easy to hit.
+         */
+        const val VERTICAL_GAIN = 0.6f
     }
 }
 

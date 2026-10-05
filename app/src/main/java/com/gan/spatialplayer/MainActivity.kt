@@ -24,6 +24,7 @@ import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.FileEntry
 import com.gan.spatialplayer.media.MediaRepository
 import com.gan.spatialplayer.media.PowerampReader
+import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.FileListAdapter
 import kotlinx.coroutines.launch
 
@@ -222,22 +223,41 @@ class MainActivity : AppCompatActivity() {
         binding.fileList.visibility = if (empty) View.GONE else View.VISIBLE
     }
 
+    /**
+     * Device and build facts, as chips.
+     *
+     * These are one-word statuses, so pills keep them scannable; the spatialiser state gets an
+     * accent when it is actually engaged, because that is the state worth noticing.
+     */
     private fun updateCapabilityLine() {
         val hdr = DeviceCapabilities.hdrSnapshot(this)
         val spatial = DeviceCapabilities.spatialSnapshot(this)
-        binding.capabilityLine.text = buildString {
-            append("panel ")
-            append(hdr.widthPx).append('x').append(hdr.heightPx)
-            append("  ·  ")
-            append(hdr.supportedHdrTypes.joinToString("/").ifEmpty { "sdr" })
-            append("  ·  ")
-            append("spatial ").append(if (spatial.active) "on" else "off")
-            append("  ·  ")
-            append(
-                "ffmpeg " + if (FfmpegCodecs.isAvailable(MimeTypes.AUDIO_TRUEHD)) "ready" else "absent",
-            )
-        }
-        binding.capabilityLine.visibility = View.VISIBLE
+        val ffmpegReady = FfmpegCodecs.isAvailable(MimeTypes.AUDIO_TRUEHD)
+
+        binding.chipStrip.setChips(
+            listOf(
+                ChipStrip.Chip(
+                    "${hdr.widthPx}x${hdr.heightPx}",
+                    ChipStrip.Tone.NEUTRAL,
+                ),
+                ChipStrip.Chip(
+                    hdr.supportedHdrTypes.joinToString("+").ifEmpty { "SDR" },
+                    if (hdr.supportedHdrTypes.isEmpty()) ChipStrip.Tone.NEUTRAL else ChipStrip.Tone.ACTIVE,
+                ),
+                ChipStrip.Chip(
+                    if (spatial.active) "SPATIAL ON" else "SPATIAL OFF",
+                    if (spatial.active) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.NEUTRAL,
+                ),
+                ChipStrip.Chip(
+                    if (spatial.headTrackerAvailable) "HEAD TRACK" else "NO HEAD TRACK",
+                    if (spatial.headTrackerAvailable) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.WARN,
+                ),
+                ChipStrip.Chip(
+                    if (ffmpegReady) "FFMPEG" else "NO FFMPEG",
+                    if (ffmpegReady) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.WARN,
+                ),
+            ),
+        )
     }
 
     private fun showSpatialSummary() {

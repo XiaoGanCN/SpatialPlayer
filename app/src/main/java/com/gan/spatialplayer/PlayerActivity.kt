@@ -62,6 +62,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private lateinit var binding: ActivityPlayerBinding
     private lateinit var engine: PlayerEngine
     private lateinit var gestures: PlayerGestureController
+    private lateinit var inspectorSheet: InspectorSheet
     private var ambientSampler: AmbientSampler? = null
     private val ambientHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -109,6 +110,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
 
+        // A video player that lets the panel sleep mid-film is broken. This is scoped to the
+        // player window only, so the library list still follows the normal screen timeout.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         displayName = intent.getStringExtra(EXTRA_DISPLAY_NAME)
             ?: intent.data?.lastPathSegment?.substringAfterLast('/')
             ?: "Untitled"
@@ -125,7 +130,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         gestures = PlayerGestureController(this, this)
         binding.gestureLayer.setOnTouchListener { _, event -> gestures.onTouchEvent(event) }
 
-        binding.inspectorSheet.callback = this
+        inspectorSheet = InspectorSheet(this).apply { callback = this@PlayerActivity }
 
         setUpControls()
         setUpBackHandling()
@@ -160,7 +165,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private fun setUpControls() {
         binding.buttonBack.setOnClickListener {
-            if (binding.inspectorSheet.isOpen) binding.inspectorSheet.hide() else finish()
+            if (inspectorSheet.isOpen) inspectorSheet.hide() else finish()
         }
 
         binding.buttonPlayPause.setOnClickListener { togglePlayPause() }
@@ -177,12 +182,22 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         binding.buttonSubtitles.setOnClickListener {
             populateSubtitlePanel()
-            binding.inspectorSheet.show(InspectorSheet.Panel.SUBTITLES)
+            inspectorSheet.show(InspectorSheet.Panel.SUBTITLES)
         }
 
         binding.buttonAudio.setOnClickListener {
             populateAudioPanel()
-            binding.inspectorSheet.show(InspectorSheet.Panel.AUDIO)
+            inspectorSheet.show(InspectorSheet.Panel.AUDIO)
+        }
+
+        // The live readouts. These are the primary way in, so they sit in the chrome rather than
+        // hiding behind a long-press.
+        binding.buttonInspect.setOnClickListener {
+            inspectorSheet.show(InspectorSheet.Panel.INSPECTION)
+        }
+
+        binding.buttonMetadata.setOnClickListener {
+            inspectorSheet.show(InspectorSheet.Panel.METADATA)
         }
 
         binding.seekBar.listener = object : com.gan.spatialplayer.ui.SeekBarView.Listener {
@@ -211,10 +226,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             PlayerAnimation.fadeOut(binding.errorCard)
         }
 
+        // Long-press the inspect button jumps straight to the decoder panel.
+        binding.buttonInspect.setOnLongClickListener {
+            populateDecoderPanel()
+            inspectorSheet.show(InspectorSheet.Panel.DECODER)
+            true
+        }
+
         // Long-press the play button opens the decoder sheet: discoverable but not in the way.
         binding.buttonPlayPause.setOnLongClickListener {
             populateDecoderPanel()
-            binding.inspectorSheet.show(InspectorSheet.Panel.DECODER)
+            inspectorSheet.show(InspectorSheet.Panel.DECODER)
             true
         }
     }
@@ -346,7 +368,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     // ------------------------------------------------------------------ gestures
 
     override fun onSingleTap() {
-        if (binding.inspectorSheet.isOpen) return
+        if (inspectorSheet.isOpen) return
         toggleControls()
     }
 
@@ -578,7 +600,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         refreshJob = lifecycleScope.launch {
             while (isActive) {
                 updateProgress()
-                if (binding.inspectorSheet.isOpen) {
+                if (inspectorSheet.isOpen) {
                     refreshOpenReadoutPanel()
                 }
                 delay(250L)
@@ -628,7 +650,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     // ------------------------------------------------------------------ sheets
 
     private fun populateDecoderPanel() {
-        val sheet = binding.inspectorSheet
+        val sheet = inspectorSheet
         val videoMime = engine.player?.videoFormat?.sampleMimeType
         val audioMime = engine.player?.audioFormat?.sampleMimeType
 
@@ -657,7 +679,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun populateAudioPanel() {
-        val sheet = binding.inspectorSheet
+        val sheet = inspectorSheet
         val spatial = DeviceCapabilities.spatialSnapshot(this)
         val tracks = lastTracks
         val choices = ArrayList<InspectorSheet.Choice>()
@@ -711,7 +733,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun populateSubtitlePanel() {
-        val sheet = binding.inspectorSheet
+        val sheet = inspectorSheet
         val tracks = lastTracks
         val choices = ArrayList<InspectorSheet.Choice>()
 
@@ -753,7 +775,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun populateScalingPanel() {
-        val sheet = binding.inspectorSheet
+        val sheet = inspectorSheet
         val choices = listOf(
             Triple(VideoRectCalculator.SCALE_FIT, R.string.scale_fit, "Fit the whole picture, bars as needed"),
             Triple(VideoRectCalculator.SCALE_FILL, R.string.scale_fill, "Fill the screen, no cropping"),
@@ -957,10 +979,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * [onReadoutRequested], so nudging it with the current choices is enough to refresh.
      */
     private fun refreshOpenReadoutPanel() {
-        if (!binding.inspectorSheet.isOpen) return
-        val panel = binding.inspectorSheet.shownPanel
+        if (!inspectorSheet.isOpen) return
+        val panel = inspectorSheet.shownPanel
         if (panel == InspectorSheet.Panel.INSPECTION || panel == InspectorSheet.Panel.METADATA) {
-            binding.inspectorSheet.setChoices(panel, emptyList())
+            inspectorSheet.setChoices(panel, emptyList())
         }
     }
 
@@ -973,8 +995,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             this,
             object : androidx.activity.OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (binding.inspectorSheet.isOpen) {
-                        binding.inspectorSheet.hide()
+                    if (inspectorSheet.isOpen) {
+                        inspectorSheet.hide()
                     } else {
                         // Disable and re-dispatch so the default behaviour (finish) takes over
                         // without recursing back into this callback.

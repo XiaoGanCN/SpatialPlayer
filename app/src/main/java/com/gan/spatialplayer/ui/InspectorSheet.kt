@@ -1,13 +1,18 @@
 package com.gan.spatialplayer.ui
 
+import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -19,14 +24,20 @@ import com.gan.spatialplayer.R
 import com.gan.spatialplayer.ui.TextSpans.mono
 
 /**
- * The shared bottom sheet behind Inspection, Metadata, Decoder, Subtitles, Audio and Scaling.
+ * The shared sheet behind Inspection, Metadata, Decoder, Subtitles, Audio and Scaling.
  *
- * Built in code rather than XML because the six panels share one structure - a scrolling stack of
- * [Row]s - and expressing that as six near-identical layouts would be worse to read and worse to
- * keep consistent.
+ * ## Why this presents in its own window
  *
- * Typography follows the app's rule: monospace for anything technical (the two readout panels),
- * the system face for the human-facing option rows.
+ * The brief asks for a liquid-glass surface, and a view inside the player's own window cannot
+ * deliver one: the picture is drawn by a `SurfaceView`, which is composited by SurfaceFlinger
+ * rather than drawn into the window's canvas, so there is nothing behind an in-window panel to
+ * blur. The only way to genuinely frost the video is to put the panel in a *separate, translucent
+ * window* that declares a background blur radius. On Android 12+ that asks the system compositor to
+ * blur whatever is behind the window - which includes the video - and the result is real glass
+ * rather than a tinted rectangle.
+ *
+ * On older platforms the blur is simply unavailable, so the same layout falls back to a translucent
+ * gradient surface. Nothing about the panel's behaviour changes.
  */
 class InspectorSheet @JvmOverloads constructor(
     context: Context,
@@ -67,121 +78,172 @@ class InspectorSheet @JvmOverloads constructor(
         val section: String? = null,
     )
 
-    private val backdrop: View = View(context).apply {
-        setBackgroundColor(Color.argb(150, 0, 0, 0))
-        alpha = 0f
-        setOnClickListener { hide() }
-    }
-
-    private val sheet: GlassPanelView = GlassPanelView(context).apply {
-        orientation = LinearLayout.VERTICAL
-        setCornerRadiusDp(28f)
-        fillColor = Color.argb(242, 16, 18, 22)
-        edgeColor = Color.argb(40, 255, 255, 255)
-        setPadding(0, 0, 0, 0)
-    }
-
-    private val titleView: TextView = TextView(context).apply {
-        typeface = Typeface.SANS_SERIF
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        setTextColor(ContextCompat.getColor(context, R.color.text_primary))
-        letterSpacing = 0.01f
-    }
-
-    private val tabStrip: LinearLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-    }
-
-    private val contentContainer: LinearLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(20), dp(4), dp(20), dp(20))
-    }
-
-    private val scrollView: ScrollView = ScrollView(context).apply {
-        isFillViewport = false
-        addView(
-            contentContainer,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
-        )
-    }
-
     var callback: Callback? = null
 
+    private var dialog: Dialog? = null
+    private var sheet: View? = null
+    private var titleView: TextView? = null
+    private var contentContainer: LinearLayout? = null
+    private var scrollView: ScrollView? = null
+
+    private val tabViews = LinkedHashMap<Panel, TextView>()
     private var currentPanel: Panel = Panel.INSPECTION
     private var choices: Map<Panel, List<Choice>> = emptyMap()
 
-    /** Rows currently rendered per panel, so [setChoices] can be re-applied cheaply. */
-    private val tabViews = LinkedHashMap<Panel, TextView>()
-
     init {
         visibility = View.GONE
-        isClickable = true
+    }
 
-        addView(backdrop, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    val isOpen: Boolean get() = dialog?.isShowing == true
 
-        // Sheet header
-        val header = LinearLayout(context).apply {
+    val shownPanel: Panel get() = currentPanel
+
+    /** Supplies the option rows a panel should display. */
+    fun setChoices(panel: Panel, list: List<Choice>) {
+        choices = choices + (panel to list)
+        if (panel == currentPanel) render()
+    }
+
+    fun show(panel: Panel) {
+        currentPanel = panel
+        val existing = dialog
+        if (existing != null && existing.isShowing) {
+            render()
+            return
+        }
+        buildDialog()?.also { d ->
+            dialog = d
+            d.show()
+            applyWindowFlags(d)
+            render()
+            animateIn()
+            // `show` must happen before the window exists to configure blur reliably.
+            applyWindowBlur(d)
+        }
+    }
+
+    /** Dismisses without animation, for lifecycle teardown. */
+    fun dismissNow() {
+        dialog?.dismiss()
+        dialog = null
+    }
+
+    fun hide() {
+        val d = dialog ?: return
+        if (!d.isShowing) return
+        val sheetView = sheet
+        if (sheetView == null) {
+            d.dismiss()
+            dialog = null
+            callback?.onSheetClosed()
+            return
+        }
+        sheetView.animate()
+            .translationY(sheetView.height.toFloat())
+            .alpha(0f)
+            .setDuration(200L)
+            .withEndAction {
+                d.dismiss()
+                dialog = null
+                callback?.onSheetClosed()
+            }
+            .start()
+    }
+
+    // ------------------------------------------------------------------ construction
+
+    private fun buildDialog(): Dialog? {
+        val ctx = context
+        val d = Dialog(ctx)
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val root = FrameLayout(ctx)
+        root.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+
+        // Tap outside the sheet to dismiss. No dim: the window itself is translucent and relies on
+        // the blur, so an extra scrim would defeat the glass.
+        val scrim = View(ctx).apply {
+            setBackgroundColor(Color.argb(40, 0, 0, 0))
+            setOnClickListener { hide() }
+        }
+        root.addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+        val panel = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bg_glass_sheet_window)
+        }
+        sheet = panel
+
+        // Header
+        val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(10), dp(12), dp(8))
         }
-
-        val handle = View(context).apply {
-            setBackgroundColor(Color.argb(60, 255, 255, 255))
-            layoutParams = LinearLayout.LayoutParams(dp(38), dp(4)).apply {
+        header.addView(
+            View(ctx).apply {
+                setBackgroundColor(Color.argb(70, 255, 255, 255))
+            },
+            LinearLayout.LayoutParams(dp(38), dp(4)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 bottomMargin = dp(14)
-            }
-        }
-        header.addView(handle)
+            },
+        )
 
-        val titleRow = LinearLayout(context).apply {
+        val titleRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        titleView = TextView(ctx).apply {
+            typeface = Typeface.SANS_SERIF
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+        }
+        titleRow.addView(titleView, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         titleRow.addView(
-            titleView,
-            LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
+            ImageButton(ctx).apply {
+                setBackgroundResource(R.drawable.bg_glass_button)
+                setImageResource(R.drawable.ic_close)
+                setColorFilter(ContextCompat.getColor(ctx, R.color.text_primary))
+                contentDescription = ctx.getString(R.string.close)
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setOnClickListener { hide() }
+            },
+            LinearLayout.LayoutParams(dp(40), dp(40)),
         )
-        val closeButton = ImageButton(context).apply {
-            setBackgroundResource(R.drawable.bg_glass_button)
-            setImageResource(R.drawable.ic_close)
-            setColorFilter(ContextCompat.getColor(context, R.color.text_primary))
-            contentDescription = context.getString(R.string.close)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setOnClickListener { hide() }
-        }
-        titleRow.addView(closeButton, LinearLayout.LayoutParams(dp(40), dp(40)))
         header.addView(titleRow)
+
+        val tabStrip = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         header.addView(
-            tabStrip,
-            LinearLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT,
-                LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(12) },
+            HorizontalScrollViewCompat.wrap(ctx, tabStrip),
+            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = dp(12) },
         )
+        panel.addView(header, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-        sheet.addView(
-            header,
-            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
-        )
-        sheet.addView(
-            scrollView,
-            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f),
-        )
-
-        val sheetParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.BOTTOM
-            leftMargin = dp(8)
-            rightMargin = dp(8)
-            bottomMargin = dp(8)
+        contentContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(24))
         }
-        addView(sheet, sheetParams)
+        scrollView = ScrollView(ctx).apply {
+            isFillViewport = false
+            addView(contentContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+        panel.addView(scrollView, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
-        buildTabs()
+        root.addView(
+            panel,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM
+            },
+        )
+
+        d.setContentView(root)
+        buildTabs(tabStrip)
+        return d
     }
 
-    private fun buildTabs() {
+    private fun buildTabs(tabStrip: LinearLayout) {
         tabStrip.removeAllViews()
         tabViews.clear()
         for (panel in Panel.entries) {
@@ -190,59 +252,80 @@ class InspectorSheet @JvmOverloads constructor(
                 typeface = Typeface.SANS_SERIF
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(dp(13), dp(7), dp(13), dp(7))
-                setOnClickListener { show(panel) }
                 setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
                 background = ContextCompat.getDrawable(context, R.drawable.bg_glass_button)
+                setOnClickListener { show(panel) }
             }
-            val params = LinearLayout.LayoutParams(
-                LayoutParams.WRAP_CONTENT,
-                LayoutParams.WRAP_CONTENT,
-            ).apply { rightMargin = dp(7) }
-            tabStrip.addView(tab, params)
+            tabStrip.addView(
+                tab,
+                LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+                    .apply { rightMargin = dp(7) },
+            )
             tabViews[panel] = tab
         }
     }
 
-    /** Supply the option rows a panel should display. */
-    fun setChoices(panel: Panel, list: List<Choice>) {
-        choices = choices + (panel to list)
-        if (panel == currentPanel) render()
+    // ------------------------------------------------------------------ window
+
+    private fun applyWindowFlags(d: Dialog) {
+        val window = d.window ?: return
+        window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        // Dimming would hide the very backdrop the glass is meant to reveal.
+        window.setDimAmount(0f)
+        window.setLayout(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+        )
+        window.setGravity(Gravity.BOTTOM)
+        window.attributes = window.attributes.apply {
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
+            dimAmount = 0f
+        }
+        // Keep the sheet clear of the gesture navigation bar.
+        val insets = androidx.core.view.ViewCompat.getRootWindowInsets(this)
+        val bottom = insets?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())?.bottom ?: 0
+        (sheet?.layoutParams as? LayoutParams)?.let {
+            it.bottomMargin = dp(10) + bottom
+            sheet?.layoutParams = it
+        }
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
     }
 
-    fun show(panel: Panel) {
-        currentPanel = panel
-        render()
-        if (visibility != View.VISIBLE) {
-            visibility = View.VISIBLE
-            backdrop.animate().alpha(1f).setDuration(180L).start()
-            sheet.translationY = sheet.height.coerceAtLeast(dp(400)).toFloat()
-            sheet.alpha = 0f
-            sheet.post {
-                sheet.animate()
-                    .translationY(0f)
-                    .alpha(1f)
-                    .setDuration(260L)
-                    .setInterpolator(android.view.animation.DecelerateInterpolator())
-                    .start()
-            }
+    /**
+     * Requests the real backdrop blur.
+     *
+     * This is what makes the surface read as glass: the system compositor blurs everything behind
+     * this window - including the video, which an in-window view could never reach - and the
+     * translucent fill above it is then read as frosted rather than merely tinted.
+     */
+    private fun applyWindowBlur(d: Dialog) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val window = d.window ?: return
+        runCatching {
+            window.setBackgroundBlurRadius(dp(BLUR_RADIUS_DP))
+        }.onFailure {
+            // Some devices ship with background blur disabled; the translucent fill still reads
+            // as glass, just without the frost.
         }
     }
 
-    fun hide() {
-        if (visibility != View.VISIBLE) return
-        backdrop.animate().alpha(0f).setDuration(160L).start()
-        sheet.animate()
-            .translationY(sheet.height.toFloat())
-            .alpha(0f)
-            .setDuration(200L)
-            .withEndAction {
-                visibility = View.GONE
-                callback?.onSheetClosed()
-            }
-            .start()
-    }
+    // ------------------------------------------------------------------ rendering
 
-    val isOpen: Boolean get() = visibility == View.VISIBLE
+    private fun animateIn() {
+        val sheetView = sheet ?: return
+        sheetView.post {
+            sheetView.translationY = sheetView.height.coerceAtLeast(dp(400)).toFloat()
+            sheetView.alpha = 0f
+            sheetView.animate()
+                .translationY(0f)
+                .alpha(1f)
+                .setDuration(260L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+                .start()
+        }
+    }
 
     private fun render() {
         for ((panel, tab) in tabViews) {
@@ -259,13 +342,14 @@ class InspectorSheet @JvmOverloads constructor(
             )
         }
 
-        titleView.text = context.getString(currentPanel.titleRes)
-        contentContainer.removeAllViews()
+        titleView?.text = context.getString(currentPanel.titleRes)
+        val container = contentContainer ?: return
+        container.removeAllViews()
 
         when (currentPanel) {
             Panel.INSPECTION, Panel.METADATA -> {
                 val readout = callback?.onReadoutRequested(currentPanel).orEmpty()
-                contentContainer.addView(
+                container.addView(
                     TextView(context).apply {
                         typeface = Typeface.MONOSPACE
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -281,7 +365,7 @@ class InspectorSheet @JvmOverloads constructor(
             else -> {
                 val list = choices[currentPanel].orEmpty()
                 if (list.isEmpty()) {
-                    contentContainer.addView(
+                    container.addView(
                         TextView(context).apply {
                             text = "—"
                             typeface = Typeface.MONOSPACE
@@ -294,9 +378,9 @@ class InspectorSheet @JvmOverloads constructor(
                 for (choice in list) {
                     if (choice.section != null && choice.section != lastSection) {
                         lastSection = choice.section
-                        contentContainer.addView(sectionHeader(choice.section))
+                        container.addView(sectionHeader(choice.section))
                     }
-                    contentContainer.addView(optionRow(choice))
+                    container.addView(optionRow(choice))
                 }
             }
         }
@@ -323,9 +407,7 @@ class InspectorSheet @JvmOverloads constructor(
             isClickable = choice.enabled
             isFocusable = choice.enabled
             if (choice.enabled) {
-                setOnClickListener {
-                    callback?.onChoiceSelected(currentPanel, choice)
-                }
+                setOnClickListener { callback?.onChoiceSelected(currentPanel, choice) }
             }
         }
 
@@ -365,31 +447,28 @@ class InspectorSheet @JvmOverloads constructor(
             )
         }
 
-        val params = LinearLayout.LayoutParams(
+        container.layoutParams = LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
         ).apply { bottomMargin = dp(6) }
-        container.layoutParams = params
         return container
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    /** The panel currently displayed, for the activity's refresh loop. */
-    val shownPanel: Panel get() = currentPanel
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        // Keep the sheet clear of the gesture navigation bar.
-        val rootInsets = androidx.core.view.ViewCompat.getRootWindowInsets(this)
-        val bottom = rootInsets?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())?.bottom ?: 0
-        (sheet.layoutParams as? LayoutParams)?.let {
-            it.bottomMargin = dp(8) + bottom
-            sheet.layoutParams = it
-        }
-        (sheet.getChildAt(0) as? ViewGroup)?.let { header ->
-            header.setPadding(dp(20), dp(10) + (rootInsets?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())?.top ?: 0), dp(12), dp(8))
-        }
+    private companion object {
+        /** Blur strength for the frosted backdrop, in dp. */
+        const val BLUR_RADIUS_DP = 26
     }
+}
+
+/**
+ * Small helper so the tab strip can scroll horizontally when there are more tabs than fit.
+ */
+private object HorizontalScrollViewCompat {
+    fun wrap(context: Context, child: View): View =
+        android.widget.HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(child)
+        }
 }

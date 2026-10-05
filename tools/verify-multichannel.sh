@@ -30,6 +30,12 @@ info() { printf '  ·  %s\n' "$1"; }
 sh_()  { "$ADB" shell "$@" 2>/dev/null | tr -d '\r'; }
 adb_() { "$ADB" "$@" 2>/dev/null | tr -d '\r'; }
 
+# `dumpsys window` contains several focus records including a stale `mCurrentFocus=null`, so scan
+# for the last non-null one instead of taking the first match.
+focused_window() {
+  sh_ dumpsys window | grep -oE "mCurrentFocus=Window\{[^}]*\}" | grep -v "null" | tail -1
+}
+
 # ---------------------------------------------------------------------------
 say "preflight"
 if [ "$(adb_ get-state)" != "device" ]; then
