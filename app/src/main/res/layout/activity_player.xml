@@ -109,18 +109,23 @@
                     android:textColor="@color/text_primary"
                     android:textSize="15sp" />
 
-                <TextView
-                    android:id="@+id/mediaSubtitle"
-                    style="@style/Text.Mono.Section"
+                <!--
+                  Scrollable so a long chip set never has to compress: inside a weighted parent a
+                  plain ChipStrip gets squeezed and single-line labels such as "5.1" end up
+                  truncated to "5.".
+                -->
+                <HorizontalScrollView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:shadowColor="#99000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3" />
+                    android:layout_marginTop="5dp"
+                    android:clipToPadding="false"
+                    android:scrollbars="none">
+
+                    <com.gan.spatialplayer.ui.ChipStrip
+                        android:id="@+id/playerChips"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </HorizontalScrollView>
             </LinearLayout>
 
             <ImageButton

@@ -35,6 +35,8 @@ import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.PlaybackReport
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
+import com.gan.spatialplayer.media.DecoderPolicy
+import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.AmbientSampler
 import com.gan.spatialplayer.ui.InspectorSheet
 import com.gan.spatialplayer.ui.PlayerAnimation
@@ -255,12 +257,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private fun updateTitle() {
         binding.mediaTitle.text = displayName
-        binding.mediaSubtitle.text = buildString {
-            append(mimeType ?: PlaybackReport.containerFor(displayName, null) ?: "video")
-            if (sizeBytes > 0) {
-                append("  ·  ").append(TextSpans.bytes(sizeBytes))
-            }
-        }
+        updateStreamChips()
     }
 
     // ------------------------------------------------------------------ transport
@@ -619,7 +616,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             binding.timeRemaining.text =
                 "-" + TextSpans.timecode((sample.durationMs - sample.positionMs).coerceAtLeast(0L))
         }
-        updateHdrBadge()
+        updateStreamChips()
     }
 
     private fun updateDuration() {
@@ -630,15 +627,61 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
     }
 
-    /** Surfaces the HDR transfer function in the subtitle line, which is where it belongs. */
-    private fun updateHdrBadge() {
-        val videoFormat = engine.player?.videoFormat
+    /**
+     * Stream facts as chips: container, size, HDR transfer function, channel layout and the decoder
+     * actually in use.
+     *
+     * Rendering these as pills rather than a sentence keeps technical detail present without
+     * turning the player chrome into a wall of text, and the accent on the HDR chip makes a
+     * correctly tone-mapped stream obvious at a glance.
+     */
+    private fun updateStreamChips() {
+        val player = engine.player
+        val videoFormat = player?.videoFormat
+        val audioFormat = player?.audioFormat
         val hdr = PlaybackReport.hdrLabel(videoFormat)
-        val base = buildString {
-            append(mimeType ?: PlaybackReport.containerFor(displayName, null) ?: "video")
-            if (sizeBytes > 0) append("  ·  ").append(TextSpans.bytes(sizeBytes))
+
+        val chips = ArrayList<ChipStrip.Chip>()
+
+        chips += ChipStrip.Chip(
+            mimeType ?: PlaybackReport.containerFor(displayName, null) ?: "video",
+            ChipStrip.Tone.NEUTRAL,
+        )
+
+        if (sizeBytes > 0) {
+            chips += ChipStrip.Chip(TextSpans.bytes(sizeBytes), ChipStrip.Tone.NEUTRAL)
         }
-        binding.mediaSubtitle.text = if (hdr != null) "$base  ·  $hdr" else base
+
+        if (hdr != null) {
+            chips += ChipStrip.Chip(hdr, ChipStrip.Tone.ACTIVE)
+        }
+
+        videoFormat?.let { format ->
+            if (format.width > 0 && format.height > 0) {
+                chips += ChipStrip.Chip("${format.width}x${format.height}", ChipStrip.Tone.NEUTRAL)
+            }
+        }
+
+        audioFormat?.let { format ->
+            if (format.channelCount > 0) {
+                val layout = PlaybackReport.channelLayout(format.channelCount)
+                chips += ChipStrip.Chip(
+                    layout.uppercase(),
+                    // Multichannel is the case worth noticing: it is what the spatialiser needs.
+                    if (format.channelCount > 2) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.NEUTRAL,
+                )
+            }
+        }
+
+        // The decoder route is the single most useful diagnostic when something will not play.
+        videoFormat?.sampleMimeType?.let { mime ->
+            chips += ChipStrip.Chip(
+                DecoderPolicy.describeRoute(mime, engine.decoderProfile).uppercase(),
+                ChipStrip.Tone.NEUTRAL,
+            )
+        }
+
+        binding.playerChips.setChips(chips)
     }
 
     private fun refreshSpatialState() {

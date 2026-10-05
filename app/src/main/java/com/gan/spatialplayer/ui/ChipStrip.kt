@@ -57,7 +57,18 @@ class ChipStrip @JvmOverloads constructor(
     fun setChips(chips: List<Chip>) {
         removeAllViews()
         visibility = if (chips.isEmpty()) View.GONE else View.VISIBLE
-        for (chip in chips) addView(buildChip(chip))
+        for (chip in chips) {
+            val view = buildChip(chip)
+            // Chips are single-line by definition; without this a double-digit percentage or a
+            // narrow parent can wrap the label and break the pill.
+            if (view is TextView) view.maxLines = 1
+            addView(view)
+        }
+        // The strip is refreshed on a timer, so its content width changes without the parent
+        // asking for a new measurement. Without these the chips keep the width they were first
+        // measured at and clip or wrap as the values change.
+        requestLayout()
+        invalidate()
     }
 
     private fun buildChip(chip: Chip): View {
