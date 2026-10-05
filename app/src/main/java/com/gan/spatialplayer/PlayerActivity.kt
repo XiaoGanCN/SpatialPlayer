@@ -128,6 +128,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.inspectorSheet.callback = this
 
         setUpControls()
+        setUpBackHandling()
         updateTitle()
         startRefreshLoop()
 
@@ -461,7 +462,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 videoWidth = width,
                 videoHeight = height,
                 pixelWidthHeightRatio = size?.pixelWidthHeightRatio ?: 1f,
-                rotationDegrees = size?.unappliedRotationDegrees ?: 0,
+                rotationDegrees = 0, // VideoSize reports this as deprecated/alway-zero in Media3 1.8
                 mode = scaleMode,
                 userZoom = userZoom,
             )
@@ -963,11 +964,26 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
     }
 
-    override fun onBackPressed() {
-        when {
-            binding.inspectorSheet.isOpen -> binding.inspectorSheet.hide()
-            else -> super.onBackPressed()
-        }
+    /**
+     * Back closes an open sheet first, and only leaves the player when nothing is open.
+     * Registered on the dispatcher rather than overriding the deprecated `onBackPressed`.
+     */
+    private fun setUpBackHandling() {
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (binding.inspectorSheet.isOpen) {
+                        binding.inspectorSheet.hide()
+                    } else {
+                        // Disable and re-dispatch so the default behaviour (finish) takes over
+                        // without recursing back into this callback.
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            },
+        )
     }
 
     companion object {
