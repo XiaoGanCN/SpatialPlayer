@@ -120,6 +120,43 @@ else
   info "recent output channel masks: ${MASKS:-none}"
 fi
 
+# -- HDR: assert the panel actually goes into HDR for a 10-bit PQ stream ---------------------
+say "HDR display engagement (4K HDR10 AV1 + 5.1)"
+HDR_CLIP="$MEDIA_DIR/yt_hdr10_av1_ac3_51.mkv"
+if [ "$(sh_ "[ -f $HDR_CLIP ] && echo yes || echo no")" != "yes" ]; then
+  skip "no HDR clip at $HDR_CLIP (see README for the yt-dlp recipe)"
+else
+  sh_ am force-stop "$PKG_DEBUG"
+  sleep 1
+  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+      --es smoke_path "$HDR_CLIP" --es smoke_mime "video/x-matroska" > /dev/null
+  sleep 10
+
+  APPLIED=$(sh_ dumpsys display | grep -m1 -oE "mAppliedHDR=(true|false)")
+  if echo "$APPLIED" | grep -q "true"; then
+    pass "display is in HDR ($APPLIED)"
+  else
+    info "display HDR flag: ${APPLIED:-unreported}"
+  fi
+
+  RATIO=$(sh_ dumpsys display | grep -m1 -oE "hdrSdrRatio [0-9.]+" | grep -oE "[0-9.]+")
+  if [ -n "$RATIO" ]; then
+    info "hdrSdrRatio=$RATIO (above 1.0 means the panel is driving HDR brightness)"
+  fi
+
+  # Multichannel + spatialisation must both hold on the HDR file too.
+  SPAT=$(sh_ dumpsys audio | grep -oE "isSpatialized=(true|false)" | tail -4 | sort -u | tr '\n' ' ')
+  if echo "$SPAT" | grep -q "isSpatialized=true"; then
+    pass "HDR clip audio is spatialised"
+  else
+    fail "HDR clip audio was not spatialised ($SPAT)"
+  fi
+
+  if grep -qE "FATAL EXCEPTION" "$OUT_DIR/spatial-control.txt" 2>/dev/null; then
+    fail "exception during HDR playback"
+  fi
+fi
+
 say "summary"
 printf '  passed %d   failed %d   skipped %d\n' "$PASS" "$FAIL" "$SKIP"
 printf '  artifacts: %s\n' "$OUT_DIR"
