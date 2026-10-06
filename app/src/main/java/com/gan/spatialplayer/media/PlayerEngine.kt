@@ -341,8 +341,19 @@ class PlayerEngine(
      */
     private fun reassertSpatialAttributes() {
         val exo = player ?: return
+
+        // Nothing to carry across if no audio is playing.
+        if (exo.audioFormat == null) return
+
+        // Failures here are deliberately swallowed.
+        //
+        // This is a best-effort repair for an intermittent platform behaviour, and reporting a
+        // failure turned it into a user-visible error for a problem that did not otherwise exist -
+        // the previous version raised "could not re-apply spatial audio" through the error path,
+        // which surfaced as an error on exactly the renderer stacks where the sink is mid-rebuild
+        // when a seek lands. A repair that cannot be observed to fail should not be able to create a
+        // failure of its own.
         runCatching { exo.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus= */ false) }
-            .onFailure { listener.onEngineError("could not re-apply spatial audio: ${it.message}", it) }
     }
 
     /**

@@ -192,6 +192,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         mediaUri?.let { uri ->
             engine.setMedia(uri, mimeType ?: PlayerEngine.mimeForExtension(displayName.substringAfterLast('.', "")))
             engine.prepare()
+
+            // Pick up where this item was left off, if it was played earlier in this session.
+            val remembered = PlaybackMemory.positionFor(uri)
+            if (remembered > RESUME_MIN_MS) {
+                engine.player?.seekTo(remembered)
+                showFeedback(getString(R.string.resuming_at, TextSpans.timecode(remembered)))
+            }
+
             engine.play()
             discoverSidecarSubtitles(uri)
         }
@@ -704,10 +712,34 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         if (!isInPictureInPictureMode) {
             engine.pause()
         }
+        rememberPlaybackPosition()
         ambientSampler?.stop()
     }
 
+    /**
+     * Records where this item is up to.
+     *
+     * Kept in memory rather than in preferences: the request is to remember the position until the
+     * app quits, so persisting it across launches would be the opposite of what was asked.
+     * A position at the very start or the very end is not worth remembering - the first would
+     * resume where it already starts, and the second would make reopening a finished film look
+     * like it did nothing.
+     */
+    private fun rememberPlaybackPosition() {
+        val uri = mediaUri ?: return
+        val player = engine.player ?: return
+        val position = player.currentPosition
+        val duration = player.duration
+        if (position < RESUME_MIN_MS) return
+        if (duration > 0 && position > duration - RESUME_END_GUARD_MS) {
+            PlaybackMemory.forget(uri)
+            return
+        }
+        PlaybackMemory.remember(uri, position)
+    }
+
     override fun onDestroy() {
+        rememberPlaybackPosition()
         refreshJob?.cancel()
         gestures.release()
         ambientSampler?.release()
@@ -1393,6 +1425,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val MIN_DOUBLE_TAP_JUMP_MS = 1_000L
         private const val MAX_DOUBLE_TAP_JUMP_MS = 30_000L
         private const val KEY_DOUBLE_TAP_JUMP_MS = "double_tap_jump_ms"
+
+        /** Below this the position is not worth restoring. */
+        private const val RESUME_MIN_MS = 15_000L
+
+        /** Within this of the end, treat the item as finished rather than resuming it. */
+        private const val RESUME_END_GUARD_MS = 20_000L
 
         /** How long the chrome stays up after an interaction. */
         private const val CONTROLS_TIMEOUT_MS = 6_000L
