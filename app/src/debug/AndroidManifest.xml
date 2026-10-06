@@ -32,6 +32,17 @@
         </activity>
 
         <activity
+            android:name=".SmokeSpatialProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="com.gan.spatialplayer.SMOKE_SPATIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".SmokePowerampProbeActivity"
             android:exported="true"
             android:noHistory="true"

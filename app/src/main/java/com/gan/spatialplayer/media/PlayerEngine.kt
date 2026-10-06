@@ -100,10 +100,16 @@ class PlayerEngine(
     /**
      * Audio attributes double as the spatial-audio opt-in.
      *
-     * `SPATIALIZATION_BEHAVIOR_AUTO` tells the platform "spatialize this if you can and if the
-     * user wants it"; it is not a request that can be refused by the app, which is exactly why
-     * head tracking stays under system control. `isContentSpatialized` is left false: the file is
-     * ordinary multichannel, not already-binaural content.
+     * `SPATIALIZATION_BEHAVIOR_AUTO` means "spatialise this if you can, and if the user wants it".
+     * An app cannot force it on and cannot force head tracking on - both stay under system control,
+     * which is why the player only reports what the platform decided.
+     *
+     * `isContentSpatialized` must stay **false**. It means "this content is already binaural", i.e.
+     * a pre-rendered spatial mix that the platform should pass through untouched. Setting it true
+     * on ordinary 5.1 makes the system skip spatialisation entirely - measured on the reference
+     * device, that alone was the difference between `isSpatialized=false` (no head tracking) and
+     * `isSpatialized=true`. A bare `AudioTrack` carrying only the behaviour flag spatialised 5.1
+     * correctly, which is what isolated the cause.
      */
     private fun buildAudioAttributes(): AudioAttributes =
         AudioAttributes.Builder()
@@ -114,7 +120,7 @@ class PlayerEngine(
                 if (spatialAudioEnabled) C.SPATIALIZATION_BEHAVIOR_AUTO
                 else C.SPATIALIZATION_BEHAVIOR_NEVER,
             )
-            .setIsContentSpatialized(spatialAudioEnabled)
+            .setIsContentSpatialized(false)
             .build()
 
     /**
