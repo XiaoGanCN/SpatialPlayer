@@ -166,7 +166,11 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Bottom control cluster -->
+        <!-- Bottom control cluster.
+             The bottom margin is rewritten at runtime so the capsule floats just inside the bottom
+             edge of the picture - over the frame, not in the letterbox below it, because the glass
+             has nothing to refract over black bars. The margin below is only what is used before the
+             first measurement. -->
         <com.gan.spatialplayer.ui.LiquidGlassView
             android:id="@+id/controlGlass"
             android:layout_width="match_parent"
@@ -179,7 +183,6 @@
             android:paddingEnd="16dp"
             android:paddingTop="14dp"
             android:paddingBottom="12dp">
-            android:paddingBottom="16dp">
 
             <!-- Timecode row: monospace, deliberately quiet -->
             <LinearLayout

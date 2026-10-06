@@ -18,6 +18,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.LinearLayout
+import kotlin.math.roundToInt
 
 /**
  * Liquid glass.
@@ -50,6 +51,20 @@ import android.widget.LinearLayout
  * canvas. Nothing in the normal view hierarchy can sample it. [PixelCopy] is the supported way to
  * read it back, and because the glass is redrawn on a timer rather than every frame, the cost is a
  * small downscaled copy roughly ten times a second.
+ *
+ * ## The coordinate spaces, which are not the same space
+ *
+ * A `SurfaceView` owns a buffer that the producer sizes - a video decoder sizes it to the decoded
+ * frame, which for a 4K film is 3840x2160 - and the view then displays that buffer stretched across
+ * its own bounds. [PixelCopy] addresses its source rectangle in **buffer pixels**, while everything
+ * a view knows about itself is in **view pixels**. The two differ by the ratio of the frame to the
+ * picture's rect on screen, which is not 1 and is not even close for a 4K film in a 1096px-wide
+ * window. Handing view pixels to `PixelCopy` therefore reads an arbitrary corner of the frame: in
+ * portrait, where the picture is a 1096x616 band, it asked for a rectangle that collapsed to a
+ * single row of pixels, which the rim then stretched into vertical stripes.
+ *
+ * [setBackdropFrameSize] supplies the missing factor. Everything below converts between the three
+ * spaces explicitly: window -> picture -> buffer for the copy, and view -> texture for the shader.
  *
  * On platforms without [RuntimeShader] (below API 33) the view falls back to a frosted approximation
  * built from layered gradients, so the layout and behaviour are unchanged.
@@ -109,11 +124,46 @@ class LiquidGlassView @JvmOverloads constructor(
     /** The view whose surface should be read as the backdrop, usually the video. */
     var backdropSource: SurfaceView? = null
 
+    /**
+     * Frame size of the picture being sampled, in the surface's **own buffer pixels**.
+     *
+     * This is not the size of [backdropSource] on screen. A `SurfaceView` owns a buffer whose
+     * geometry the producer sets - a video decoder sets it to the decoded frame size - and the view
+     * then displays that buffer stretched across its bounds. [PixelCopy] addresses its source
+     * rectangle in buffer pixels, so the frame size is what converts a rectangle of screen into a
+     * rectangle of picture.
+     */
+    var backdropFrameWidth: Int = 0
+        private set
+    var backdropFrameHeight: Int = 0
+        private set
+
+    fun setBackdropFrameSize(width: Int, height: Int) {
+        if (width == backdropFrameWidth && height == backdropFrameHeight) return
+        backdropFrameWidth = width
+        backdropFrameHeight = height
+        start()
+        invalidate()
+    }
+
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     private var shader: RuntimeShader? = null
     private var backBuffer: Bitmap? = null
     private val captureRect = Rect()
     private val outlineRect = RectF()
+
+    /**
+     * Where the captured copy sits inside this view, in view pixels.
+     *
+     * The copy covers only the part of the pane that has picture behind it; the rest of the pane is
+     * over letterbox or the window background. The shader needs both the origin (to turn a view
+     * coordinate into a texture coordinate) and the extent (to know where the picture stops).
+     */
+    private var coverLeft = 0f
+    private var coverTop = 0f
+    private var coverWidth = 0f
+    private var coverHeight = 0f
+    private var hasCover = false
 
     private val handler = Handler(Looper.getMainLooper())
     private var inFlight = false
@@ -178,26 +228,65 @@ class LiquidGlassView @JvmOverloads constructor(
         if (inFlight || width <= 0 || height <= 0) return
         if (!source.isAttachedToWindow || source.width <= 0 || source.height <= 0) return
 
-        // Read the region of the source that sits behind this view.
+        val frameW = backdropFrameWidth
+        val frameH = backdropFrameHeight
+        if (frameW <= 0 || frameH <= 0) {
+            // No picture has been reported yet.
+            clearCover()
+            return
+        }
+
+        // Where the picture is drawn, in window pixels.
+        //
+        // The surface stretches its buffer across its own bounds, and those bounds can themselves be
+        // scaled (the player fits the picture by scaling the surface rather than by resizing its
+        // buffer). `getLocationInWindow` reports the transformed origin, so dividing by the view
+        // scale walks back into the surface's own pixels. On the common path the scale is 1.
         val location = IntArray(2)
         source.getLocationInWindow(location)
-        val sourceX = location[0]
-        val sourceY = location[1]
+        val pictureLeft = location[0].toFloat()
+        val pictureTop = location[1].toFloat()
+        val pictureWidth = source.width * source.scaleX
+        val pictureHeight = source.height * source.scaleY
+        if (pictureWidth < 1f || pictureHeight < 1f) return
+
         getLocationInWindow(location)
-        val myX = location[0]
-        val myY = location[1]
+        val glassLeft = location[0].toFloat()
+        val glassTop = location[1].toFloat()
 
-        val left = (myX - sourceX).coerceIn(0, source.width - 1)
-        val top = (myY - sourceY).coerceIn(0, source.height - 1)
-        val right = (left + width).coerceAtMost(source.width)
-        val bottom = (top + height).coerceAtMost(source.height)
-        if (right <= left || bottom <= top) return
+        // Intersection of the pane with the picture, in window pixels.
+        val left = maxOf(glassLeft, pictureLeft)
+        val top = maxOf(glassTop, pictureTop)
+        val right = minOf(glassLeft + width, pictureLeft + pictureWidth)
+        val bottom = minOf(glassTop + height, pictureTop + pictureHeight)
+        if (right - left < 1f || bottom - top < 1f) {
+            // Nothing but letterbox or window background behind the pane.
+            clearCover()
+            return
+        }
 
-        captureRect.set(left, top, right, bottom)
+        // Window pixels -> buffer pixels. The copy is asked for in the buffer's own resolution, and
+        // PixelCopy rescales that rectangle onto the destination bitmap.
+        val perPixelX = frameW / pictureWidth
+        val perPixelY = frameH / pictureHeight
+        val rect = Rect(
+            ((left - pictureLeft) * perPixelX).roundToInt().coerceIn(0, frameW - 1),
+            ((top - pictureTop) * perPixelY).roundToInt().coerceIn(0, frameH - 1),
+            ((right - pictureLeft) * perPixelX).roundToInt().coerceIn(1, frameW),
+            ((bottom - pictureTop) * perPixelY).roundToInt().coerceIn(1, frameH),
+        )
+        if (rect.width() <= 0 || rect.height() <= 0) {
+            clearCover()
+            return
+        }
 
-        val target = backBuffer
-            ?: Bitmap.createBitmap(CAPTURE_W, CAPTURE_H, Bitmap.Config.ARGB_8888)
-                .also { backBuffer = it }
+        val target = obtainBackBuffer(rect.width().toFloat(), rect.height().toFloat()) ?: return
+        captureRect.set(rect)
+        coverLeft = left - glassLeft
+        coverTop = top - glassTop
+        coverWidth = right - left
+        coverHeight = bottom - top
+        hasCover = true
 
         inFlight = true
         runCatching {
@@ -222,12 +311,54 @@ class LiquidGlassView @JvmOverloads constructor(
         }
     }
 
+    /** Records that no picture sits behind the pane, so the shader samples nothing. */
+    private fun clearCover() {
+        // Keep a token buffer so the shader path still runs: with no picture behind it the pane is
+        // tint, bevel and rim over the window background, which is exactly what the shader draws
+        // when every backdrop sample is masked out. Falling through to the gradient approximation
+        // instead would make the same pane look different depending on where the picture happens
+        // to be.
+        if (backBuffer == null) {
+            backBuffer = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        }
+        if (!hasCover) return
+        hasCover = false
+        coverLeft = 0f
+        coverTop = 0f
+        coverWidth = 0f
+        coverHeight = 0f
+        invalidate()
+    }
+
     private fun onCaptureFailed(code: Int) {
         consecutiveFailures++
         if (consecutiveFailures >= MAX_FAILURES) {
             // Give up quietly and let the fallback rendering stand rather than burning copies.
             stop()
         }
+    }
+
+    /**
+     * Returns a buffer shaped like [w]x[h], allocating only when the shape changes.
+     *
+     * The copy is scaled down to at most [CAPTURE_MAX] on its long edge and never upscaled, so a
+     * small pane reads its backdrop at native resolution while a full-width bar stays cheap to copy.
+     * The shape is derived from the requested rectangle alone, which is what keeps the copy
+     * isotropic: `PixelCopy` stretches its source rectangle onto the whole destination bitmap, so a
+     * destination of any other shape would distort the picture.
+     */
+    private fun obtainBackBuffer(w: Float, h: Float): Bitmap? {
+        if (w < 1f || h < 1f) return null
+        val scale = (CAPTURE_MAX / maxOf(w, h)).coerceAtMost(1f)
+        // Round rather than truncate: the shader maps view pixels onto texels by this buffer's
+        // shape, so an off-by-one here is a small anisotropic stretch of the whole backdrop.
+        val bw = (w * scale).roundToInt().coerceAtLeast(2)
+        val bh = (h * scale).roundToInt().coerceAtLeast(2)
+
+        val current = backBuffer
+        if (current != null && current.width == bw && current.height == bh) return current
+        current?.recycle()
+        return Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { backBuffer = it }
     }
 
     // ------------------------------------------------------------------ drawing
@@ -247,6 +378,7 @@ class LiquidGlassView @JvmOverloads constructor(
     private fun drawShaderGlass(canvas: Canvas, bitmap: Bitmap, active: RuntimeShader) {
         val w = width.toFloat()
         val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
         active.setFloatUniform("uSize", w, h)
         active.setFloatUniform("uRadius", cornerRadiusPx)
         active.setFloatUniform("uBevel", bevelWidthPx)
@@ -271,6 +403,29 @@ class LiquidGlassView @JvmOverloads constructor(
         )
         active.setFloatUniform("uDim", dimAmount)
         active.setFloatUniform("uPress", pressAmount)
+        // View pixels -> backdrop texels, plus where the copy sits inside the view and how large it
+        // is. The copy covers only the part of the pane with picture behind it; the shader uses the
+        // extent to stop sampling at the picture's edge instead of smearing the clamped last texel.
+        val coverW = coverWidth
+        val coverH = coverHeight
+        if (coverW > 0.5f && coverH > 0.5f) {
+            active.setFloatUniform("uBackdropOrigin", coverLeft, coverTop)
+            active.setFloatUniform(
+                "uBackdropScale",
+                bitmap.width / coverW,
+                bitmap.height / coverH,
+            )
+            active.setFloatUniform(
+                "uBackdropTexSize",
+                bitmap.width.toFloat(),
+                bitmap.height.toFloat(),
+            )
+        } else {
+            // Nothing behind the pane: mask every sample out so only tint and rim remain.
+            active.setFloatUniform("uBackdropOrigin", 0f, 0f)
+            active.setFloatUniform("uBackdropScale", 0f, 0f)
+            active.setFloatUniform("uBackdropTexSize", 0f, 0f)
+        }
         // The backdrop arrives as a bitmap each refresh, so it is uploaded as a shader input.
         active.setInputShader(
             "uBackdrop",
@@ -316,17 +471,15 @@ class LiquidGlassView @JvmOverloads constructor(
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
     private companion object {
-        /** Backdrop is a light source, not an image: a small buffer is plenty. */
         /**
-         * Backdrop capture size.
+         * Longest edge of the backdrop copy, in texels.
          *
-         * The glass is roughly a tenth of the screen, so this is already sampling above the display
-         * density of the pane; going higher costs a bigger readback for no visible gain, and going
-         * lower makes the rim shimmer because the refraction is magnifying a handful of texels.
-         * 96x54 was too coarse: the bend pulled in visible banding.
+         * The copy is at most this size and never upscaled. The pane is typically a tenth of the
+         * display, so this sits comfortably above the density of the glass itself; the rim bend
+         * magnifies whatever it samples, and under-sampling there is what produced banded rims when
+         * this was 96x54. Larger costs readback bandwidth for no visible gain.
          */
-        const val CAPTURE_W = 192
-        const val CAPTURE_H = 108
+        const val CAPTURE_MAX = 768
 
         /** Redraw cadence. Fast enough to feel live, slow enough to stay cheap. */
         const val REFRESH_MS = 90L
@@ -355,8 +508,21 @@ class LiquidGlassView @JvmOverloads constructor(
             uniform vec4   uGlassTint;    // coloured body; a = 0 disables
             uniform float  uDim;
             uniform float  uPress;        // 0..1, a press boosts the bend slightly
+            uniform float2 uBackdropOrigin; // view px, top-left of the captured rectangle
+            uniform float2 uBackdropScale;  // view px -> backdrop texel
+            uniform float2 uBackdropTexSize;
 
             uniform shader uBackdrop;
+
+            // Whether a sample lands inside the captured rectangle. The pane is usually wider than
+            // the picture (letterbox, pillarbox, or a pane that floats off the edge), and the copy
+            // only covers the part with picture behind it. Without this the texture's clamped edge
+            // texel would be stretched across the rest of the pane.
+            float backdropMask(float2 t) {
+                float2 lo = step(float2(0.0, 0.0), t);
+                float2 hi = step(t, max(uBackdropTexSize - float2(1.0, 1.0), float2(0.0, 0.0)));
+                return lo.x * lo.y * hi.x * hi.y;
+            }
 
             // Signed distance to a rounded rectangle, negative inside. The gradient of this field is
             // the surface normal, which is what drives refraction AND the rim highlight, so the two
@@ -415,17 +581,19 @@ class LiquidGlassView @JvmOverloads constructor(
                 float2 cG = fragCoord + offset;
                 float2 cB = fragCoord + offset * (1.0 + uDispersion * slope);
 
-                // Keep sampling inside the captured backdrop.
-                float2 lo = float2(0.5, 0.5);
-                float2 hi = uSize - float2(0.5, 0.5);
-                cR = clamp(cR, lo, hi);
-                cG = clamp(cG, lo, hi);
-                cB = clamp(cB, lo, hi);
+                // Turn view coordinates into texture coordinates. The captured copy is smaller than
+                // the pane and does not start at its corner, so it takes an origin and a scale; and
+                // whatever falls outside it is over letterbox or the window background, which is
+                // black, so that channel contributes nothing.
+                float2 texMax = max(uBackdropTexSize - float2(1.0, 1.0), float2(0.0, 0.0));
+                float2 tR = (cR - uBackdropOrigin) * uBackdropScale;
+                float2 tG = (cG - uBackdropOrigin) * uBackdropScale;
+                float2 tB = (cB - uBackdropOrigin) * uBackdropScale;
 
                 vec3 col = vec3(
-                    uBackdrop.eval(cR).r,
-                    uBackdrop.eval(cG).g,
-                    uBackdrop.eval(cB).b
+                    uBackdrop.eval(clamp(tR, float2(0.0), texMax)).r * backdropMask(tR),
+                    uBackdrop.eval(clamp(tG, float2(0.0), texMax)).g * backdropMask(tG),
+                    uBackdrop.eval(clamp(tB, float2(0.0), texMax)).b * backdropMask(tB)
                 );
 
                 // Vibrancy rather than a flat saturation multiply: low-saturation pixels gain more,

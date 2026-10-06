@@ -14,6 +14,7 @@ import android.util.Log
 import android.util.Rational
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -682,7 +683,53 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         templateRect = rect
         binding.ambientGlow.setVideoRect(rect)
         ambientSampler?.setVideoRect(rect)
+        // The glass reads its backdrop out of the surface's own buffer, whose geometry the decoder
+        // set to the frame size. PixelCopy addresses that rectangle in buffer pixels, so the glass
+        // cannot work out where the pane sits in the picture without it.
+        binding.controlGlass.setBackdropFrameSize(width, height)
+        positionChromeOverPicture(rect)
     }
+
+    /**
+     * Slides the control capsule so it floats just inside the bottom of the picture.
+     *
+     * The capsule is driven by a bottom margin rather than by translation because the gesture layer
+     * hit-tests the capsule through its real bounds: a translated view still reports its untranslated
+     * frame to `getLocationOnScreen`, which would leave the buttons and the gestures disagreeing
+     * about where the chrome is. A margin moves the frame itself.
+     *
+     * The margin is the distance from the bottom of the overlay to the bottom edge of the capsule, so
+     * placing the capsule [CHROME_VIDEO_INSET_DP] above the bottom of the picture is simply "how far
+     * the picture's bottom edge is above the overlay's, plus the inset". In landscape, where the
+     * picture already reaches the bottom of the window, that reduces to the inset; in portrait it
+     * lifts the capsule a long way up, off the letterbox and onto the frame, which is the whole point
+     * - glass refracts what is behind it, and behind the letterbox there is nothing.
+     *
+     * The pass is posted because the capsule may not be measured yet on the first call - it re-enters
+     * this method with the same picture geometry, which terminates immediately.
+     */
+    private fun positionChromeOverPicture(rect: Rect) {
+        val capsule = binding.controlGlass
+        val overlay = binding.controlsOverlay
+        overlay.post {
+            val height = overlay.height
+            val capsuleHeight = capsule.height
+            if (height <= 0 || capsuleHeight <= 0) return@post
+
+            // Room left between the top of the window and the top of the capsule, so a picture that
+            // sits high on the screen cannot push the chrome out through the status bar.
+            val headroom = (height - capsuleHeight).coerceAtLeast(0)
+            val below = (height - rect.bottom).coerceAtLeast(0)
+            val target = (below + dp(CHROME_VIDEO_INSET_DP)).coerceIn(0, headroom)
+
+            val lp = capsule.layoutParams as? ViewGroup.MarginLayoutParams ?: return@post
+            if (lp.bottomMargin == target) return@post
+            lp.bottomMargin = target
+            capsule.layoutParams = lp
+        }
+    }
+
+    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -1425,6 +1472,15 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         /** Refracting bevel and bend distance for the control capsule, in dp. */
         private const val CONTROL_GLASS_BEVEL_DP = 16f
         private const val CONTROL_GLASS_REFRACT_DP = 12f
+
+        /**
+         * How far the bottom of the capsule sits above the bottom edge of the picture, in dp.
+         *
+         * The chrome is deliberately placed *over* the frame rather than in the letterbox below it:
+         * the glass refracts whatever is behind it, so over black bars it has nothing to show and
+         * reads as a flat tinted rectangle.
+         */
+        private const val CHROME_VIDEO_INSET_DP = 16f
 
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f

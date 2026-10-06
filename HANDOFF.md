@@ -112,6 +112,24 @@ nothing recomputed the picture rect. Fixed in `onConfigurationChanged` (called t
 player view is not re-measured yet at that point). Also: rotating is not an app interaction, so it
 must **not** haptic-buzz.
 
+### 3.11 `assembleDebug` does not install, and a stale APK validates nothing
+An afternoon went into re-measuring a bug that had already been fixed, because the on-device build
+predated the edit. The tell: the pane rendered a **flat** `(18,18,18)` everywhere, which is the tint
+of the **pre-API-33 gradient fallback** — i.e. `PixelCopy` was failing (the stale code asked for a
+rectangle outside a 1280×720 buffer) and the view had fallen through to `drawFallbackGlass`.
+"Flat and plausible" and "fallback" look identical in a screenshot; only the pixel values tell them
+apart. Always `adb install -r` after `assembleDebug`, and check which APK is on the device
+(`adb shell dumpsys package com.gan.spatialplayer.debug | grep lastUpdateTime`).
+
+### 3.12 Getting a "raw" frame to compare the glass against
+Freeze the clip (tap the pause button, then confirm with two screenshots one second apart — mean
+difference must be **0.000**), then tap the picture to toggle the chrome off for the raw frame and on
+for the glass frame. Two taps one second apart are two single taps; the double-tap window is 260 ms,
+so keep taps ≳1 s apart or they seek. Use a **static high-contrast** clip for this: `testsrc2` clips
+in the test folder are only 5 s long and end on a black frame, and the champagne clip is near-black
+at most positions, which makes the comparison meaningless. Generate a static pattern instead:
+`ffmpeg -f lavfi -i smptebars=size=1280x720:rate=30 -t 30 -c:v libx264 -pix_fmt yuv420p bars_720p.mp4`.
+
 ## 4. Verified findings worth not re-deriving
 
 ### 4.1 Stereo cannot be spatialised; 5.1 can (answers Q1)
@@ -196,9 +214,50 @@ Reference source is at `/tmp/lg` (re-clone `https://github.com/QWEA0/Liquid-Glas
 the optics doc is `/tmp/lg/docs/LIQUID_GLASS_V2.md`.
 
 ### 4.9 The glass has little to refract — layout, not shader
-The controls sit in the **letterbox below the video**, so the backdrop is near-black. This is why the
-ported shader looks underwhelming. The reference layout puts the bar **inside the video frame**, and
-that single change is what will make the effect pay off. Must be addressed in B3.
+In **portrait** the control capsule sits in the letterbox below the picture, so the backdrop behind it
+is black and the ported shader has nothing to work with. In **landscape** the pane already overlaps
+the picture (the video is full-height there), which is why the effect only shows up when the phone is
+turned. The reference layout puts the bar **inside the video frame** in every orientation, and that
+single change is what will make the effect pay off. Must be addressed in B3.
+
+### 4.10 Glass backdrop: three different coordinate spaces (fixed, verified)
+The single biggest bug in the ported glass, and the reason it looked like it was "sampling the whole
+screen at a made-up aspect ratio". `PixelCopy`'s source rectangle is in the surface's **buffer**
+pixels, not in view pixels:
+
+| Space | Landscape, 4K film | Portrait, 4K film |
+|---|---|---|
+| Window | 2560 × 1096 | 1096 × 2560 |
+| `SurfaceView` bounds (the picture's rect on screen) | 1948 × 1096 at (306, 0) | 1096 × 616 at (0, 972) |
+| **Buffer** (what `PixelCopy` wants) | **3840 × 2160** | **3840 × 2160** |
+
+`PlayerView` sizes the `SurfaceView` **itself** to the picture's aspect; the decoder's buffer is then
+stretched across those bounds. So the conversion is `buffer = (window - pictureOrigin) × frame /
+pictureSize`, and the frame size has to come from the player (`videoSize`), not from the view.
+`getLocationInWindow` on a scaled view returns the transformed origin, so dividing by
+`scaleX/scaleY` also covers zoom/fill/stretch modes.
+
+Feeding view pixels to `PixelCopy` is not a small error. In portrait the requested rectangle
+collapsed to a **1-pixel-tall row** (the view's 615th row clamped inside a 616px-tall surface),
+which the rim then stretched over the whole pane as **vertical stripes**. Confirm geometry with
+`adb shell dumpsys SurfaceFlinger` — the `SurfaceView[...](BLAST)` layer prints `geomBufferSize`,
+`geomLayerBounds` and `geomLayerTransform`, and the `Background for SurfaceView[...]` layer prints
+the view's own bounds. Those two lines are ground truth for all three spaces.
+
+Two consequences that also had to be handled:
+
+* The copy covers only the part of the pane with picture behind it, so the shader takes an
+  `uBackdropOrigin`/`uBackdropScale` **and** a `uBackdropTexSize` mask. Without the mask the texture's
+  clamped edge texel is smeared across the letterbox part of the pane.
+* When nothing is behind the pane, the shader still runs with every sample masked out (a 2×2 token
+  buffer keeps the shader path alive) so the pane is tint + bevel + rim over black — *not* the
+  gradient fallback, which looks different.
+
+**Verified on-device** with a static SMPTE-bars clip (`bars_720p.mp4`, generated on the host,
+`smptebars`): freeze the frame, photograph it with the chrome hidden and shown
+(`tools/`-style script), then correlate. Glass tracks the raw frame at **r = 0.957** with the peak at
+a **zero-pixel offset** in both axes (0.93 at ±6 px, 0.90 at ±12 px), i.e. the mapping is exact.
+Over the pillarbox the same test gives r = 0.15 — no picture bleed.
 
 ## 5. Reference UI geometry (measured from the user's screenshot)
 
@@ -228,9 +287,18 @@ the full native text that no log line produced.
 | `tools/verify-poweramp.sh` | 11 | provider, playable URI opens, artist+album 140/140 |
 | `tools/verify-spatial-audio.sh` | 9 | `isSpatialized=true`, head tracking non-DISABLED |
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
+| `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
 
-**86 checks total, all green.** `tools/chrome_luminance.py` is a dependency-free PNG reader used as a
-visibility proxy (mean luma of the bottom strip). `tools/verify-chapters.sh` is still to be written.
+**80 checks total, all green** (76 in the five suites above, plus the glass one). `tools/chrome_luminance.py`
+is a dependency-free PNG reader used as a visibility proxy (mean luma of the bottom strip);
+`tools/glass_tracking.py` reuses its reader and adds the freeze/tracking maths.
+`tools/verify-chapters.sh` is still to be written.
+
+`verify-glass-backdrop.sh` is the tool to run after **any** change to the glass or to the chrome's
+placement. It forces landscape (restoring the rotation settings on exit), plays a static pattern,
+pauses, then photographs the same frame with the chrome hidden and shown and correlates the two at
+identical coordinates. It needs the pattern on the device; the script prints the `ffmpeg` line if it
+is missing. Generate it into `/tmp/grid_720p.mp4` (or pass `HOST_CLIP=`).
 
 Debug probes (register in `app/src/debug/AndroidManifest.xml`):
 `SmokeTestActivity` (`SMOKE_PLAY`), `SmokeProbeActivity`/`SmokeTrackProbeActivity` (`SMOKE_TRACKS`,
@@ -246,7 +314,8 @@ lands on the wrong stream**) and `tools/make-test-media.sh` (on-device screenrec
 
 On device: `/sdcard/Movies/SpatialPlayerTest/` holds `ac3_51_720p.mkv`, `truehd_51_720p.mkv`,
 `hdr10_hevc_720p.mkv`, `hlg_hevc_720p.mkv`, `h264_aac_subs_720p.mkv`, `multi_stream_test.mkv`,
-`multi_eng_subs.mkv`, `yt_1080p_ac3_51.mkv`, `yt_hdr10_av1_ac3_51.mkv` (4K HDR, 388 MB), `broken.mkv`.
+`multi_eng_subs.mkv`, `yt_1080p_ac3_51.mkv`, `yt_hdr10_av1_ac3_51.mkv` (4K HDR, 388 MB), `broken.mkv`,
+`grid_720p.mp4` (static SMPTE bars + grid lines, 30 s — use this one for anything pixel-level, §3.12).
 
 Commit style: `git -c user.name="XiaoGanCN" -c user.email="76635216+XiaoGanCN@users.noreply.github.com"`.
 Use `commit -F -` with a heredoc; backticks in `-m` get shell-expanded.
@@ -276,6 +345,9 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
 14. **Remember last position until app quit** — in-memory `PlaybackMemory`, verified `30665 → 30665`.
 15. **7.1 sink guard** — `AudioOutputCapability`, the 70 GB film's failure.
 16. **Glass optics ported** — noise removed, bevel profile + two-lobe rim; capture 192×108.
+17. **Glass backdrop coordinate mapping** — window → picture → buffer, plus the out-of-picture mask.
+    Verified pixel-exact (§4.10). This is the fix for "it is sampling the whole screen at a
+    made-up aspect ratio".
 
 ### Remaining — functions first, UI after (user's explicit ordering)
 - **C8** chapters (EBML parser + chapter UI + `verify-chapters.sh`).
