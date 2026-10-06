@@ -139,6 +139,21 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             override fun onEnginePlaybackParameters(speed: Float) = Unit
         })
         this.engine = engine
+
+        // Optionally exercise a different decoder policy, to test whether audio track selection
+        // depends on which renderer claims the stream.
+        when (intent.getStringExtra(EXTRA_PROFILE)) {
+            "ffmpeg" -> engine.switchDecoderProfile(
+                com.gan.spatialplayer.media.DecoderProfile.FFMPEG_ONLY,
+            )
+            "ffmpeg_audio" -> engine.switchDecoderProfile(
+                com.gan.spatialplayer.media.DecoderProfile.FFMPEG_AUDIO,
+            )
+            "hardware" -> engine.switchDecoderProfile(
+                com.gan.spatialplayer.media.DecoderProfile.HARDWARE_ONLY,
+            )
+            else -> Unit
+        }
         engine.build()
         engine.setMedia(android.net.Uri.parse("file://$path"))
         engine.prepare()
@@ -274,6 +289,7 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         const val EXTRA_PATH = "track_probe_path"
         const val EXTRA_SELECT_TEXT = "track_probe_select_text"
         const val EXTRA_SELECT_AUDIO = "track_probe_select_audio"
+        const val EXTRA_PROFILE = "track_probe_profile"
         private const val TRACK_SETTLE_MS = 3000L
 
         /** Time allowed for the playback thread to pick up a track-selection override. */
