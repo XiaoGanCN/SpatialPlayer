@@ -76,7 +76,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private var sizeBytes: Long = 0L
     private var mediaUri: Uri? = null
 
-    private var controlsVisible = true
     private var lastSample: PlayerSample = PlayerSample.EMPTY
     private var mediaTracks: MediaTracks = MediaTracks.EMPTY
     private var videoSize: VideoSize? = null
@@ -241,7 +240,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
 
         binding.buttonDismissError.setOnClickListener {
-            PlayerAnimation.fadeOut(binding.errorCard)
+            PlayerAnimation.hide(binding.errorCard)
         }
 
         // Long-press the inspect button jumps straight to the decoder panel.
@@ -357,27 +356,40 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private fun toggleControls() {
         if (locked) return
-        if (controlsVisible) hideControls() else showControls()
+        // The view is the source of truth, not a mirror boolean: keeping a second copy is what let
+        // the two disagree and made the first tap appear to do nothing.
+        if (PlayerAnimation.isShown(binding.controlsOverlay)) hideControls() else showControls()
     }
 
     private fun showControls() {
-        controlsVisible = true
-        PlayerAnimation.fadeIn(binding.controlsOverlay)
+        PlayerAnimation.show(binding.controlsOverlay)
     }
 
     private fun hideControls() {
-        controlsVisible = false
-        PlayerAnimation.fadeOut(binding.controlsOverlay)
+        PlayerAnimation.hide(binding.controlsOverlay)
     }
 
     private var hideControlsRunnable: Runnable? = null
 
+    /** Shows the chrome and (re)starts the idle countdown. Every interaction calls this. */
     private fun showControlsTemporarily(delayMs: Long = CONTROLS_TIMEOUT_MS) {
         showControls()
         hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
+        // While a sheet is up the chrome must stay put; the sheet's own dismissal restarts the
+        // countdown, so an unattended timer here would hide it out from under the user.
+        if (inspectorSheet.isOpen) {
+            hideControlsRunnable = null
+            return
+        }
         val runnable = Runnable { hideControls() }
         hideControlsRunnable = runnable
         ambientHandler.postDelayed(runnable, delayMs)
+    }
+
+    /** Cancels the idle countdown, e.g. while an error card needs the controls to stay reachable. */
+    private fun cancelControlsTimeout() {
+        hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
+        hideControlsRunnable = null
     }
 
     private fun showSeekFeedback(deltaMs: Long) {
@@ -407,7 +419,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onDoubleTap(forward: Boolean) {
-        seekBy(if (forward) PlayerEngine.SEEK_STEP_MS else -PlayerEngine.SEEK_STEP_MS)
+        // Length is user-configurable (1/3/5/10s); the controller does not own the value.
+        val step = gestures.doubleTapJumpMs
+        seekBy(if (forward) step else -step)
     }
 
     override fun onScrubStart() {
@@ -581,6 +595,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onDestroy() {
         refreshJob?.cancel()
+        gestures.release()
         ambientSampler?.release()
         ambientSampler = null
         hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
@@ -651,10 +666,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onEngineError(message: String, cause: Throwable?) {
         binding.errorText.text = message
-        // Surface the controls too, so the card is never the only thing on screen and the user can
-        // reach the buttons that get them out of the failure.
+        // Surface the controls and stop the idle countdown: while an error is on screen the user
+        // needs the dismiss affordance and the way out, not a chrome that fades away underneath it.
         showControls()
-        PlayerAnimation.fadeIn(binding.errorCard)
+        cancelControlsTimeout()
+        PlayerAnimation.show(binding.errorCard)
+        Haptics.error(binding.root)
     }
 
     override fun onEngineFirstFrame() {
@@ -848,10 +865,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             )
         }
         for ((index, track) in audio.withIndex()) {
-            val id = mediaTracks.all.indexOf(track)
             choices += InspectorSheet.Choice(
                 panel = InspectorSheet.Panel.AUDIO,
-                value = "$VALUE_AUDIO_PREFIX$id",
+                value = "$VALUE_AUDIO_PREFIX${track.id}",
                 title = track.label,
                 subtitle = track.detail,
                 selected = track.selected,
@@ -880,10 +896,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         )
 
         for (track in textTracks) {
-            val id = mediaTracks.all.indexOf(track)
             choices += InspectorSheet.Choice(
                 panel = InspectorSheet.Panel.SUBTITLES,
-                value = "$VALUE_TEXT_PREFIX$id",
+                value = "$VALUE_TEXT_PREFIX${track.id}",
                 title = track.label,
                 subtitle = track.detail,
                 selected = track.selected,
@@ -1032,8 +1047,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             }
 
             choice.value.startsWith(VALUE_AUDIO_PREFIX) -> {
-                val id = choice.value.removePrefix(VALUE_AUDIO_PREFIX).toIntOrNull() ?: return
-                mediaTracks.byId(id)?.let { applyTrackChoice(it) }
+                val key = choice.value.removePrefix(VALUE_AUDIO_PREFIX)
+                mediaTracks.resolve(key)?.let { applyTrackChoice(it) }
                 populateAudioPanel()
             }
         }
@@ -1070,8 +1085,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             }
 
             choice.value.startsWith(VALUE_TEXT_PREFIX) -> {
-                val id = choice.value.removePrefix(VALUE_TEXT_PREFIX).toIntOrNull() ?: return
-                mediaTracks.byId(id)?.let { applyTrackChoice(it) }
+                val key = choice.value.removePrefix(VALUE_TEXT_PREFIX)
+                mediaTracks.resolve(key)?.let { applyTrackChoice(it) }
             }
         }
         populateSubtitlePanel()
@@ -1230,7 +1245,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val CONTROL_GLASS_RADIUS_DP = 30f
 
         /** How long the chrome stays up after an interaction. */
-        private const val CONTROLS_TIMEOUT_MS = 5_000L
+        private const val CONTROLS_TIMEOUT_MS = 6_000L
 
         /** Subtitle defaults and the range the sliders expose. */
         private const val DEFAULT_SUBTITLE_SP = 18f

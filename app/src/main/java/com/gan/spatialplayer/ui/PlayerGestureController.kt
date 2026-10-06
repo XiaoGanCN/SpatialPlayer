@@ -58,24 +58,69 @@ class PlayerGestureController(
 
     private enum class Mode { NONE, UNDECIDED, SEEK, BRIGHTNESS, VOLUME, ZOOM }
 
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Pending single-tap, held only long enough to see whether a second tap follows.
+     *
+     * `GestureDetector.onSingleTapConfirmed` would be the obvious hook, but it waits out the whole
+     * double-tap window before firing, so the first tap always felt dead. Handling the tap here and
+     * deciding afterwards means the chrome appears on the first touch while a double tap still
+     * cancels the pending single-tap action.
+     */
+    private var pendingSingleTap: Runnable? = null
+
+    /**
+     * Half-screen split for double-tap seeking.
+     *
+     * Previously the threshold sat at 35% of the width, which meant a tap at the far right of the
+     * left-hand side already counted as "forward". The screen midline is what people expect.
+     */
+    private var doubleTapSplitFraction = 0.5f
+
+    /** Jump length for a double tap, in ms. Owned by the activity so Settings can change it. */
+    var doubleTapJumpMs: Long = 10_000L
+
     private val gestureDetector = GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
 
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                host.onSingleTap()
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                // Defer just past the double-tap window; a second tap cancels this.
+                cancelPendingSingleTap()
+                val runnable = Runnable {
+                    pendingSingleTap = null
+                    host.onSingleTap()
+                }
+                pendingSingleTap = runnable
+                handler.postDelayed(runnable, DOUBLE_TAP_TIMEOUT_MS)
                 return true
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                // Left third rewinds, right two thirds fast-forwards.
-                val forward = e.x > viewWidth * 0.35f
+                cancelPendingSingleTap()
+                val forward = e.x > viewWidth * doubleTapSplitFraction
                 host.onDoubleTap(forward)
                 return true
             }
         },
     )
+
+    private fun cancelPendingSingleTap() {
+        pendingSingleTap?.let { handler.removeCallbacks(it) }
+        pendingSingleTap = null
+    }
+
+    /** Stops the deferred single-tap from firing after the host goes away. */
+    fun release() {
+        cancelPendingSingleTap()
+    }
+
+    /** Sets the midline split, clamped so a usable band remains on each side. */
+    fun setDoubleTapSplitFraction(fraction: Float) {
+        doubleTapSplitFraction = fraction.coerceIn(0.2f, 0.8f)
+    }
 
     private var viewWidth = 1
     private var viewHeight = 1
@@ -232,6 +277,14 @@ class PlayerGestureController(
         const val TOP_SYSTEM_INSET_DP = 60f
 
         /**
+         * How long a single tap waits to find out whether it is really a double tap.
+         *
+         * Matches the platform's own double-tap window; longer would make the chrome feel laggy,
+         * shorter would turn deliberate double taps into two separate taps.
+         */
+        const val DOUBLE_TAP_TIMEOUT_MS = 260L
+
+        /**
          * Fraction of the full range that one screen-height drag covers.
          *
          * At 1.0 a quarter-screen flick changed volume by 25%, which felt twitchy. 0.6 makes a
@@ -244,21 +297,61 @@ class PlayerGestureController(
 /**
  * Small animation helpers used by the player chrome. Kept here so the activity reads as intent
  * rather than as tween configuration.
+ *
+ * ## Why [show] sets alpha synchronously
+ *
+ * The previous pair of helpers animated alpha in both directions, and [hide] only set
+ * `visibility = GONE` in its end callback. That left a window where the view was `VISIBLE` at
+ * `alpha = 0`, and because the caller tracked its own boolean rather than the view's real state,
+ * the two disagreed: the first tap "hid" a chrome that was already invisible, and the second tap
+ * faded it in from zero while the auto-hide timer was already running. Measured as "the first touch
+ * does nothing, the second shows the controls and they immediately disappear".
+ *
+ * The rule now: the view's own state is the single source of truth. [show] makes the chrome
+ * visible and fully opaque on the same frame, then animates only a small translation so it still
+ * feels like it arrives rather than blinks. [hide] fades alpha out and flips visibility at the end,
+ * and is safe to call when already hidden.
  */
 object PlayerAnimation {
 
-    fun fadeIn(view: View, durationMs: Long = 200L) {
+    /** True when the chrome is genuinely on screen, not merely non-GONE. */
+    fun isShown(view: View): Boolean =
+        view.visibility == View.VISIBLE && view.alpha > 0.01f
+
+    /**
+     * Reveals the chrome immediately, with a short slide so it settles rather than pops.
+     *
+     * Alpha is assigned directly instead of animated: a fade-in that starts from an alpha left
+     * behind by a previous [hide] is what made the controls invisible after the first tap.
+     */
+    fun show(view: View, durationMs: Long = 180L, slideDp: Float = 10f) {
         view.animate().cancel()
+        val slide = slideDp * view.resources.displayMetrics.density
+
+        val alreadyVisible = view.visibility == View.VISIBLE && view.alpha >= 0.99f
         view.visibility = View.VISIBLE
+        view.alpha = 1f
+        if (alreadyVisible) {
+            view.translationY = 0f
+            return
+        }
+
+        view.translationY = slide
         view.animate()
-            .alpha(1f)
+            .translationY(0f)
             .setDuration(durationMs)
             .setInterpolator(DecelerateInterpolator())
             .start()
     }
 
-    fun fadeOut(view: View, durationMs: Long = 180L, endAction: (() -> Unit)? = null) {
+    /** Fades the chrome out and marks it GONE. Idempotent. */
+    fun hide(view: View, durationMs: Long = 160L, endAction: (() -> Unit)? = null) {
         view.animate().cancel()
+        if (view.visibility != View.VISIBLE) {
+            view.alpha = 0f
+            endAction?.invoke()
+            return
+        }
         view.animate()
             .alpha(0f)
             .setDuration(durationMs)
@@ -273,6 +366,7 @@ object PlayerAnimation {
                 override fun onAnimationEnd(animation: Animator) {
                     if (!cancelled) {
                         view.visibility = View.GONE
+                        view.translationY = 0f
                         endAction?.invoke()
                     }
                 }

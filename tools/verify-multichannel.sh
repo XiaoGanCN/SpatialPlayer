@@ -210,7 +210,7 @@ sleep 1
 adb_ logcat -c
 sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
     --es track_probe_path "$MEDIA_DIR/h264_aac_subs_720p.mkv" \
-    --ez track_probe_select_text true > /dev/null
+    --ei track_probe_select_text_index 0 > /dev/null
 sleep 14
 adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/mc-subs.txt" 2>/dev/null
 touch "$OUT_DIR/mc-subs.txt"
@@ -232,6 +232,50 @@ fi
 
 # The multichannel clip must present as 6 channels, not a stereo downmix, or the spatializer has
 # nothing to place.
+# ---------------------------------------------------------------------------
+# Subtitle identity: when many tracks share a language, picking the Nth must highlight the Nth.
+# This is the regression that mattered most in practice - a disc with 51 `eng` subtitles that
+# differ only by title ("American", "American / SDH", "British", ...) used to collapse onto
+# whichever row came first, because the panels derived choice ids with list.indexOf() on a data
+# class (structural equality) instead of a stable key.
+# ---------------------------------------------------------------------------
+say "same-language subtitle identity"
+MULTI_ENG="$MEDIA_DIR/multi_eng_subs.mkv"
+if [ "$(sh_ "[ -f $MULTI_ENG ] && echo yes || echo no")" != "yes" ]; then
+  skip "no multi-eng subtitle file at $MULTI_ENG — regenerate with make-host-test-media.sh"
+else
+  sh_ am force-stop "$PKG_DEBUG"
+  sleep 1
+  adb_ logcat -c
+  sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
+      --es track_probe_path "$MULTI_ENG" --ei track_probe_select_text_index 2 > /dev/null
+  sleep 14
+  adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/mc-subs-identity.txt" 2>/dev/null
+  touch "$OUT_DIR/mc-subs-identity.txt"
+  IDLOG="$OUT_DIR/mc-subs-identity.txt"
+
+  DISTINCT=$(grep -oE "type=text\|[^\n]*label=[^|]*" "$IDLOG" | sort -u | wc -l | tr -d ' ')
+  if [ "${DISTINCT:-0}" -ge 4 ]; then
+    pass "$DISTINCT subtitle rows are distinguishable despite sharing a language"
+  else
+    fail "subtitle rows are not distinguishable (found ${DISTINCT:-0})"
+  fi
+
+  # Exactly one selected, and it must be the third row rather than the first.
+  SEL=$(grep -oE "type=text\|selected=true\|[^\n]*label=[^|]*" "$IDLOG" | sed 's/.*label=//' | sed 's/ \[.*//' | head -1)
+  COUNT_SEL=$(grep -c "type=text|selected=true" "$IDLOG")
+  if [ "${COUNT_SEL:-0}" -eq 1 ]; then
+    pass "exactly one subtitle row is selected"
+  else
+    fail "expected exactly 1 selected subtitle row, found ${COUNT_SEL:-0}"
+  fi
+  if echo "$SEL" | grep -qi "third\|British"; then
+    pass "selecting index 2 highlighted the THIRD row ($SEL)"
+  else
+    fail "selecting index 2 highlighted '${SEL:-nothing}' instead of the third row"
+  fi
+fi
+
 say "multichannel track selection"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1

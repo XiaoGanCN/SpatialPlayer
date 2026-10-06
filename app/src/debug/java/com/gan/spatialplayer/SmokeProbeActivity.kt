@@ -173,8 +173,9 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         // Give the extractor time to publish its track list before reporting.
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         handler.postDelayed({
-            val wantsText = intent.getBooleanExtra(EXTRA_SELECT_TEXT, false)
-            if (wantsText) selectFirstTextTrack(engine)
+            val textIndex = intent.getIntExtra(EXTRA_SELECT_TEXT, -1)
+            val wantsText = textIndex >= 0
+            if (wantsText) selectTextTrack(engine, textIndex)
 
             // Switch to a specific audio track, mirroring what the audio panel does. Used to prove
             // multi-stream selection actually takes effect.
@@ -218,23 +219,30 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
     }
 
     /**
-     * Mirrors what the subtitle panel does when the user picks a track: build a
-     * `TrackSelectionOverride` for the matching track group. Exercising it here proves the
-     * subtitle selector works without needing to drive the UI by hand.
+     * Mirrors what the subtitle panel does when the user picks a track.
+     *
+     * Selects by *index into the flattened track list* and addresses it by the same stable key the
+     * UI uses, so this reproduces the real path - including the case that used to break: many
+     * tracks sharing a language, where only the container title separates them. Selecting index 2
+     * of four `eng` subtitles must land on the third one, not the first.
      */
-    private fun selectFirstTextTrack(engine: PlayerEngine) {
+    private fun selectTextTrack(engine: PlayerEngine, index: Int) {
         val player = engine.player ?: return
-        val group = player.currentTracks.groups
-            .firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
-        if (group == null) {
-            Log.w(SmokeProbeActivity.TAG, "select_text :: no text group available")
+        val tracks = com.gan.spatialplayer.media.MediaTracks.from(player.currentTracks)
+        val track = tracks.text.getOrNull(index)
+        if (track == null) {
+            Log.w(SmokeProbeActivity.TAG, "select_text :: no text track at index $index")
             return
         }
-        val override = androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0)
+        Log.i(
+            SmokeProbeActivity.TAG,
+            "select_text :: requesting index=$index id=${track.id} label=${track.label}",
+        )
+        // Resolve through the keyed model exactly as the panel does.
+        val resolved = tracks.resolve(track.id) ?: track
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setOverrideForType(override)
+            .setOverrideForType(resolved.toOverride())
             .build()
-        Log.i(SmokeProbeActivity.TAG, "select_text :: override applied to text group")
     }
 
     private fun report(engine: PlayerEngine) {
@@ -299,7 +307,7 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_PATH = "track_probe_path"
-        const val EXTRA_SELECT_TEXT = "track_probe_select_text"
+        const val EXTRA_SELECT_TEXT = "track_probe_select_text_index"
         const val EXTRA_SELECT_AUDIO = "track_probe_select_audio"
         const val EXTRA_PROFILE = "track_probe_profile"
         const val EXTRA_URI = "track_probe_uri"

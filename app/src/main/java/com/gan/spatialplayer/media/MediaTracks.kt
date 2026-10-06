@@ -10,9 +10,21 @@ import androidx.media3.common.Tracks
 /**
  * A playable track, decoupled from Media3's own structures.
  *
- * [group] and [trackIndex] are the identity: Media3 needs a [TrackSelectionOverride] built from a
- * specific [TrackGroup] plus the index *within that group*, so a flat list index is not enough to
- * address a track. (Using a flat index was a real bug: it sent every selection to the first group.)
+ * ## Identity
+ *
+ * Three things look like an identity here and only one is safe:
+ *
+ *  * **`position`** — the index in the flattened list. Convenient, but it shifts whenever the track
+ *    set changes, so it must never be the thing a UI holds on to.
+ *  * **`indexOf(track)`** — what the panels used to do. `MediaTrack` is a data class, so equality is
+ *    structural: two tracks that differ only in a field the UI does not show (or that genuinely
+ *    share every field) compare equal, and lookup silently returns the *first* match. On a disc
+ *    with 51 `eng` subtitle tracks that differ only by title, every row resolved to row one.
+ *  * **`id`** — `"${group.id}#$trackIndex"`. Derived from what Media3 actually addresses a track by,
+ *    so it is stable across rebuilds of the flattened list and unique per track. This is what
+ *    choices carry.
+ *
+ * [group] and [trackIndex] remain the real addressing for a [TrackSelectionOverride].
  */
 data class MediaTrack(
     val type: String,
@@ -23,7 +35,12 @@ data class MediaTrack(
     val language: String?,
     val group: TrackGroup,
     val trackIndex: Int,
+    /** Index in the flattened list; for display only, never for identity. */
+    val position: Int,
 ) {
+    /** Stable, unique key. Safe to round-trip through UI state. */
+    val id: String get() = "${group.id}#$trackIndex"
+
     /** Media3 override that selects exactly this track. */
     fun toOverride(): TrackSelectionOverride = TrackSelectionOverride(group, trackIndex)
 }
@@ -48,7 +65,17 @@ data class MediaTracks(
     val counts: Map<String, Int>
         get() = all.groupingBy { it.type }.eachCount()
 
-    fun byId(id: Int): MediaTrack? = all.getOrNull(id)
+    /**
+     * Resolves a UI choice back to a track.
+     *
+     * Prefers the stable [MediaTrack.id]; falls back to a positional match only for ids that
+     * predate the keyed scheme, so an in-flight UI state cannot crash.
+     */
+    fun resolve(key: String): MediaTrack? {
+        all.firstOrNull { it.id == key }?.let { return it }
+        val position = key.substringAfterLast('#', "").toIntOrNull() ?: return null
+        return all.firstOrNull { it.position == position }
+    }
 
     companion object {
         const val TYPE_VIDEO = "video"
@@ -84,24 +111,34 @@ data class MediaTracks(
                         language = format.language?.takeIf { it.isNotBlank() && it != "und" },
                         group = mediaGroup,
                         trackIndex = i,
+                        position = out.size,
                     )
                 }
             }
             return MediaTracks(out)
         }
 
+        /**
+         * Human label for a track.
+         *
+         * The container's own title is the only thing that distinguishes the many tracks sharing a
+         * language on a disc release ("American", "American / SDH", "British", "British / SDH"), so
+         * it leads, and the language and codec are appended in brackets rather than replacing it.
+         * Without this every `eng` subtitle read as an identical "eng" row.
+         */
         private fun labelFor(format: Format, index: Int, groupSize: Int): String {
-            val parts = ArrayList<String>()
-            format.label?.takeIf { it.isNotBlank() }?.let { parts += it }
-            format.language?.takeIf { it.isNotBlank() && it != "und" }?.let { parts += "[$it]" }
-
+            val title = format.label?.takeIf { it.isNotBlank() }
+            val language = format.language?.takeIf { it.isNotBlank() && it != "und" }
             val codec = format.codecs?.takeIf { it.isNotBlank() }
-            if (codec != null && parts.isEmpty()) parts += codec
 
-            if (parts.isEmpty()) {
-                parts += if (groupSize > 1) "Track ${index + 1} of $groupSize" else "Track ${index + 1}"
-            }
-            return parts.joinToString(" ")
+            val qualifiers = ArrayList<String>()
+            language?.let { qualifiers += it }
+            codec?.let { qualifiers += it }
+
+            val head = title
+                ?: if (groupSize > 1) "Track ${index + 1} of $groupSize" else "Track ${index + 1}"
+
+            return if (qualifiers.isEmpty()) head else "$head [${qualifiers.joinToString(" · ")}]"
         }
 
         private fun detailFor(format: Format): String {

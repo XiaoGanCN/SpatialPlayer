@@ -212,12 +212,39 @@ gen_flac() {
 }
 
 # ---------------------------------------------------------------------------
+# Several subtitle tracks sharing one language, distinguished only by title.
+# This is the shape that broke selection (a disc with 51 `eng` subtitles).
+# ---------------------------------------------------------------------------
+gen_multi_eng() {
+  say "multi-eng subtitles (mkv)"
+  local out="$OUT/multi_eng_subs.mkv"
+  local tmp
+  tmp=$(mktemp -d)
+  for i in 1 2 3 4; do
+    printf '1\n00:00:00,500 --> 00:00:05,000\nSubtitle variant %s\n' "$i" > "$tmp/sub$i.srt"
+  done
+  "$FFMPEG" -hide_banner -loglevel error -y \
+    -f lavfi -i "testsrc2=size=640x360:rate=25:duration=8" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=8" \
+    -i "$tmp/sub1.srt" -i "$tmp/sub2.srt" -i "$tmp/sub3.srt" -i "$tmp/sub4.srt" \
+    -map 0:v -map 1:a -map 2:s -map 3:s -map 4:s -map 5:s \
+    -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -c:a aac -b:a 64k -c:s srt \
+    -metadata:s:s:0 language=eng -metadata:s:s:0 title=American \
+    -metadata:s:s:1 language=eng -metadata:s:s:1 title="American / SDH" \
+    -metadata:s:s:2 language=eng -metadata:s:s:2 title=British \
+    -metadata:s:s:3 language=eng -metadata:s:s:3 title="British / SDH" \
+    "$out"
+  rm -rf "$tmp"
+  echo "  -> $out ($(du -h "$out" | cut -f1))"
+}
+
+# ---------------------------------------------------------------------------
 TARGETS=("$@")
 if [ ${#TARGETS[@]} -eq 0 ]; then
-  TARGETS=(ac3 truehd hdr10 hlg baseline)
+  TARGETS=(ac3 truehd hdr10 hlg baseline multi_eng)
 fi
 if [ "${TARGETS[0]}" = "all" ]; then
-  TARGETS=(ac3 eac3 truehd dts hdr10 hlg baseline flac)
+  TARGETS=(ac3 eac3 truehd dts hdr10 hlg baseline flac multi_eng)
 fi
 
 say "ffmpeg"
@@ -233,6 +260,7 @@ for target in "${TARGETS[@]}"; do
     hdr10)    gen_hdr10 ;;
     hlg)      gen_hlg ;;
     baseline) gen_baseline ;;
+    multi_eng) gen_multi_eng ;;
     flac)     gen_flac ;;
     *) echo "unknown target: $target" >&2; exit 1 ;;
   esac

@@ -295,15 +295,22 @@
         </com.gan.spatialplayer.ui.LiquidGlassView>
     </LinearLayout>
 
-    <!-- Transient error card -->
+    <!--
+      Transient error card.
+
+      Anchored to the TOP, not the bottom. It was previously bottom-aligned with an 18dp margin,
+      which put it directly on top of the control capsule and the progress bar (the card is declared
+      after the controls, so it also drew over them) - the error was unreadable and the controls
+      unreachable at the same time. Sitting under the title row keeps both visible.
+    -->
     <LinearLayout
         android:id="@+id/errorCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
+        android:layout_gravity="top"
         android:layout_marginStart="18dp"
         android:layout_marginEnd="18dp"
-        android:layout_marginBottom="18dp"
+        android:layout_marginTop="128dp"
         android:background="@drawable/bg_glass_panel"
         android:orientation="vertical"
         android:padding="18dp"
