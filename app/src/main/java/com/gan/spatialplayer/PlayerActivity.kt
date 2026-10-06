@@ -84,8 +84,15 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private var isScrubbing = false
 
     /** Playback position when a horizontal scrub began, and the position it currently points at. */
+    /** Fractional volume position while dragging; Int.MIN_VALUE means "resync from the system". */
+    private var volumeAccumulator: Float = Float.MIN_VALUE
+
     private var scrubAnchorMs = 0L
     private var scrubTargetMs = 0L
+
+    /** Subtitle tuning, adjustable from the subtitle panel while playing. */
+    private var subtitleSizeSp: Float = DEFAULT_SUBTITLE_SP
+    private var subtitlePositionFraction: Float = DEFAULT_SUBTITLE_POSITION
 
     private var scaleMode = VideoRectCalculator.SCALE_FIT
     private var userZoom = 1f
@@ -169,12 +176,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.controlGlass.aberration = 1.25f
         binding.controlGlass.causticStrength = 1f
 
-        binding.playerView.subtitleView?.apply {
-            setApplyEmbeddedStyles(true)
-            setApplyEmbeddedFontSizes(false)
-            setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, SUBTITLE_TEXT_SP)
-            setBottomPaddingFraction(SUBTITLE_BOTTOM_FRACTION)
-        }
+        applySubtitleStyle()
     }
 
     private fun setUpControls() {
@@ -269,6 +271,22 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
     }
 
+    /**
+     * Applies the current subtitle size and vertical position.
+     *
+     * Both are adjustable because a single fixed choice cannot suit a phone held in one hand, a
+     * landscape window, and a TV-style layout at once - and squashed or clipped subtitles are worse
+     * than none.
+     */
+    private fun applySubtitleStyle() {
+        binding.playerView.subtitleView?.apply {
+            setApplyEmbeddedStyles(true)
+            setApplyEmbeddedFontSizes(false)
+            setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
+            setBottomPaddingFraction(subtitlePositionFraction)
+        }
+    }
+
     private fun updateTitle() {
         binding.mediaTitle.text = displayName
         updateStreamChips()
@@ -354,7 +372,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private var hideControlsRunnable: Runnable? = null
 
-    private fun showControlsTemporarily(delayMs: Long = 3200L) {
+    private fun showControlsTemporarily(delayMs: Long = CONTROLS_TIMEOUT_MS) {
         showControls()
         hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
         val runnable = Runnable { hideControls() }
@@ -393,6 +411,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onScrubStart() {
+        volumeAccumulator = Float.MIN_VALUE
         isScrubbing = true
         // Remember where the drag began; the gesture controller reports displacement from here.
         scrubAnchorMs = engine.player?.currentPosition ?: lastSample.positionMs
@@ -439,18 +458,36 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     override fun onBrightnessDelta(delta: Float) {
         val attrs = window.attributes
         val next = (attrs.screenBrightness.takeIf { it >= 0f } ?: 0.5f) + delta
-        attrs.screenBrightness = next.coerceIn(0.01f, 1f)
+        val applied = next.coerceIn(0.01f, 1f)
+        attrs.screenBrightness = applied
         window.attributes = attrs
-        showFeedback(String.format(Locale.US, "brightness %.0f%%", attrs.screenBrightness * 100))
+        showFeedback(String.format(Locale.US, "BRI %.0f%%", applied * 100))
     }
 
+    /**
+     * Volume drag.
+     *
+     * The accumulated fraction is kept rather than rounding each event, because a single small
+     * movement is usually less than one step of the stream volume scale - rounding per event made
+     * slow drags do nothing at all and then jump.
+     */
     override fun onVolumeDelta(delta: Float) {
         val manager = audioManager ?: return
         val max = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val current = manager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val next = (current + (delta * max)).toInt().coerceIn(0, max)
-        manager.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0)
-        showFeedback("volume ${(next * 100) / max}%")
+        if (max <= 0) return
+
+        if (volumeAccumulator == Float.MIN_VALUE) {
+            volumeAccumulator = manager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+        }
+
+        val exact = volumeAccumulator + delta * max
+        val next = exact.toInt().coerceIn(0, max)
+        if (next != manager.getStreamVolume(AudioManager.STREAM_MUSIC)) {
+            manager.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0)
+            Haptics.tick(binding.gestureLayer)
+        }
+        volumeAccumulator = exact.coerceIn(0f, max.toFloat())
+        showFeedback("VOL ${(next * 100) / max}%")
     }
 
     // ------------------------------------------------------------------ ambient + geometry
@@ -614,6 +651,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onEngineError(message: String, cause: Throwable?) {
         binding.errorText.text = message
+        // Surface the controls too, so the card is never the only thing on screen and the user can
+        // reach the buttons that get them out of the failure.
+        showControls()
         PlayerAnimation.fadeIn(binding.errorCard)
     }
 
@@ -862,6 +902,25 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             )
         }
 
+        // Styling sliders. Fixed subtitle geometry cannot suit portrait, a landscape window and a
+        // TV-style layout at once.
+        choices += InspectorSheet.Choice(
+            panel = InspectorSheet.Panel.SUBTITLES,
+            value = subtitleSizeSp.toString(),
+            title = getString(R.string.subtitle_size),
+            range = MIN_SUBTITLE_SP..MAX_SUBTITLE_SP,
+            stepSize = 1f,
+            section = "Styling",
+        )
+        choices += InspectorSheet.Choice(
+            panel = InspectorSheet.Panel.SUBTITLES,
+            value = (subtitlePositionFraction * 100f).toString(),
+            title = getString(R.string.subtitle_bottom_padding),
+            range = 0f..45f,
+            stepSize = 1f,
+            section = null,
+        )
+
         choices += InspectorSheet.Choice(
             panel = InspectorSheet.Panel.SUBTITLES,
             value = "add_external",
@@ -981,6 +1040,19 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun handleSubtitleChoice(choice: InspectorSheet.Choice) {
+        // Slider rows carry a numeric reading rather than one of the fixed action values, so they
+        // are matched first. A slider is identified by having a range.
+        if (choice.range != null) {
+            val value = choice.value.toFloatOrNull() ?: return
+            when (choice.title) {
+                getString(R.string.subtitle_size) -> subtitleSizeSp = value
+                getString(R.string.subtitle_bottom_padding) ->
+                    subtitlePositionFraction = (value / 100f).coerceIn(0f, 0.45f)
+            }
+            applySubtitleStyle()
+            return
+        }
+
         when {
             choice.value == SUBTITLE_OFF -> {
                 val player = engine.player
@@ -1157,7 +1229,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         /** Corner radius of the floating control capsule. */
         private const val CONTROL_GLASS_RADIUS_DP = 30f
 
-        private const val SUBTITLE_TEXT_SP = 17f
-        private const val SUBTITLE_BOTTOM_FRACTION = 0.08f
+        /** How long the chrome stays up after an interaction. */
+        private const val CONTROLS_TIMEOUT_MS = 5_000L
+
+        /** Subtitle defaults and the range the sliders expose. */
+        private const val DEFAULT_SUBTITLE_SP = 18f
+        private const val MIN_SUBTITLE_SP = 10f
+        private const val MAX_SUBTITLE_SP = 40f
+        private const val DEFAULT_SUBTITLE_POSITION = 0.08f
     }
 }

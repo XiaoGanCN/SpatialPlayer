@@ -76,6 +76,13 @@ class InspectorSheet @JvmOverloads constructor(
         val selected: Boolean = false,
         val enabled: Boolean = true,
         val section: String? = null,
+        /**
+         * When set, the row renders as a slider the user can drag. [value] carries the current
+         * reading and is echoed back through [Callback.onChoiceSelected] as it moves, so changes
+         * apply live rather than on release.
+         */
+        val range: ClosedFloatingPointRange<Float>? = null,
+        val stepSize: Float = 1f,
     )
 
     var callback: Callback? = null
@@ -380,7 +387,7 @@ class InspectorSheet @JvmOverloads constructor(
                         lastSection = choice.section
                         container.addView(sectionHeader(choice.section))
                     }
-                    container.addView(optionRow(choice))
+                    container.addView(if (choice.range != null) sliderRow(choice) else optionRow(choice))
                 }
             }
         }
@@ -474,6 +481,93 @@ class InspectorSheet @JvmOverloads constructor(
         ).apply { bottomMargin = dp(6) }
         return container
     }
+
+    /**
+     * A labelled slider row.
+     *
+     * The reading is shown in monospace next to the title and updates while the finger is down, so
+     * the effect of a change can be judged without releasing.
+     */
+    private fun sliderRow(choice: Choice): View {
+        val range = choice.range ?: return optionRow(choice)
+        val current = choice.value.toFloatOrNull() ?: range.start
+
+        val wrapper = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(6))
+            background = ContextCompat.getDrawable(context, R.drawable.bg_glass_button)
+        }
+
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(
+            TextView(context).apply {
+                text = choice.title
+                typeface = Typeface.SANS_SERIF
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+            },
+            LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
+        )
+        val reading = TextView(context).apply {
+            text = formatReading(current)
+            typeface = Typeface.MONOSPACE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ContextCompat.getColor(context, R.color.text_mono))
+        }
+        header.addView(reading)
+        wrapper.addView(header)
+
+        val steps = (((range.endInclusive - range.start) / choice.stepSize).toInt() - 1)
+            .coerceAtLeast(1)
+        val slider = android.widget.SeekBar(context).apply {
+            max = steps
+            progress = (((current - range.start) / choice.stepSize).toInt()).coerceIn(0, steps)
+        }
+        slider.setOnSeekBarChangeListener(
+            object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: android.widget.SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
+                    val value = range.start + progress * choice.stepSize
+                    reading.text = formatReading(value)
+                    if (fromUser) {
+                        callback?.onChoiceSelected(
+                            currentPanel,
+                            choice.copy(value = value.toString()),
+                        )
+                    }
+                }
+
+                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {
+                    Haptics.touch(reading)
+                }
+
+                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                    Haptics.release(reading)
+                }
+            },
+        )
+        wrapper.addView(
+            slider,
+            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+        )
+
+        wrapper.layoutParams = LinearLayout.LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(6) }
+        return wrapper
+    }
+
+    /** Integers print without a decimal point; everything else keeps one. */
+    private fun formatReading(value: Float): String =
+        if (value == value.toInt().toFloat()) value.toInt().toString()
+        else String.format(java.util.Locale.US, "%.1f", value)
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 

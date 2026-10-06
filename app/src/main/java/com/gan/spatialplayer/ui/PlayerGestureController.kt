@@ -48,6 +48,7 @@ class PlayerGestureController(
     private var durationMs: Long = 0L
 
     private var downX = 0f
+    private var lastX = 0f
     private var downY = 0f
     private var downTime = 0L
     private var mode = Mode.NONE
@@ -99,6 +100,7 @@ class PlayerGestureController(
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
                 downY = event.y
+                lastX = event.x
                 lastY = event.y
                 downTime = System.currentTimeMillis()
                 accumulatedFraction = 0f
@@ -144,15 +146,20 @@ class PlayerGestureController(
                         if (mode == Mode.SEEK) {
                             host.onScrubStart()
                         }
+                        // Rebase the reference to the current position: the travel that triggered
+                        // the gesture must not also be applied as an adjustment, or the first
+                        // update jumps by the whole slop distance.
                         lastY = event.y
+                        accumulatedFraction = 0f
                     }
                 }
 
                 when (mode) {
                     Mode.SEEK -> {
-                        // Full screen width maps to the whole duration.
-                        val deltaFraction = (event.x - downX) / viewWidth
-                        accumulatedFraction = deltaFraction
+                        // Accumulate movement since the gesture began, so triggering the gesture
+                        // does not itself seek.
+                        accumulatedFraction += (event.x - lastX) / viewWidth
+                        lastX = event.x
                         host.onScrubMove(accumulatedFraction)
                     }
 
@@ -216,7 +223,7 @@ class PlayerGestureController(
          * Was 14dp, which is below the distance at which a system edge swipe is recognised, so the
          * player often claimed touches the user meant for the system.
          */
-        const val SLOP_DP = 30f
+        const val SLOP_DP = 48f
 
         /** Matches the platform's typical back-gesture edge band. */
         const val SIDE_GESTURE_INSET_DP = 30f
