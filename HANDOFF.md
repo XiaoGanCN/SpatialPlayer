@@ -1,0 +1,304 @@
+# Session handoff — Spatial Player
+
+Everything learned while building this, so the next session does not have to rediscover it.
+Written to be read top-to-bottom; the "traps" section is the part that saves the most time.
+
+---
+
+## 1. Build and run
+
+```bash
+cd "/Applications/deepseek-harness-dsh-v0.1.6-alpha.1/Wrokspaces/Spatial Player"
+
+# JDK 21 is REQUIRED. JDK 26 breaks Gradle 8.9.
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+
+ADB=$HOME/Library/Android/sdk/platform-tools/adb
+PKG=com.gan.spatialplayer.debug          # debug package id; release is com.gan.spatialplayer
+
+./gradlew :app:assembleDebug --no-daemon 2>&1 | grep -E "^e:|BUILD" | head -6
+$ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
+```
+
+- **Media3 is pinned at 1.8.0** and nextlib at `io.github.anilbeesetti:nextlib-media3ext:1.8.0-0.9.0`.
+  1.9+/1.11+ require `compileSdk 36`; only **android-35** is installed. Do not bump.
+- `compileSdk 35`, minSdk 34, AGP 8.7.3, Kotlin 2.0.21, Gradle 8.9.
+- **nextlib needs `EXTENSION_RENDERER_MODE_PREFER`.** With mode 0 its `buildAudioRenderers`
+  returns early and registers no FFmpeg renderer at all. See `SpatialRenderersFactory`.
+- The platform has **no** decoder for `audio/ac3`, `audio/eac3`, `audio/true-hd`,
+  `audio/vnd.dts`, `audio/vnd.dts.hd`. FFmpeg extension is mandatory for any of them.
+- ffmpeg on the host: `export PATH=/opt/homebrew/bin:$PATH`. `ffprobe`, `ffmpeg`, `yt-dlp` there.
+- `ffmpeg` encoder limits: this build cannot encode 7.1 in ac3/eac3/truehd/flac (mono or ≤5.1
+  only), so **there is no way to generate a 7.1 test file here.** Test the capability guard instead.
+
+## 2. Device
+
+| | |
+|---|---|
+| Model | Sony **XQ-DQ72** (Xperia 1 V), API 34, SM8550 |
+| Display | 1096×2560 @ 420dpi → **2.625 px/dp**. HDR types `[2,3]` = HDR10 + HLG, **no Dolby Vision** |
+| | maxLuminance 1000, maxAvg 500, min 0.01; `mHdrConversionMode=HDR_CONVERSION_SYSTEM` |
+| Headset | **`1000X THE COLLEXION`**, A2DP, LDAC 96000/32-bit |
+| Spatializer | `spatial_audio_enabled` has `8,58:18:62:86:42:C8,1,1,1`; vendor lib `libtsrspatializer.so` |
+| Haptics | `AMPLITUDE_CONTROL`; effects CLICK, DOUBLE_CLICK, TICK, THUD, POP, HEAVY_CLICK, TEXTURE_TICK |
+
+**Non-destructive rule is absolute**: never `pm clear`, uninstall, reboot, or `adb shell monkey`.
+`KEYCODE_WAKEUP`/`KEYCODE_SLEEP`/`KEYCODE_HOME` are fine.
+
+## 3. Traps that cost real time
+
+### 3.1 Touch injection goes stale for a whole adb session
+`input tap` returns success and the event is **dropped**, while `KEYCODE_HOME` still works. This is
+indistinguishable from a broken app and cost most of one session. Detect it, then:
+
+```bash
+$ADB kill-server && sleep 2 && $ADB start-server && $ADB wait-for-device
+```
+
+`tools/verify-gestures.sh` now probes for this before asserting anything.
+
+### 3.2 Read the raw screenshot, never through a helper that maps bytes
+```bash
+$ADB exec-out screencap -p > shot.png          # correct
+adb_ exec-out screencap -p > shot.png          # WRONG if adb_ pipes through `tr -d '\r'`
+```
+`tr` corrupts binary PNG data and yields a **silent zero-byte file**, which then reads as a
+luminance of 0 and looks exactly like "the chrome is hidden".
+
+### 3.3 Volume measurement is a minefield when a headset is attached
+- `dumpsys audio` → `streamVolume:` is the **active** device's volume.
+- `settings get system volume_music_speaker` is an **unrelated per-device slot**.
+- `media volume --stream 3 --set N` writes the **speaker** slot and is ignored while BT is routed.
+
+Correct read: parse the per-device list under `Current:` for the device named on the `Devices:`
+line. Correct write: `input keyevent KEYCODE_VOLUME_UP/DOWN`. Both are implemented in
+`tools/verify-gestures.sh` (`music_volume`, `set_volume`).
+
+### 3.4 `View.animate().cancel()` does NOT clear the listener
+`View.animate()` returns one shared `ViewPropertyAnimator` per view; a listener set by a previous
+animation stays attached and fires when the **next** animation ends. This caused chrome to be set
+`GONE` immediately after being shown (measured `visibility=8` 200ms after an explicit show).
+
+**Rule adopted: never animate `visibility`.** The view stays `VISIBLE`; alpha alone is the state.
+`stop()` also calls `setListener(null)` and `setUpdateListener(null)` explicitly.
+
+### 3.5 The controls overlay swallows every touch
+It is a full-size sibling declared after the gesture layer, so gestures never reached the
+controller. Gestures are dispatched from `PlayerActivity.dispatchTouchEvent`; a touch inside the
+control capsule goes to its button, everything else becomes a gesture.
+
+### 3.6 `setViewport` must actually be called
+The controller scales drags by the viewport. It was never fed, so `viewWidth/viewHeight` stayed at
+`1`, gain became `1/1 × 0.30`, and **every** vertical delta saturated its per-event cap. Symptom:
+"a drag of less than a centimetre sends the volume through the roof".
+
+### 3.7 Do not use greedy regexes to edit Kotlin
+A `re.sub` with `.*?` across a file boundary deleted part of `PlayerGestureController.kt`
+(the tap and double-tap handlers). Use targeted literal replacements. Verify with a build **and**
+the suite after any structural edit.
+
+### 3.8 Kotlin string/template constraints
+- A nested quoted literal inside `${...}` is a **syntax error**. Build the string outside.
+- `' '` inside a `"..."` string is a syntax error — use `"_"` / `" "`.
+- File-level `@file:Suppress` must precede `package`.
+
+### 3.9 State leaks between suites
+A probe or dialog left foregrounded makes luminance assertions meaningless (read 121.5 instead of
+~3.5/"hidden"). `verify-gestures.sh` asserts the player is the resumed activity and fails fast.
+
+### 3.10 Ambient geometry is not recomputed on rotation
+`configChanges` includes `orientation` in the manifest, so the activity is **never recreated** — and
+nothing recomputed the picture rect. Fixed in `onConfigurationChanged` (called twice, because the
+player view is not re-measured yet at that point). Also: rotating is not an app interaction, so it
+must **not** haptic-buzz.
+
+## 4. Verified findings worth not re-deriving
+
+### 4.1 Stereo cannot be spatialised; 5.1 can (answers Q1)
+Measured with a bare `AudioTrack`:
+```
+canBeSpatialized  stereo=false   5.1=true
+bare AudioTrack   stereo → isSpatialized=false (mask 0x3)
+                  5.1    → isSpatialized=true  (mask 0x3f)
+```
+So **stereo → head tracking requires app-side upmix to 5.1** in an `AudioProcessor`. Feasible; it is
+on the list as Q1.
+
+### 4.2 `setIsContentSpatialized(true)` disables head tracking
+It means "already binaural, pass through", so the platform skips spatialisation. Must be `false`.
+This was the original head-tracking bug.
+
+### 4.3 An app cannot turn platform spatialisation off (Q2 / C9)
+`SPATIALIZATION_BEHAVIOR_NEVER` is only a hint. `android.media.Spatializer` has read-only members
+and listeners only; **there is no app-facing disable API**. The user confirmed the toggle does work
+in practice on their 5.1 test media, so keep it — but the label says "Ask the system not to
+spatialise", deliberately worded as a request. Hijacking another app's audio needs root/Magisk
+(AudioPlaybackCapture requires per-app consent and cannot re-render).
+
+### 4.4 The 7.1 sink failure (the 70GB film)
+Native error from the user's screenshot:
+```
+audio sink: AudioTrack init failed 0 Config(48000, 6396, 4, 9216000)
+  Format(2, Dolby Atmos 7.1, audio/raw, [8, 48000])
+```
+The decoder was fine — the **sink refused 8 channels of raw PCM**. Audio policy for the BT output
+advertises `channel masks: 0x0001, 0x0003` = **mono and stereo only**, so any 7.1 source fails over
+A2DP. Fixed by `AudioOutputCapability`, which caps the chosen track.
+
+**Critical subtlety**: `canOpenTrack(8)` returns **true** in isolation on this device while the real
+sink still refuses during playback. So the guard trusts the advertised device capability, not a
+test-open:
+```
+describe              :: stereo only · 1000X THE COLLEXION
+advertisedMaxChannels :: 2
+verifiedMaxChannels   :: 2      ← what the engine uses
+canOpen 8ch=true                ← AudioTrack lies
+```
+
+### 4.5 Media3 1.8 has no chapter API at all
+No `chapter` symbol in `Timeline`, `Metadata`, `MetadataEntry`, or the extractor. C8 needs a
+hand-written Matroska EBML parser (`Segment → Chapters → EditionEntry → ChapterAtom`).
+The reference film has 16 chapters.
+
+Related: `Player` exposes seek increments as **getters only**; the only way to change them is to
+rebuild the player (too heavy during a slider drag). The double-tap jump is therefore owned by the
+activity and read directly by the gesture controller and the skip buttons.
+
+### 4.6 Poweramp provider specifics
+- `content://com.maxmpz.audioplayer.data/files` **requires a `limit` param**.
+- `_id`, `name`, `duration` collide with the joined `folders` table → qualify `folder_files.*`.
+- Title column is `title_tag`. There is **no `_data`**; `name` is the file name, `path` is the folder.
+- Poweramp's own per-file URI **cannot be opened** (was the "source error"). Resolve through
+  MediaStore instead → `content://media/external/audio/media/{id}`.
+- **`artist` and `album` are already joined onto the `files` view.** Do not look them up via
+  album_id/artist_id in separate `albums`/`artists` queries — an earlier version did exactly that and
+  produced every artist but a **blank album for all 140 tracks**.
+- Android 11+ package visibility needs the `<queries>` block or `getPackageInfo` reports absent.
+
+### 4.7 Thumbnails
+Use `MediaMetadataRetriever.getScaledFrameAtTime` — a full `getFrameAtTime` allocates ~35 MB per row
+for 4K. Create one retriever per decode and `release()` in a `finally`; holding one per row leaks
+file descriptors. Skip black lead-ins by trying several timestamps and rejecting frames below a
+luma/coverage threshold (two HDR files showed black at t=1s and now show real frames).
+
+### 4.8 Glass: the library cannot be used as-is
+`QWEA0/Liquid-Glass-Android` (MIT) captures its backdrop by **drawing the view tree into a canvas**,
+which cannot see a `SurfaceView` — so it needs a `TextureView`, which gives up HDR passthrough.
+Also `setCustomBackdropCapture` makes its AGSL lens path bail out
+(`tryDrawLensGlass` → `if (customBackdropCapture != null) return false`), so it is video backdrop
+**or** the good lens, not both.
+
+Its `GlassLensRenderer.kt` **is self-contained** (only `android.graphics` + `RuntimeShader`, no
+API-36 or library-local refs), so the model was ported. `GlassRuntimeEffects` returns API-36
+`RuntimeColorFilter`/`RuntimeXfermode` and would **not** compile against android-35.
+
+Reference source is at `/tmp/lg` (re-clone `https://github.com/QWEA0/Liquid-Glass-Android` if gone);
+the optics doc is `/tmp/lg/docs/LIQUID_GLASS_V2.md`.
+
+### 4.9 The glass has little to refract — layout, not shader
+The controls sit in the **letterbox below the video**, so the backdrop is near-black. This is why the
+ported shader looks underwhelming. The reference layout puts the bar **inside the video frame**, and
+that single change is what will make the effect pay off. Must be addressed in B3.
+
+## 5. Reference UI geometry (measured from the user's screenshot)
+
+User's screenshot: 2016 px wide → device 1096 px ⇒ **×0.5437**; then ÷2.625 for dp.
+
+| Element | Reference px | Device |
+|---|---|---|
+| Capsule | 1790 × 72 | **~377 × 15 dp**, pill corner |
+| Seek track | 12 tall | **2.5 dp** |
+| Thumb | 32 ⌀ | **6.6 dp** (2.7× track) |
+| Text / icons | ~34 | ~7 dp |
+| Row order | one row | `⏪15 ▶ ⏩15 · 00:02 · ▬▬●▬▬ · 01:00 · ⏩⏩` |
+
+Insets ~12 dp sides / 14 dp bottom. Thumb rests ~33.5 % along the track.
+**It is a single row, not the two-row bar currently in `activity_player.xml`.**
+
+User's phone screenshots live in `/sdcard/Pictures/Screenshots/` — pull them with
+`$ADB pull` and read with `read_image`. This is how the 7.1 error was diagnosed: the capture carried
+the full native text that no log line produced.
+
+## 6. Test harnesses
+
+| Script | Checks | Notes |
+|---|---|---|
+| `tools/smoke-test.sh` | 23 | basic play/seek/state |
+| `tools/verify-multichannel.sh` | 22 | codec routing + **same-language subtitle identity** |
+| `tools/verify-poweramp.sh` | 11 | provider, playable URI opens, artist+album 140/140 |
+| `tools/verify-spatial-audio.sh` | 9 | `isSpatialized=true`, head tracking non-DISABLED |
+| `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
+
+**86 checks total, all green.** `tools/chrome_luminance.py` is a dependency-free PNG reader used as a
+visibility proxy (mean luma of the bottom strip). `tools/verify-chapters.sh` is still to be written.
+
+Debug probes (register in `app/src/debug/AndroidManifest.xml`):
+`SmokeTestActivity` (`SMOKE_PLAY`), `SmokeProbeActivity`/`SmokeTrackProbeActivity` (`SMOKE_TRACKS`,
+extras `track_probe_path`, `track_probe_uri`, `track_probe_select_text_index`,
+`track_probe_select_audio`, `track_probe_profile`), `SmokePowerampProbeActivity` (`SMOKE_POWERAMP`),
+`SmokeSpatialProbeActivity` (`SMOKE_SPATIAL`, `--ez spatial_probe_stereo true`),
+`SmokeSpatialToggleProbeActivity` (`SMOKE_SPATIAL_TOGGLE`),
+`SmokeAudioOutputProbeActivity` (`SMOKE_AUDIO_OUTPUT`).
+
+Test media: `tools/make-host-test-media.sh` (ffmpeg; **per-stream `-ac:a:N` is required or the flag
+lands on the wrong stream**) and `tools/make-test-media.sh` (on-device screenrecord; **must
+`KEYCODE_WAKEUP` first or you get `INVALID_LAYER_STACK`**).
+
+On device: `/sdcard/Movies/SpatialPlayerTest/` holds `ac3_51_720p.mkv`, `truehd_51_720p.mkv`,
+`hdr10_hevc_720p.mkv`, `hlg_hevc_720p.mkv`, `h264_aac_subs_720p.mkv`, `multi_stream_test.mkv`,
+`multi_eng_subs.mkv`, `yt_1080p_ac3_51.mkv`, `yt_hdr10_av1_ac3_51.mkv` (4K HDR, 388 MB), `broken.mkv`.
+
+Commit style: `git -c user.name="XiaoGanCN" -c user.email="76635216+XiaoGanCN@users.noreply.github.com"`.
+Use `commit -F -` with a heredoc; backticks in `-m` get shell-expanded.
+Repo: https://github.com/XiaoGanCN/SpatialPlayer (branch `main`). Release `v0.1.0` has a **stale** asset.
+GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
+
+---
+
+## 7. Task state
+
+### Done and verified on-device
+1. Tap-to-controls: first tap works; timeout **6 s** (was ~0.5 s); suppressed while a sheet is open.
+2. Error card: moved to the top so it never covers the controls; shows full native error; Copy button.
+3. Subtitle/audio **selection identity**: keyed by `"group#trackIndex"`, not `indexOf` on a data class.
+   4 × `eng` tracks now distinguishable and the 3rd highlights the 3rd.
+4. Gestures: routing via `dispatchTouchEvent`; 48 dp slop + 60 ms hold + per-event cap; viewport fed.
+5. Haptics: amplitude compositions (snap/open/close/bump/error) alongside platform constants.
+6. Poweramp: plays (was source error) + artist **and** album on 140/140.
+7. Thumbnails: real frames, black lead-ins skipped, LRU + 2-thread pool.
+8. Library: collapsed behind a glass disclosure header showing `321 · 1 folders`, persisted.
+9. External open: `ACTION_VIEW` + `ACTION_SEND`/`SEND_MULTIPLE` + `clipData` + Matroska/HLS filters.
+10. Head tracking survives seek (attributes re-asserted on `DISCONTINUITY_REASON_SEEK`; failures
+    swallowed so the repair cannot invent an error).
+11. Ambient glow recomputed on rotation.
+12. Spatial on/off toggle exposed (user-confirmed working).
+13. Double-tap jump configurable + persisted, shared with the skip buttons; split at the midline.
+14. **Remember last position until app quit** — in-memory `PlaybackMemory`, verified `30665 → 30665`.
+15. **7.1 sink guard** — `AudioOutputCapability`, the 70 GB film's failure.
+16. **Glass optics ported** — noise removed, bevel profile + two-lobe rim; capture 192×108.
+
+### Remaining — functions first, UI after (user's explicit ordering)
+- **C8** chapters (EBML parser + chapter UI + `verify-chapters.sh`).
+- **C5** Settings page (`SettingsStore`, misc/dev/debug/decode/app-info, built from the glass
+  components) — should collect: spatial toggle, jump length, decoder profile, gesture tuning,
+  glass material, subtitle parse cap.
+- **Q1** stereo→5.1 upmix `AudioProcessor` for head-tracked music (confirmed feasible, §4.1).
+- **C11 tail** subtitle parse cap (the failing film has 51 subtitle tracks) + surface the 7.1
+  downmix decision in the UI so it is not a silent surprise.
+- **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
+  guard resolves it.
+
+### Remaining — UI/shader (user strongly supports doing this next; B2 then B3)
+- **B2** component set: `GlassButton`, `GlassToggle`, `GlassSlider`, `GlassSheet`, `GlassPopup`,
+  `GlassMaterial` (REGULAR/CLEAR), `Motion.kt` (260 ms standard, 120 ms press, 320 ms layout).
+  Replace `bg_glass_*.xml` and `AlertDialog`. All elements must follow the design, not just the bar.
+- **B3** single-row capsule matching the reference (§5) **and move the chrome over the video** so the
+  glass has something to refract (§4.9). Seek bar 2.5 dp / 6.6 dp thumb, tap-to-seek, eased 260 ms.
+- **Chip merge**: one chip for **Open file** (largest) → **Poweramp** → **Library**; Library opens
+  full-screen as now, the other two dock below the status chips.
+- **Poweramp cover art** on its page.
+- Launcher icon: the user rejected earlier attempts as "nearly unusable" — needs a real double-check.
+  `README.md`: keep it terse, no excessive explanation.
+
+### Answers already given (do not re-derive)
+- **Q1** feasible but needs app-side upmix (§4.1). **Q2** not possible without root (§4.3).
