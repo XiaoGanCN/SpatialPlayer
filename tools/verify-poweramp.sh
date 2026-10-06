@@ -91,6 +91,27 @@ else
   fail "entries have no playable URI"
 fi
 
+# Artist and album must actually resolve. The provider's files view joins them, but an earlier
+# version read them from separate lookup tables and every album came back blank.
+SUMMARY=$(grep -oE "summary :: .*" "$LOG" | head -1)
+WITH_ARTIST=$(echo "$SUMMARY" | grep -oE "with_artist=[0-9]+" | grep -oE "[0-9]+")
+WITH_ALBUM=$(echo "$SUMMARY" | grep -oE "with_album=[0-9]+" | grep -oE "[0-9]+")
+TOTAL=$(echo "$SUMMARY" | grep -oE "total=[0-9]+" | grep -oE "[0-9]+")
+
+if [ -n "$WITH_ARTIST" ] && [ "$WITH_ARTIST" = "$TOTAL" ]; then
+  pass "all $TOTAL entries carry an artist"
+  grep -oE "entry :: .*artist=[^|]*" "$LOG" | head -1 | sed 's/^/      /'
+else
+  fail "artist missing on some entries (${WITH_ARTIST:-0}/$TOTAL)"
+fi
+
+if [ -n "$WITH_ALBUM" ] && [ "$WITH_ALBUM" = "$TOTAL" ]; then
+  pass "all $TOTAL entries carry an album"
+  grep -oE "entry :: .*album=[^|]*" "$LOG" | head -1 | sed 's/^/      /'
+else
+  fail "album missing on some entries (${WITH_ALBUM:-0}/$TOTAL)"
+fi
+
 # And prove the resolved URI actually opens.
 OPENED=$(grep -oE "openStream :: .*" "$LOG" | head -1)
 if echo "$OPENED" | grep -q "ok firstByte"; then

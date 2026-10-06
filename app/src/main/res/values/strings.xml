@@ -78,4 +78,6 @@
     <string name="speed">Speed</string>
     <string name="repeat">Repeat</string>
     <string name="open_settings">Open sound settings</string>
+    <string name="library">Library</string>
+    <string name="library_empty">empty</string>
 </resources>

@@ -1,13 +1,18 @@
 package com.gan.spatialplayer
 
 import android.Manifest
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -20,12 +25,14 @@ import androidx.media3.common.MimeTypes
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.gan.spatialplayer.databinding.ActivityMainBinding
 import com.gan.spatialplayer.media.DeviceCapabilities
+import com.gan.spatialplayer.ui.Haptics
 import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.FileEntry
 import com.gan.spatialplayer.media.MediaRepository
 import com.gan.spatialplayer.media.PowerampReader
 import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.FileListAdapter
+import com.gan.spatialplayer.ui.ThumbnailLoader
 import kotlinx.coroutines.launch
 
 /**
@@ -41,6 +48,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var repository: MediaRepository
     private lateinit var poweramp: PowerampReader
     private lateinit var adapter: FileListAdapter
+
+    /** Whether the library list is expanded; persisted so the choice sticks. */
+    private var libraryExpanded = false
+    private val prefs by lazy { getSharedPreferences("spatial_player", MODE_PRIVATE) }
 
     private val entries = ArrayList<FileEntry>()
     private var scopedFolderUri: Uri? = null
@@ -140,7 +151,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setUpList() {
-        adapter = FileListAdapter { entry -> openPlayer(entry) }
+        adapter = FileListAdapter(
+            onClick = { entry -> openPlayer(entry) },
+            thumbnails = ThumbnailLoader(this),
+        )
+        setUpLibraryDisclosure()
         binding.fileList.layoutManager = LinearLayoutManager(this)
         binding.fileList.adapter = adapter
         binding.fileList.itemAnimator = null
@@ -222,6 +237,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Wires the library disclosure header.
+     *
+     * The list starts collapsed: the useful first screen is the status chips and the actions, not a
+     * wall of filenames. The choice is remembered, so someone who prefers it open gets it open.
+     */
+    private fun setUpLibraryDisclosure() {
+        binding.libraryHeader.setOnClickListener {
+            Haptics.touch(binding.libraryHeader)
+            setLibraryExpanded(!libraryExpanded, animate = true)
+        }
+        setLibraryExpanded(prefs.getBoolean(KEY_LIBRARY_EXPANDED, false), animate = false)
+    }
+
+    /**
+     * Shows or hides the file list.
+     *
+     * The body's height comes from `layout_weight`, so expanding animates the weight and the list
+     * grows into place instead of appearing at full size. Below a whole number the weighted child
+     * gets no height at all, which is why the visibility is flipped once the weight is non-zero
+     * rather than up front.
+     */
+    private fun setLibraryExpanded(expanded: Boolean, animate: Boolean) {
+        libraryExpanded = expanded
+        prefs.edit().putBoolean(KEY_LIBRARY_EXPANDED, expanded).apply()
+
+        binding.libraryChevron.animate()
+            .rotation(if (expanded) 180f else 0f)
+            .setDuration(if (animate) MOTION_MS else 0L)
+            .start()
+
+        if (!animate) {
+            (binding.libraryBody.layoutParams as LinearLayout.LayoutParams).weight =
+                if (expanded) 1f else 0f
+            binding.libraryBody.visibility = if (expanded) View.VISIBLE else View.GONE
+            return
+        }
+
+        val params = binding.libraryBody.layoutParams as LinearLayout.LayoutParams
+        if (expanded) binding.libraryBody.visibility = View.VISIBLE
+        val from = params.weight
+        val to = if (expanded) 1f else 0f
+        ValueAnimator.ofFloat(from, to).apply {
+            duration = MOTION_MS
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animator ->
+                params.weight = animator.animatedValue as Float
+                binding.libraryBody.layoutParams = params
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    // Collapsing to exactly zero removes the body from the layout entirely.
+                    if (!expanded) binding.libraryBody.visibility = View.GONE
+                }
+            })
+            start()
+        }
+    }
+
     private fun publish(list: List<FileEntry>) {
         entries.clear()
         // De-duplicate on URI so a folder grant does not double up MediaStore rows.
@@ -233,6 +307,18 @@ class MainActivity : AppCompatActivity() {
         setScanning(false)
         updateEmptyState()
         updateCapabilityLine()
+        updateLibrarySummary()
+    }
+
+    /** One line telling the collapsed header what is inside. */
+    private fun updateLibrarySummary() {
+        val count = entries.size
+        val folders = entries.mapNotNull { it.uri.path?.substringBeforeLast('/') }.distinct().size
+        binding.librarySummary.text = when {
+            count == 0 -> getString(R.string.library_empty)
+            folders > 0 -> "$count · $folders folders"
+            else -> count.toString()
+        }
     }
 
     private fun setScanning(scanning: Boolean) {
@@ -333,5 +419,10 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val PREF_FOLDER_URI = "scoped_folder_uri"
+
+        const val KEY_LIBRARY_EXPANDED = "library_expanded"
+
+        /** Disclosure animation length; a spring would overshoot the weighted height. */
+        const val MOTION_MS = 280L
     }
 }

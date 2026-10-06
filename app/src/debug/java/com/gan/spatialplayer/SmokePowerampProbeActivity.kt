@@ -28,11 +28,18 @@ class SmokePowerampProbeActivity : AppCompatActivity() {
                 Log.i(
                     TAG,
                     "entry :: ${entry.displayName} | ${entry.mimeType} | " +
-                        "${entry.durationMs}ms | ${entry.uri}",
+                        "${entry.durationMs}ms | artist=${entry.artist ?: "-"} | " +
+                        "album=${entry.album ?: "-"} | ${entry.uri}",
                 )
             }
             val withDuration = result.entries.count { it.durationMs > 0 }
-            Log.i(TAG, "summary :: total=${result.entries.size} with_duration=$withDuration")
+            val withArtist = result.entries.count { !it.artist.isNullOrBlank() }
+            val withAlbum = result.entries.count { !it.album.isNullOrBlank() }
+            Log.i(
+                TAG,
+                "summary :: total=${result.entries.size} with_duration=$withDuration " +
+                    "with_artist=$withArtist with_album=$withAlbum",
+            )
 
             // Can the app actually OPEN a Poweramp content URI? Reading the library and being able
             // to stream from it are different questions, and the difference is what produces a

@@ -95,10 +95,62 @@
                 android:layout_height="wrap_content" />
         </HorizontalScrollView>
 
+        <!--
+          Library disclosure header.
+
+          The list starts collapsed so the app opens on the things that matter - the status chips and
+          the actions - rather than a wall of filenames. Tapping the header reveals it.
+        -->
+        <LinearLayout
+            android:id="@+id/libraryHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_glass_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp">
+
+            <TextView
+                android:id="@+id/libraryTitle"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/library" />
+
+            <TextView
+                android:id="@+id/librarySummary"
+                style="@style/Text.Mono.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:maxLines="1" />
+
+            <ImageView
+                android:id="@+id/libraryChevron"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:alpha="0.8"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_down" />
+        </LinearLayout>
+
         <FrameLayout
+            android:id="@+id/libraryBody"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:visibility="gone">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/fileList"

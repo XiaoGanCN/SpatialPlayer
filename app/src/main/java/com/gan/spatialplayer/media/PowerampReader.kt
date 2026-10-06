@@ -58,10 +58,17 @@ class PowerampReader(private val context: Context) {
         "folder_files.duration",
         "folder_id",
         "folders.path",
+        // The provider's `files` view already LEFT JOINs the albums and artists tables, so the
+        // display names are available directly. (An earlier attempt read `albums.album` /
+        // `artists.artist` through separate lookups keyed on album_id/artist_id: the artist name
+        // came out right but every album was blank, because the name is on the view itself.)
+        "album",
+        "artist",
     )
 
     /** Poweramp's `files` endpoint refuses queries without a limit. */
     private val pageLimit = 1000
+
 
     fun isInstalled(): Boolean = runCatching {
         context.packageManager.getPackageInfo(POWERAMP_PACKAGE, 0)
@@ -110,6 +117,8 @@ class PowerampReader(private val context: Context) {
             val titleIndex = cursor.getColumnIndex("title_tag")
             val durationIndex = cursor.getColumnIndex("duration")
             val folderPathIndex = cursor.getColumnIndex("path")
+            val albumIndex = cursor.getColumnIndex("album")
+            val artistIndex = cursor.getColumnIndex("artist")
 
             while (cursor.moveToNext()) {
                 val name = when {
@@ -141,11 +150,16 @@ class PowerampReader(private val context: Context) {
                     0L
                 }
 
+                val albumName = if (albumIndex >= 0) cursor.getString(albumIndex) else null
+                val artistName = if (artistIndex >= 0) cursor.getString(artistIndex) else null
+
                 out += FileEntry(
                     uri = playableUri,
                     displayName = name,
                     sizeBytes = 0L,
                     durationMs = durationMs,
+                    artist = artistName,
+                    album = albumName,
                     // The provider reports no MIME type, so derive it from the name.
                     mimeType = mimeForName(name),
                     source = FileEntry.Source.POWERAMP,

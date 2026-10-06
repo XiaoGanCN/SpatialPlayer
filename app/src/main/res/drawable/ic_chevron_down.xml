@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Disclosure chevron. Points down when a section is collapsed and is rotated 180 degrees when it is
+  open, so one asset covers both states and the rotation can be animated.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:pathData="M12,15.4 L5.6,9 L7.7,6.9 L12,11.2 L16.3,6.9 L18.4,9 Z" />
+</vector>

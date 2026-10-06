@@ -26,4 +26,7 @@
 
     <!-- Hairline rules between groups of settings. -->
     <color name="divider">#24FFFFFF</color>
+
+    <!-- Recessed surface behind thumbnails and icon plates. -->
+    <color name="surface_sunken">#14FFFFFF</color>
 </resources>
