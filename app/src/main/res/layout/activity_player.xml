@@ -23,12 +23,22 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Gesture layer sits under the controls so buttons win when visible. -->
+    <!--
+      Gesture layer.
+
+      Kept as an anchor for the haptic feedback target and for measuring, but NOT touchable: the
+      controls overlay is a full-size sibling declared after it, so whenever the chrome is visible
+      this view would receive no touches at all. Gestures are dispatched from the activity instead
+      (see PlayerActivity.dispatchTouchEvent), which also lets a touch that lands on a button go to
+      that button while everything else becomes a gesture.
+    -->
     <View
         android:id="@+id/gestureLayer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/transparent" />
+        android:background="@android:color/transparent"
+        android:clickable="false"
+        android:focusable="false" />
 
     <!-- Double-tap seek feedback -->
     <TextView

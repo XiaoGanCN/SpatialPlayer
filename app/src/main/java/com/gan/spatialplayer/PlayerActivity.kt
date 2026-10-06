@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.util.Rational
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -67,6 +68,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private lateinit var binding: ActivityPlayerBinding
     private lateinit var engine: PlayerEngine
     private lateinit var gestures: PlayerGestureController
+
+    /** Touch dispatch must not reach the controller before it and the player exist. */
+    private var gesturesReady = false
     private lateinit var inspectorSheet: InspectorSheet
     private var ambientSampler: AmbientSampler? = null
     private val ambientHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -140,7 +144,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         attachGlassBackdrop()
 
         gestures = PlayerGestureController(this, this)
-        binding.gestureLayer.setOnTouchListener { _, event -> gestures.onTouchEvent(event) }
+        gestures.verticalGain = DEFAULT_VERTICAL_GAIN
+        // The controller scales drags by the viewport, so it must be told the real size. It was
+        // never being given it, which left viewWidth/viewHeight at 1: every vertical delta then
+        // saturated its per-event cap and a short drag moved the volume by many steps at once.
+        binding.controlsOverlay.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+            gestures.setViewport(r - l, b - t)
+        }
+        binding.controlsOverlay.post {
+            gestures.setViewport(binding.controlsOverlay.width, binding.controlsOverlay.height)
+        }
+        gesturesReady = true
 
         inspectorSheet = InspectorSheet(this).apply { callback = this@PlayerActivity }
 
@@ -413,9 +427,50 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     // ------------------------------------------------------------------ gestures
 
+    /**
+     * Routes touches: anything inside the control chrome (or an open sheet) goes to the view that
+     * owns it, and everything else - the picture, the letterbox, the empty parts of the overlay -
+     * becomes a player gesture.
+     *
+     * This is done here rather than with an `OnTouchListener` on the gesture layer because the
+     * controls overlay is a full-size sibling drawn above that layer and swallows its touches, so
+     * gestures stopped working entirely whenever the chrome was visible.
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (!gesturesReady) return super.dispatchTouchEvent(ev)
+
+        // A sheet is a separate window, so anything arriving here while it is open belongs to it.
+        if (inspectorSheet.isOpen) return super.dispatchTouchEvent(ev)
+
+        if (!isInsideControls(ev.rawX, ev.rawY)) {
+            if (gestures.onTouchEvent(ev)) return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** True when the point falls on the control capsule, so its buttons keep priority. */
+    private fun isInsideControls(rawX: Float, rawY: Float): Boolean {
+        if (!PlayerAnimation.isShown(binding.controlsOverlay)) return false
+        val capsule = binding.controlGlass
+        if (capsule.width == 0 || capsule.height == 0) return false
+        val loc = IntArray(2)
+        capsule.getLocationOnScreen(loc)
+        // A small bleed keeps the touch target comfortable at the edges of the pill.
+        val bleed = 6f * resources.displayMetrics.density
+        return rawX >= loc[0] - bleed && rawX <= loc[0] + capsule.width + bleed &&
+            rawY >= loc[1] - bleed && rawY <= loc[1] + capsule.height + bleed
+    }
+
     override fun onSingleTap() {
         if (inspectorSheet.isOpen) return
-        toggleControls()
+        // Revealing the chrome arms the idle countdown; tapping it away does not need one. Without
+        // this the chrome stayed up forever after a tap, because only the playback callbacks ever
+        // started the timer.
+        if (PlayerAnimation.isShown(binding.controlsOverlay)) {
+            hideControls()
+        } else {
+            showControlsTemporarily()
+        }
     }
 
     override fun onDoubleTap(forward: Boolean) {
@@ -1243,6 +1298,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         /** Corner radius of the floating control capsule. */
         private const val CONTROL_GLASS_RADIUS_DP = 30f
+
+        /** Vertical drag sensitivity handed to the gesture controller. */
+        private const val DEFAULT_VERTICAL_GAIN = 0.30f
 
         /** How long the chrome stays up after an interaction. */
         private const val CONTROLS_TIMEOUT_MS = 6_000L

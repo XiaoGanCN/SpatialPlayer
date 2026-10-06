@@ -125,6 +125,27 @@ class PlayerGestureController(
     private var viewWidth = 1
     private var viewHeight = 1
 
+    /** True while a vertical gesture is waiting out [ADJUST_HOLD_MS] before it may act. */
+    private var adjustArmed = false
+    private var slopCrossedAtMs = 0L
+
+    /**
+     * Fraction of the range one screen-height vertical drag covers.
+     *
+     * Exposed so Settings can offer a sensitivity control rather than hard-coding a value that may
+     * not suit every hand. Defaults low: the previous 0.6 meant a two-centimetre nudge moved the
+     * volume several steps, which is what "dragging less than a centimetre sends it through the
+     * roof" described.
+     */
+    var verticalGain: Float = 0.30f
+        set(value) {
+            field = value.coerceIn(0.05f, 1.5f)
+        }
+
+    /** Caps a single event's contribution so a coalesced or jumpy MOVE cannot spike the value. */
+    private fun clampStep(delta: Float): Float =
+        delta.coerceIn(-MAX_STEP_FRACTION, MAX_STEP_FRACTION)
+
     fun setViewport(width: Int, height: Int) {
         viewWidth = width.coerceAtLeast(1)
         viewHeight = height.coerceAtLeast(1)
@@ -188,6 +209,13 @@ class PlayerGestureController(
                             downX < viewWidth / 2f -> Mode.BRIGHTNESS
                             else -> Mode.VOLUME
                         }
+                        // Wait a beat before acting. A touch that is still accelerating into a
+                        // system gesture (a shade pull, a back swipe) often crosses the slop
+                        // threshold on its way out; requiring the finger to still be moving after
+                        // this pause filters those out without adding perceptible latency to a
+                        // deliberate drag.
+                        adjustArmed = mode != Mode.SEEK && mode != Mode.NONE
+                        slopCrossedAtMs = System.currentTimeMillis()
                         if (mode == Mode.SEEK) {
                             host.onScrubStart()
                         }
@@ -195,8 +223,20 @@ class PlayerGestureController(
                         // the gesture must not also be applied as an adjustment, or the first
                         // update jumps by the whole slop distance.
                         lastY = event.y
+                        lastX = event.x
                         accumulatedFraction = 0f
                     }
+                }
+
+                // The hold delay is measured from the moment the axis was locked.
+                if (adjustArmed) {
+                    val waited = System.currentTimeMillis() - slopCrossedAtMs
+                    if (waited < ADJUST_HOLD_MS) return true
+                    adjustArmed = false
+                    // The finger may have travelled far during the hold; treat that travel as
+                    // approach, not as an adjustment.
+                    lastY = event.y
+                    lastX = event.x
                 }
 
                 when (mode) {
@@ -209,15 +249,19 @@ class PlayerGestureController(
                     }
 
                     Mode.BRIGHTNESS -> {
-                        val delta = (lastY - event.y) / viewHeight * VERTICAL_GAIN
+                        val delta = clampStep(
+                            (lastY - event.y) / viewHeight * verticalGain,
+                        )
                         lastY = event.y
-                        host.onBrightnessDelta(delta)
+                        if (delta != 0f) host.onBrightnessDelta(delta)
                     }
 
                     Mode.VOLUME -> {
-                        val delta = (lastY - event.y) / viewHeight * VERTICAL_GAIN
+                        val delta = clampStep(
+                            (lastY - event.y) / viewHeight * verticalGain,
+                        )
                         lastY = event.y
-                        host.onVolumeDelta(delta)
+                        if (delta != 0f) host.onVolumeDelta(delta)
                     }
 
                     else -> Unit
@@ -229,6 +273,7 @@ class PlayerGestureController(
                     host.onScrubStop(accumulatedFraction)
                 }
                 mode = Mode.NONE
+                adjustArmed = false
                 lastZoomSpan = 0f
             }
         }
@@ -285,69 +330,99 @@ class PlayerGestureController(
         const val DOUBLE_TAP_TIMEOUT_MS = 260L
 
         /**
-         * Fraction of the full range that one screen-height drag covers.
+         * Pause after the axis locks before a vertical gesture may change anything.
          *
-         * At 1.0 a quarter-screen flick changed volume by 25%, which felt twitchy. 0.6 makes a
-         * full-height drag cover 60% of the range, so small adjustments are easy to hit.
+         * Long enough to let a touch that is really heading for the notification shade or the back
+         * gesture declare itself, short enough that a deliberate drag feels immediate.
          */
-        const val VERTICAL_GAIN = 0.6f
+        const val ADJUST_HOLD_MS = 60L
+
+        /**
+         * Largest share of the range a single `ACTION_MOVE` may apply.
+         *
+         * Android coalesces batched move events into one callback during fast drags, so a single
+         * delta can arrive far larger than the distance between two frames; without a cap that
+         * becomes a jump.
+         */
+        const val MAX_STEP_FRACTION = 0.03f
+
+        /** Default vertical sensitivity; see [verticalGain]. */
+        const val DEFAULT_VERTICAL_GAIN = 0.30f
+
     }
 }
 
 /**
- * Small animation helpers used by the player chrome. Kept here so the activity reads as intent
- * rather than as tween configuration.
+ * Small animation helpers used by the player chrome.
  *
- * ## Why [show] sets alpha synchronously
+ * ## The bug this design exists to prevent
  *
- * The previous pair of helpers animated alpha in both directions, and [hide] only set
- * `visibility = GONE` in its end callback. That left a window where the view was `VISIBLE` at
- * `alpha = 0`, and because the caller tracked its own boolean rather than the view's real state,
- * the two disagreed: the first tap "hid" a chrome that was already invisible, and the second tap
- * faded it in from zero while the auto-hide timer was already running. Measured as "the first touch
- * does nothing, the second shows the controls and they immediately disappear".
+ * The first version kept the chrome's `visibility` as the hidden state: `hide` faded alpha to 0 and
+ * set `View.GONE` in its end listener, and `show` cancelled that animation and set
+ * `View.VISIBLE` again. It looked correct and was not.
  *
- * The rule now: the view's own state is the single source of truth. [show] makes the chrome
- * visible and fully opaque on the same frame, then animates only a small translation so it still
- * feels like it arrives rather than blinks. [hide] fades alpha out and flips visibility at the end,
- * and is safe to call when already hidden.
+ * `View.animate()` returns one shared `ViewPropertyAnimator` per view, and **`cancel()` does not
+ * clear its listener**. The listener installed by `hide` therefore stayed attached, and when the
+ * *next* animation (the one started by `show`) finished, `onAnimationEnd` ran `visibility = GONE`.
+ * The chrome was made visible and then immediately hidden again by a leftover callback, so every
+ * second tap appeared to do nothing at all. Measured 200ms after a `show`: `visibility=8` (GONE).
+ *
+ * ## The rule now
+ *
+ * Nothing animates `visibility`. The view stays `VISIBLE` for its whole life and *alpha alone*
+ * expresses whether the chrome is showing, so no end callback is needed to establish the hidden
+ * state and no stale listener can undo a `show`. `stop()` clears the listener before every new
+ * animation so a superseded animation cannot fire an action for a state that no longer applies.
  */
 object PlayerAnimation {
 
-    /** True when the chrome is genuinely on screen, not merely non-GONE. */
-    fun isShown(view: View): Boolean =
-        view.visibility == View.VISIBLE && view.alpha > 0.01f
+    /** Alpha below which the chrome counts as hidden. */
+    private const val HIDDEN_ALPHA = 0.01f
+
+    /** True when the chrome is genuinely on screen. */
+    fun isShown(view: View): Boolean = view.visibility == View.VISIBLE && view.alpha > HIDDEN_ALPHA
 
     /**
-     * Reveals the chrome immediately, with a short slide so it settles rather than pops.
+     * Cancels any running animation and detaches its listeners.
      *
-     * Alpha is assigned directly instead of animated: a fade-in that starts from an alpha left
-     * behind by a previous [hide] is what made the controls invisible after the first tap.
+     * `cancel()` alone is not enough - see the note above - hence the explicit `setListener(null)`.
      */
-    fun show(view: View, durationMs: Long = 180L, slideDp: Float = 10f) {
+    private fun stop(view: View) {
         view.animate().cancel()
-        val slide = slideDp * view.resources.displayMetrics.density
+        view.animate().setListener(null)
+        view.animate().setUpdateListener(null)
+    }
 
-        val alreadyVisible = view.visibility == View.VISIBLE && view.alpha >= 0.99f
+    /**
+     * Reveals the chrome.
+     *
+     * Alpha is assigned up front rather than animated from its previous value: a fade that begins
+     * from an alpha left behind by a previous [hide] is what made the controls invisible even though
+     * the code had just asked for them to be shown.
+     */
+    fun show(view: View, durationMs: Long = 160L) {
+        stop(view)
+        val wasShown = isShown(view)
         view.visibility = View.VISIBLE
         view.alpha = 1f
-        if (alreadyVisible) {
-            view.translationY = 0f
-            return
-        }
+        if (wasShown) return
 
-        view.translationY = slide
+        // A small scale settle reads as "arrived" without delaying legibility.
+        view.scaleX = 0.985f
+        view.scaleY = 0.985f
         view.animate()
-            .translationY(0f)
+            .scaleX(1f)
+            .scaleY(1f)
             .setDuration(durationMs)
             .setInterpolator(DecelerateInterpolator())
             .start()
     }
 
-    /** Fades the chrome out and marks it GONE. Idempotent. */
-    fun hide(view: View, durationMs: Long = 160L, endAction: (() -> Unit)? = null) {
-        view.animate().cancel()
-        if (view.visibility != View.VISIBLE) {
+    /** Fades the chrome out. Purely alpha; visibility is never touched. */
+    fun hide(view: View, durationMs: Long = 140L, endAction: (() -> Unit)? = null) {
+        stop(view)
+        view.visibility = View.VISIBLE
+        if (!isShown(view)) {
             view.alpha = 0f
             endAction?.invoke()
             return
@@ -356,25 +431,11 @@ object PlayerAnimation {
             .alpha(0f)
             .setDuration(durationMs)
             .setInterpolator(DecelerateInterpolator())
-            .setListener(object : AnimatorListenerAdapter() {
-                private var cancelled = false
-
-                override fun onAnimationCancel(animation: Animator) {
-                    cancelled = true
-                }
-
-                override fun onAnimationEnd(animation: Animator) {
-                    if (!cancelled) {
-                        view.visibility = View.GONE
-                        view.translationY = 0f
-                        endAction?.invoke()
-                    }
-                }
-            })
+            .withEndAction { endAction?.invoke() }
             .start()
     }
 
-    /** Pulse for the transient seek/zoom feedback chips. */
+/** Pulse for the transient seek/zoom feedback chips. */
     fun pulse(view: View, holdMs: Long = 620L) {
         view.animate().cancel()
         view.visibility = View.VISIBLE
