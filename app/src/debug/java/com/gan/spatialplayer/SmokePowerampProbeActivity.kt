@@ -37,7 +37,7 @@ class SmokePowerampProbeActivity : AppCompatActivity() {
             // Can the app actually OPEN a Poweramp content URI? Reading the library and being able
             // to stream from it are different questions, and the difference is what produces a
             // "source error" on playback.
-            result.entries.take(2).forEach { entry ->
+            result.entries.take(3).forEach { entry ->
                 val open = runCatching {
                     contentResolver.openInputStream(entry.uri)?.use { it.read() } ?: -1
                 }

@@ -131,6 +131,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         binding.playerView.player = engine.player
         configurePlayerView()
+        attachGlassBackdrop()
 
         gestures = PlayerGestureController(this, this)
         binding.gestureLayer.setOnTouchListener { _, event -> gestures.onTouchEvent(event) }
@@ -160,6 +161,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
 
         // Subtitles: readable defaults, no baked-in styling fighting the design.
+        // The glass capsule refracts the video behind it. The backdrop has to be the surface that
+        // actually holds the picture, since a SurfaceView is composited outside the window.
+        binding.controlGlass.cornerRadiusPx =
+            resources.displayMetrics.density * CONTROL_GLASS_RADIUS_DP
+        binding.controlGlass.thickness = 1.15f
+        binding.controlGlass.aberration = 1.25f
+        binding.controlGlass.causticStrength = 1f
+
         binding.playerView.subtitleView?.apply {
             setApplyEmbeddedStyles(true)
             setApplyEmbeddedFontSizes(false)
@@ -446,6 +455,18 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     // ------------------------------------------------------------------ ambient + geometry
 
+    /**
+     * Gives the glass capsule something to refract.
+     *
+     * The source must be the SurfaceView holding the picture; anything else would sample the window
+     * canvas, which does not contain the video.
+     */
+    private fun attachGlassBackdrop() {
+        val surface = binding.playerView.videoSurfaceView as? android.view.SurfaceView ?: return
+        binding.controlGlass.backdropSource = surface
+        binding.controlGlass.start()
+    }
+
     private fun startAmbientSampling() {
         // Idempotent: onResume and onRenderedFirstFrame both call this, and rebuilding the sampler
         // would discard the picture geometry it has already been told about, which makes the wash
@@ -598,6 +619,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onEngineFirstFrame() {
         updateVideoRect()
+        attachGlassBackdrop()
         // Only meaningful once the surface actually has a frame in it.
         startAmbientSampling()
     }
@@ -1131,6 +1153,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val VALUE_TEXT_HEADER = "text_header"
 
         private const val TAG = "PlayerActivity"
+
+        /** Corner radius of the floating control capsule. */
+        private const val CONTROL_GLASS_RADIUS_DP = 30f
 
         private const val SUBTITLE_TEXT_SP = 17f
         private const val SUBTITLE_BOTTOM_FRACTION = 0.08f

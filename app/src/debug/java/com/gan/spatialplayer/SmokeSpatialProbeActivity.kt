@@ -78,15 +78,23 @@ class SmokeSpatialProbeActivity : AppCompatActivity() {
             .build()
 
     private fun startRawTrack() {
+        val stereo = intent.getBooleanExtra(EXTRA_STEREO, false)
+        startTrack(
+            if (stereo) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_5POINT1,
+            if (stereo) 2 else 6,
+            if (stereo) "stereo" else "5.1",
+        )
+    }
+
+    private fun startTrack(channelMask: Int, channels: Int, label: String) {
         val sampleRate = 48_000
-        val channelMask = AudioFormat.CHANNEL_OUT_5POINT1
         val minBuffer = AudioTrack.getMinBufferSize(
             sampleRate,
             channelMask,
             AudioFormat.ENCODING_PCM_16BIT,
         )
         if (minBuffer <= 0) {
-            Log.w(TAG, "rawtrack :: getMinBufferSize failed for 5.1 ($minBuffer)")
+            Log.w(TAG, "rawtrack :: getMinBufferSize failed for $label ($minBuffer)")
             return
         }
 
@@ -113,14 +121,14 @@ class SmokeSpatialProbeActivity : AppCompatActivity() {
 
         // Feed a second of silence; enough for the platform to latch a format for the track.
         val frames = sampleRate
-        val buffer = ShortArray(frames * 6)
+        val buffer = ShortArray(frames * channels)
         var written = 0
         while (written < buffer.size) {
             val n = created.write(buffer, written, buffer.size - written)
             if (n <= 0) break
             written += n
         }
-        Log.i(TAG, "rawtrack :: 5.1 session=${created.audioSessionId} state=${created.state} written=$written")
+        Log.i(TAG, "rawtrack :: $label session=${created.audioSessionId} state=${created.state} written=$written")
     }
 
     override fun onDestroy() {
@@ -134,5 +142,6 @@ class SmokeSpatialProbeActivity : AppCompatActivity() {
 
     companion object {
         const val TAG = "SpatialPlayerSpatial"
+        const val EXTRA_STEREO = "spatial_probe_stereo"
     }
 }

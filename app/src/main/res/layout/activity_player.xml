@@ -157,14 +157,18 @@
             android:layout_weight="1" />
 
         <!-- Bottom control cluster -->
-        <LinearLayout
+        <com.gan.spatialplayer.ui.LiquidGlassView
+            android:id="@+id/controlGlass"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_scrim_bottom"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="14dp"
             android:orientation="vertical"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:paddingTop="34dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="12dp">
             android:paddingBottom="16dp">
 
             <!-- Timecode row: monospace, deliberately quiet -->
@@ -288,7 +292,7 @@
                     android:src="@drawable/ic_audio" />
 
             </LinearLayout>
-        </LinearLayout>
+        </com.gan.spatialplayer.ui.LiquidGlassView>
     </LinearLayout>
 
     <!-- Transient error card -->

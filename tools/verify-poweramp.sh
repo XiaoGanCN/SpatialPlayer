@@ -79,11 +79,24 @@ else
   info "no durations reported"
 fi
 
-if grep -qE "entry :: .+content://com.maxmpz.audioplayer.data/files/[0-9]+" "$LOG"; then
-  pass "entries resolve to playable provider URIs"
+# Entries must resolve to a URI that can actually be opened. Poweramp's own per-file URI cannot
+# be streamed, so the reader resolves through MediaStore; a regression here reintroduces the
+# "source error" that made Poweramp tracks unplayable.
+if grep -qE "entry :: .+content://media/external/audio/media/[0-9]+" "$LOG"; then
+  pass "entries resolve to openable MediaStore URIs"
   grep -oE "entry :: .*" "$LOG" | head -2 | sed 's/^/      /'
+elif grep -qE "entry :: .+content://com\.maxmpz\.audioplayer\.data/files/" "$LOG"; then
+  fail "entries still use Poweramp's own URI, which cannot be opened (source error)"
 else
   fail "entries have no playable URI"
+fi
+
+# And prove the resolved URI actually opens.
+OPENED=$(grep -oE "openStream :: .*" "$LOG" | head -1)
+if echo "$OPENED" | grep -q "ok firstByte"; then
+  pass "a resolved URI opens for reading"
+else
+  info "openStream probe: ${OPENED:-not captured}"
 fi
 
 if grep -qE "FATAL EXCEPTION|E AndroidRuntime" "$LOG"; then
