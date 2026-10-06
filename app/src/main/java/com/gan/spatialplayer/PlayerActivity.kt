@@ -217,11 +217,16 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // Subtitles: readable defaults, no baked-in styling fighting the design.
         // The glass capsule refracts the video behind it. The backdrop has to be the surface that
         // actually holds the picture, since a SurfaceView is composited outside the window.
-        binding.controlGlass.cornerRadiusPx =
-            resources.displayMetrics.density * CONTROL_GLASS_RADIUS_DP
-        binding.controlGlass.thickness = 1.15f
-        binding.controlGlass.aberration = 1.25f
-        binding.controlGlass.causticStrength = 1f
+        val density = resources.displayMetrics.density
+        binding.controlGlass.cornerRadiusPx = density * CONTROL_GLASS_RADIUS_DP
+        // A wide bevel on a control-height capsule: the bend has to happen over most of the pane's
+        // short side or the rim reads as a thin outline rather than as thickness.
+        binding.controlGlass.bevelWidthPx = density * CONTROL_GLASS_BEVEL_DP
+        binding.controlGlass.refractionPx = density * CONTROL_GLASS_REFRACT_DP
+        binding.controlGlass.refractionFalloff = 1.6f
+        binding.controlGlass.dispersionStrength = 0.10f
+        binding.controlGlass.specularStrength = 1.0f
+        binding.controlGlass.saturation = 1.06f
 
         applySubtitleStyle()
     }
@@ -1416,6 +1421,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         /** Corner radius of the floating control capsule. */
         private const val CONTROL_GLASS_RADIUS_DP = 30f
+
+        /** Refracting bevel and bend distance for the control capsule, in dp. */
+        private const val CONTROL_GLASS_BEVEL_DP = 16f
+        private const val CONTROL_GLASS_REFRACT_DP = 12f
 
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f

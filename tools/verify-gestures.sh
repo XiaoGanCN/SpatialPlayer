@@ -29,9 +29,36 @@ info() { printf '  ·  %s\n' "$1"; }
 sh_()  { "$ADB" shell "$@" 2>/dev/null | tr -d '\r'; }
 adb_() { "$ADB" "$@" 2>/dev/null | tr -d '\r'; }
 
-# Music stream volume index, the value a volume gesture actually moves.
+# Volume of the device audio is actually routed to.
+#
+# Not `streamVolume:`, and not the `volume_music_speaker` setting. Both lie when a headset is
+# attached: `streamVolume` reports the volume of the ACTIVE device while `settings` holds an
+# unrelated per-device slot, so reading either one produced a test that could not move - the number
+# stayed pegged at the maximum of whichever device it happened to describe.
+#
+# `dumpsys audio` lists the per-device values under `Current:`; the active device is named on the
+# following `Devices:` line. This reads the one that will actually be heard.
 music_volume() {
-  sh_ "dumpsys audio" | awk '/STREAM_MUSIC:/{f=1} f&&/streamVolume:/{gsub(/[^0-9]/,"");print;exit}'
+  sh_ "dumpsys audio" | awk '
+    /STREAM_MUSIC:/                { in_stream = 1; next }
+    in_stream && /Current:/        { line = $0; sub(/^[^:]*:[^:]*:[^:]*:/, "", line); current = line }
+    in_stream && /Devices:/        {
+      dev = $0
+      sub(/.*Devices:[ ]*/, "", dev)
+      sub(/\(.*/, "", dev)
+      n = split(current, parts, ",")
+      for (i = 1; i <= n; i++) {
+        if (index(parts[i], "(" dev ")")) {
+          v = parts[i]
+          sub(/.*:[ ]*/, "", v)
+          gsub(/[^0-9]/, "", v)
+          print v
+          exit
+        }
+      }
+      exit
+    }
+  '
 }
 
 # Screen density informs how many pixels a millimetre is.
@@ -120,14 +147,42 @@ fi
 
 restore() {
   if [ -n "${ORIGINAL_VOLUME:-}" ]; then
-    sh_ "media volume --stream 3 --set $ORIGINAL_VOLUME" > /dev/null 2>&1
+    set_volume "$ORIGINAL_VOLUME"
   fi
 }
 
 # ---------------------------------------------------------------------------
 say "a drag shorter than a centimetre must not change the volume"
-RESET=15
-sh_ "media volume --stream 3 --set $RESET" > /dev/null 2>&1
+# Start from a low-but-not-minimum volume. A fixed reset value (this was 15) collides with the
+# stream maximum on a device whose max is 30: starting at 28 leaves only two steps of headroom, so an
+# upward drag clamps and the assertion reads as "the gesture is dead" when it is the test that is
+# wrong. Anchor to the actual bounds instead.
+VOL_MAX=$(sh_ dumpsys audio | awk '/STREAM_MUSIC:/{f=1} f&&/Max:/{gsub(/[^0-9]/,"");print;exit}')
+VOL_MAX=${VOL_MAX:-15}
+RESET=$(( VOL_MAX / 4 ))
+info "music volume range 0..${VOL_MAX}; tests start at ${RESET}"
+
+# Set the volume the way the hardware keys do, so it lands on the active output. `media volume
+# --set` writes the speaker slot and would be ignored while a headset is routed.
+set_volume() {
+  local target="$1" current i
+  current=$(music_volume)
+  current=${current:-0}
+  for ((i = 0; i < 40; i++)); do
+    [ "$current" = "$target" ] && return 0
+    if [ "$current" -gt "$target" ]; then
+      sh_ input keyevent KEYCODE_VOLUME_DOWN > /dev/null 2>&1
+    else
+      sh_ input keyevent KEYCODE_VOLUME_UP > /dev/null 2>&1
+    fi
+    sleep 0.15
+    current=$(music_volume)
+    current=${current:-0}
+  done
+  info "could not reach volume ${target} (stopped at ${current})"
+}
+
+set_volume "$RESET"
 sleep 1
 BEFORE=$(music_volume)
 TINY=$(( PX_PER_MM * 10 ))            # 10mm
@@ -145,7 +200,7 @@ fi
 
 # ---------------------------------------------------------------------------
 say "a deliberate drag must still work"
-sh_ "media volume --stream 3 --set $RESET" > /dev/null 2>&1
+set_volume "$RESET"
 sleep 1
 BEFORE=$(music_volume)
 BIG=$(( PX_PER_MM * 50 ))             # 5cm

@@ -28,16 +28,21 @@ import android.widget.LinearLayout
  * read back from the surface with [PixelCopy], uploaded as a texture, and then **re-rendered
  * through a fragment shader that models a thick refracting medium**:
  *
- *  * **Refraction / IOR** - the backdrop is resampled along a normal derived from the view's own
- *    rounded-rectangle signed distance field, so the surface behaves like a lens that bends what is
- *    behind it more towards the rim than at the centre.
- *  * **Chromatic aberration** - red, green and blue are sampled at three slightly different
- *    refraction strengths, which is what makes real glass fringe colour at the edges instead of
- *    looking like a flat blur.
- *  * **Caustics** - a subtle cellular pattern is advected by the same refraction offset, giving the
- *    bright focused filaments that light forms after passing through a curved medium.
- *  * **Fresnel rim and specular** - a bright edge that intensifies at grazing angles, plus a
- *    directional highlight, so the pane reads as a physical object with a surface.
+ *  * **Refraction** - the backdrop is resampled inward along a normal taken from the view's own
+ *    rounded-rectangle signed distance field, so the rim mirrors the content just inside it. The
+ *    bend follows a **bevel depth profile**: an inverse-power falloff concentrates nearly all of it
+ *    into the outermost pixels and leaves a long gentle tail inside, which is what reads as a lens
+ *    rather than as a blurred edge.
+ *  * **Dispersion** - red, green and blue are bent by slightly different amounts, which is what puts
+ *    a spectral fringe on a real glass edge.
+ *  * **Rim light from the same normal field** - two symmetric angular lobes (`pow 4.5`), so the lit
+ *    and shadow sides peak equally, plus a softer glow inward on the lit side only. There is
+ *    deliberately **no direction-independent term**, because that is exactly what leaves a constant
+ *    outline all the way around and makes a pane look like a sticker.
+ *
+ * There is no procedural noise anywhere in the model. An earlier version faked caustics with
+ * cellular noise advected by the refraction offset; it read as grain rather than as glass, and the
+ * optics below produce the real highlight structure without it.
  *
  * ## Why a texture and not a shader over the live view tree
  *
@@ -55,13 +60,51 @@ class LiquidGlassView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
-    /** Qualities of the glass, all tunable so the look can be adjusted without touching the shader. */
+    /**
+     * Qualities of the glass, all tunable so the look can be adjusted without touching the shader.
+     *
+     * The names and meanings follow the reference optical model, so the same numbers can be carried
+     * between implementations without reinterpretation.
+     */
     var cornerRadiusPx: Float = dp(28f)
-    var thickness: Float = 1.0f
-    var aberration: Float = 1.0f
-    var causticStrength: Float = 1.0f
-    var tintColor: Int = 0x14FFFFFF
-    var rimStrength: Float = 0.55f
+
+    /** Width of the refracting bevel, in px. This is the width of the "edge" of the pane. */
+    var bevelWidthPx: Float = dp(18f)
+
+    /** How far the rim pulls the backdrop inward, in px. */
+    var refractionPx: Float = dp(14f)
+
+    /**
+     * Bevel depth profile.
+     *
+     * Above zero uses an inverse-power (gravity-lens) decay, so the bend is concentrated at the very
+     * edge; zero uses a squared profile that spreads it evenly across the bevel.
+     */
+    var refractionFalloff: Float = 1.6f
+
+    /** Per-channel split at the rim. Around 0.10 reads as glass; beyond ~0.25 it reads as rainbow. */
+    var dispersionStrength: Float = 0.10f
+
+    /** Rim highlight strength. */
+    var specularStrength: Float = 1.0f
+
+    /** 1.0 leaves colour alone; above 1 applies the vibrancy curve. */
+    var saturation: Float = 1.06f
+
+    /** Straight-alpha base tint mixed over the refracted backdrop. */
+    var tintColor: Int = 0x12FFFFFF
+
+    /** Coloured body, modelled as absorption plus a little scattering. Alpha 0 disables it. */
+    var glassTintColor: Int = 0x00000000
+
+    /** Darkening applied under the glass, for the "clear" material over bright content. */
+    var dimAmount: Float = 0.0f
+
+    /** 0..1 press state; boosts the bend slightly so a touch feels like it deforms the surface. */
+    var pressAmount: Float = 0f
+
+    /** Direction the light comes from, as an angle in radians. */
+    var lightAngleRad: Float = Math.toRadians(135.0).toFloat()
 
     /** The view whose surface should be read as the backdrop, usually the video. */
     var backdropSource: SurfaceView? = null
@@ -206,11 +249,28 @@ class LiquidGlassView @JvmOverloads constructor(
         val h = height.toFloat()
         active.setFloatUniform("uSize", w, h)
         active.setFloatUniform("uRadius", cornerRadiusPx)
-        active.setFloatUniform("uThickness", thickness)
-        active.setFloatUniform("uAberration", aberration)
-        active.setFloatUniform("uCaustics", causticStrength)
-        active.setFloatUniform("uRim", rimStrength)
+        active.setFloatUniform("uBevel", bevelWidthPx)
+        active.setFloatUniform("uRefract", refractionPx)
+        active.setFloatUniform("uFalloff", refractionFalloff)
+        active.setFloatUniform("uDispersion", dispersionStrength)
+        // Light direction as a unit vector pointing FROM the surface TOWARD the light.
+        active.setFloatUniform(
+            "uLightDir",
+            kotlin.math.cos(lightAngleRad),
+            kotlin.math.sin(lightAngleRad),
+        )
+        active.setFloatUniform("uSpec", specularStrength)
+        active.setFloatUniform("uSaturation", saturation)
         active.setFloatUniform("uTint", tintRed, tintGreen, tintBlue, tintAlpha)
+        active.setFloatUniform(
+            "uGlassTint",
+            glassTintRed,
+            glassTintGreen,
+            glassTintBlue,
+            glassTintAlpha,
+        )
+        active.setFloatUniform("uDim", dimAmount)
+        active.setFloatUniform("uPress", pressAmount)
         // The backdrop arrives as a bitmap each refresh, so it is uploaded as a shader input.
         active.setInputShader(
             "uBackdrop",
@@ -248,12 +308,25 @@ class LiquidGlassView @JvmOverloads constructor(
     private val tintGreen: Float get() = ((tintColor shr 8) and 0xFF) / 255f
     private val tintBlue: Float get() = (tintColor and 0xFF) / 255f
 
+    private val glassTintAlpha: Float get() = ((glassTintColor ushr 24) and 0xFF) / 255f
+    private val glassTintRed: Float get() = ((glassTintColor shr 16) and 0xFF) / 255f
+    private val glassTintGreen: Float get() = ((glassTintColor shr 8) and 0xFF) / 255f
+    private val glassTintBlue: Float get() = (glassTintColor and 0xFF) / 255f
+
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
     private companion object {
         /** Backdrop is a light source, not an image: a small buffer is plenty. */
-        const val CAPTURE_W = 96
-        const val CAPTURE_H = 54
+        /**
+         * Backdrop capture size.
+         *
+         * The glass is roughly a tenth of the screen, so this is already sampling above the display
+         * density of the pane; going higher costs a bigger readback for no visible gain, and going
+         * lower makes the rim shimmer because the refraction is magnifying a handful of texels.
+         * 96x54 was too coarse: the bend pulled in visible banding.
+         */
+        const val CAPTURE_W = 192
+        const val CAPTURE_H = 108
 
         /** Redraw cadence. Fast enough to feel live, slow enough to stay cheap. */
         const val REFRESH_MS = 90L
@@ -269,92 +342,140 @@ class LiquidGlassView @JvmOverloads constructor(
          * offset so the highlights move with the refraction rather than sliding independently.
          */
         val GLASS_SHADER = """
-            uniform vec2  uSize;
-            uniform float uRadius;
-            uniform float uThickness;
-            uniform float uAberration;
-            uniform float uCaustics;
-            uniform float uRim;
-            uniform vec4  uTint;
+            uniform float2 uSize;
+            uniform float  uRadius;
+            uniform float  uBevel;        // width of the refracting bevel, px
+            uniform float  uRefract;      // refraction strength, px
+            uniform float  uFalloff;      // > 0 inverse-power (gravity-lens) profile, 0 = squared bevel
+            uniform float  uDispersion;   // per-channel split at the rim
+            uniform float2 uLightDir;     // normalised
+            uniform float  uSpec;         // rim highlight strength
+            uniform float  uSaturation;
+            uniform vec4   uTint;         // straight alpha
+            uniform vec4   uGlassTint;    // coloured body; a = 0 disables
+            uniform float  uDim;
+            uniform float  uPress;        // 0..1, a press boosts the bend slightly
+
             uniform shader uBackdrop;
 
-            float sdRoundRect(vec2 p, vec2 halfSize, float r) {
-                vec2 q = abs(p) - halfSize + r;
-                return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+            // Signed distance to a rounded rectangle, negative inside. The gradient of this field is
+            // the surface normal, which is what drives refraction AND the rim highlight, so the two
+            // stay locked together as the shape changes.
+            float sdRoundRect(float2 p, float2 halfSize, float r) {
+                float2 q = abs(p) - halfSize + r;
+                return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - r;
             }
 
-            float hash(vec2 p) {
-                return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-            }
-
-            float noise(vec2 p) {
-                vec2 i = floor(p);
-                vec2 f = fract(p);
-                vec2 u = f * f * (3.0 - 2.0 * f);
-                return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
-                           mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
-            }
-
-            vec4 sampleBackdrop(vec2 uv) {
-                return uBackdrop.eval(uv * uSize);
-            }
-
-            half4 main(vec2 fragCoord) {
-                vec2 halfSize = uSize * 0.5;
-                vec2 p = fragCoord - halfSize;
+            half4 main(float2 fragCoord) {
+                float2 halfSize = uSize * 0.5;
+                float2 p = fragCoord - halfSize;
 
                 float d = sdRoundRect(p, halfSize, uRadius);
 
-                // Surface normal from the distance field: points inward, strongest at the rim.
-                vec2 grad = vec2(
-                    sdRoundRect(p + vec2(1.0, 0.0), halfSize, uRadius) - d,
-                    sdRoundRect(p + vec2(0.0, 1.0), halfSize, uRadius) - d
+                // Coverage with ~1.5px anti-aliasing, so the silhouette edge is smooth instead of a
+                // hard cut. Outside the shape nothing is written.
+                float cov = clamp(0.5 - d / 1.5, 0.0, 1.0);
+                if (cov <= 0.004) {
+                    return half4(0.0);
+                }
+
+                // Screen-space outward normal from the SDF gradient.
+                float2 grad = float2(
+                    sdRoundRect(p + float2(1.0, 0.0), halfSize, uRadius) - d,
+                    sdRoundRect(p + float2(0.0, 1.0), halfSize, uRadius) - d
                 );
-                vec2 normal = normalize(grad + vec2(1e-6));
+                float gLen = length(grad);
+                float2 n = (gLen > 0.0001) ? (grad / gLen) : float2(0.0, -1.0);
 
-                // Edge falloff: 0 in the middle of the pane, 1 at the rim.
-                float edge = clamp(1.0 - (-d) / (uRadius * 0.85), 0.0, 1.0);
-                edge = pow(edge, 1.7);
+                // Thickness profile: t = 1 in the flat interior, 0 at the rim.
+                float t = clamp(-d / max(uBevel, 1.0), 0.0, 1.0);
+                float edge = 1.0 - t;
 
-                // Refraction bends what is behind more towards the edges.
-                vec2 bend = normal * edge * uThickness * 14.0;
+                // How sharply the surface bends, as a function of depth into the bevel.
+                //
+                // The inverse-power profile concentrates almost all of the bend into the outermost
+                // pixels and leaves a long gentle tail inside, which is what reads as glass. The
+                // squared profile spreads the bend evenly across the band. Both replace the previous
+                // pow(edge) ramp, which bent too uniformly to look like a lens.
+                float slope;
+                if (uFalloff > 0.001) {
+                    float gB = pow(5.0, -uFalloff);
+                    slope = (pow(1.0 + 4.0 * t, -uFalloff) - gB) / (1.0 - gB);
+                } else {
+                    slope = edge * edge;
+                }
 
-                vec2 uv = fragCoord / uSize;
+                // Refraction: sample inward along the normal, so the rim mirrors the content just
+                // inside it. This is the whole lens effect.
+                float refr = uRefract * (1.0 + 0.6 * uPress);
+                float2 offset = n * (slope * refr);
 
-                // Chromatic aberration: three slightly different refraction strengths per channel.
-                float ab = uAberration * 1.7;
-                vec4 base = sampleBackdrop(uv);
-                float r = sampleBackdrop(uv + bend * (1.0 + ab * 0.12) / uSize).r;
-                float g = sampleBackdrop(uv + bend / uSize).g;
-                float b = sampleBackdrop(uv + bend * (1.0 - ab * 0.12) / uSize).b;
-                vec4 refracted = vec4(r, g, b, base.a);
+                // Dispersion: blue bends most, red least, giving the spectral fringe at the rim.
+                float2 cR = fragCoord + offset * (1.0 - uDispersion * slope);
+                float2 cG = fragCoord + offset;
+                float2 cB = fragCoord + offset * (1.0 + uDispersion * slope);
 
-                // Caustics: light focused by the curved medium, advected by the refraction.
-                vec2 cUv = (fragCoord + bend * 1.6) * 0.085;
-                float c1 = noise(cUv);
-                float c2 = noise(cUv * 2.3 + vec2(11.0, 7.0));
-                float caustic = pow(clamp(c1 * c2 * 2.4, 0.0, 1.0), 2.1);
-                // Caustics concentrate near the rim, where the surface curves most.
-                vec3 causticTint = vec3(0.72, 0.86, 1.0);
-                refracted.rgb += causticTint * caustic * uCaustics * 0.34 * (0.35 + edge);
+                // Keep sampling inside the captured backdrop.
+                float2 lo = float2(0.5, 0.5);
+                float2 hi = uSize - float2(0.5, 0.5);
+                cR = clamp(cR, lo, hi);
+                cG = clamp(cG, lo, hi);
+                cB = clamp(cB, lo, hi);
 
-                // Fresnel rim: bright where the surface turns away from the viewer.
-                float fresnel = pow(clamp(edge, 0.0, 1.0), 2.4) * uRim;
-                refracted.rgb += vec3(fresnel) * 0.42;
+                vec3 col = vec3(
+                    uBackdrop.eval(cR).r,
+                    uBackdrop.eval(cG).g,
+                    uBackdrop.eval(cB).b
+                );
 
-                // Directional specular sweep across the upper half of the pane.
-                float spec = smoothstep(0.42, 0.98, 1.0 - (fragCoord.y / uSize.y));
-                spec *= smoothstep(0.0, 0.55, 1.0 - abs(uv.x - 0.34) * 1.9);
-                refracted.rgb += vec3(spec) * 0.055;
+                // Vibrancy rather than a flat saturation multiply: low-saturation pixels gain more,
+                // already-saturated pixels gain less, and near-white pixels are protected so rich
+                // colour is not pushed into clipping.
+                float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+                if (uSaturation <= 1.0) {
+                    col = mix(vec3(lum), col, uSaturation);
+                } else {
+                    float satNow = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
+                    float room = 1.0 - smoothstep(0.2, 0.85, satNow);
+                    float hi = 1.0 - smoothstep(0.75, 0.98, lum);
+                    float amount = 1.0 + (uSaturation - 1.0) * mix(0.3, 1.0, room * hi);
+                    col = clamp(mix(vec3(lum), col, amount), vec3(0.0), vec3(1.0));
+                }
 
-                // Glass body tint, premultiplied by alpha.
-                vec4 outColor = refracted * uTint.a + vec4(uTint.rgb, 0.0) * uTint.a;
-                outColor.a = clamp(refracted.a * uTint.a + uTint.a, 0.0, 1.0);
+                // Body tint, modelled as a coloured medium: absorption keeps the backdrop's
+                // luminance structure, plus a little scattering so the hue shows even when dark.
+                // Applied before the highlight, because tint belongs to transmission and the
+                // specular belongs to the surface.
+                col = mix(col, uTint.rgb, uTint.a);
+                if (uGlassTint.a > 0.002) {
+                    float lumTint = dot(col, vec3(0.2126, 0.7152, 0.0722));
+                    vec3 absorbed = col * mix(vec3(1.0), uGlassTint.rgb, 0.85);
+                    vec3 scattered = uGlassTint.rgb * (0.38 * (1.0 - lumTint));
+                    col = mix(col, clamp(absorbed + scattered, vec3(0.0), vec3(1.0)), uGlassTint.a);
+                }
+                col = col * (1.0 - uDim);
 
-                // Feather the silhouette so the pane edge is not a hard cut.
-                float mask = clamp(0.5 - d, 0.0, 1.0);
-                outColor *= mask;
-                return half4(outColor);
+                // Rim light from the same normal field. Two symmetric angular lobes, so the
+                // lit side and the shadow side peak equally - the shadow side is the inner wall
+                // reflection of a transparent medium. There is deliberately NO direction-independent
+                // constant term: that is what leaves a fixed outline all the way round, which is the
+                // single biggest difference from a real glass edge.
+                float facing = dot(n, -uLightDir);
+                float lobeF = pow(max(facing, 0.0), 4.5);
+                float lobeB = pow(max(-facing, 0.0), 4.5);
+
+                // A ~2px hairline centred just inside the edge, plus a softer glow inward from it on
+                // the lit side only. The glow is offset so it never stacks on the hairline.
+                float bandW = clamp(uBevel * 0.3, 2.0, 6.0);
+                float glowIn = clamp((-d - 1.0) / 2.0, 0.0, 1.0);
+                float glow = glowIn * pow(clamp(1.0 - (-d - 3.0) / bandW, 0.0, 1.0), 1.5) * cov;
+                float hair = clamp(1.0 - abs(d + 1.0) / 2.0, 0.0, 1.0) * cov;
+                float spec = (hair * 0.70 * (lobeF + lobeB) + glow * 0.10 * lobeF)
+                             * uSpec * (1.0 - 0.35 * uPress);
+                col += vec3(spec);
+
+                col = clamp(col, vec3(0.0), vec3(1.0));
+                return half4(half3(col * cov), half(cov));
             }
         """.trimIndent()
     }
