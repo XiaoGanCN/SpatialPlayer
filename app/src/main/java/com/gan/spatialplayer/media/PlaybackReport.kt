@@ -4,7 +4,6 @@ import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
-import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import java.util.Locale
 
@@ -19,7 +18,7 @@ object PlaybackReport {
     /** The "is it actually working" panel. */
     fun inspection(
         sample: PlayerSample,
-        tracks: List<TrackLine>,
+        tracks: List<MediaTrack>,
         decoderProfile: DecoderProfile,
         spatial: DeviceCapabilities.SpatialSnapshot,
         hdr: DeviceCapabilities.HdrSnapshot,
@@ -121,7 +120,7 @@ object PlaybackReport {
         displayName: String,
         sizeBytes: Long,
         sample: PlayerSample,
-        tracks: List<TrackLine>,
+        tracks: List<MediaTrack>,
         containerMime: String?,
     ): String = buildString {
         section("FILE")
@@ -176,70 +175,6 @@ object PlaybackReport {
     }
 
     // ------------------------------------------------------------------ helpers
-
-    /** Flat description of one track, for both panels. */
-    data class TrackLine(
-        val type: String,
-        val label: String,
-        val detail: String,
-        val selected: Boolean,
-        val supported: Boolean,
-    )
-
-    /** Flattens Media3's [Tracks] into the lines both panels consume. */
-    fun flatten(tracks: Tracks): List<TrackLine> {
-        val out = ArrayList<TrackLine>()
-        for (group in tracks.groups) {
-            val trackGroup = group.mediaTrackGroup
-            val typeLabel = when (group.type) {
-                C.TRACK_TYPE_VIDEO -> "video"
-                C.TRACK_TYPE_AUDIO -> "audio"
-                C.TRACK_TYPE_TEXT -> "text"
-                else -> "other"
-            }
-            for (i in 0 until group.length) {
-                val format = group.getTrackFormat(i)
-                val supported = group.isTrackSupported(i)
-                out += TrackLine(
-                    type = typeLabel,
-                    label = describeLabel(format, i),
-                    detail = describeDetail(format),
-                    selected = group.isTrackSelected(i),
-                    supported = supported,
-                )
-            }
-        }
-        return out
-    }
-
-    private fun describeLabel(format: Format, index: Int): String {
-        val parts = ArrayList<String>()
-        format.label?.takeIf { it.isNotBlank() }?.let { parts += it }
-        format.language?.takeIf { it.isNotBlank() && it != "und" }?.let { parts += "[$it]" }
-        format.codecs?.takeIf { it.isNotBlank() }?.let { parts += it }
-        if (parts.isEmpty()) parts += "track ${index + 1}"
-        return parts.joinToString(" ")
-    }
-
-    private fun describeDetail(format: Format): String {
-        val parts = ArrayList<String>()
-        format.sampleMimeType?.let { parts += it }
-        format.codecs?.takeIf { it.isNotBlank() }?.let { if (parts.none { p -> p.contains(it) }) parts += it }
-        if (format.width > 0 && format.height > 0) parts += "${format.width}x${format.height}"
-        if (format.frameRate > 0f) parts += String.format(Locale.US, "%.3f fps", format.frameRate)
-        if (format.channelCount > 0) {
-            parts += "${format.channelCount}ch ${channelLayout(format.channelCount)}"
-        }
-        if (format.sampleRate > 0) parts += "${format.sampleRate} Hz"
-        if (format.bitrate > 0) parts += "${format.bitrate / 1000} kbps"
-        format.colorInfo?.let { color ->
-            parts += colorTransferLabel(color.colorTransfer)
-            if (color.colorSpace == C.COLOR_SPACE_BT2020) parts += "bt2020"
-            if (color.hdrStaticInfo != null) parts += "static-hdr-metadata"
-        }
-        if (format.rotationDegrees != 0) parts += "rot ${format.rotationDegrees}"
-        return parts.joinToString(" · ")
-    }
 
     fun colorTransferLabel(transfer: Int): String = when (transfer) {
         C.COLOR_TRANSFER_LINEAR -> "linear"

@@ -148,6 +148,11 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         handler.postDelayed({
             val wantsText = intent.getBooleanExtra(EXTRA_SELECT_TEXT, false)
             if (wantsText) selectFirstTextTrack(engine)
+
+            // Switch to a specific audio track, mirroring what the audio panel does. Used to prove
+            // multi-stream selection actually takes effect.
+            val audioIndex = intent.getIntExtra(EXTRA_SELECT_AUDIO, -1)
+            if (audioIndex >= 0) selectAudioTrack(engine, audioIndex)
             // Track selection is applied on the playback thread, so `currentTracks` does not
             // reflect an override until that thread has run. Report after it has settled.
             handler.postDelayed({
@@ -156,6 +161,33 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
                 finish()
             }, if (wantsText) SELECTION_SETTLE_MS else 0L)
         }, TRACK_SETTLE_MS)
+    }
+
+    /**
+     * Selects the nth audio track via the same override path the audio panel uses, addressed by
+     * (group, index) rather than a flat list position.
+     */
+    private fun selectAudioTrack(engine: PlayerEngine, index: Int) {
+        val player = engine.player ?: return
+        val tracks = com.gan.spatialplayer.media.MediaTracks.from(player.currentTracks)
+        val track = tracks.audio.getOrNull(index)
+        if (track == null) {
+            Log.w(SmokeProbeActivity.TAG, "select_audio :: no audio track at index $index")
+            return
+        }
+        Log.i(
+            SmokeProbeActivity.TAG,
+            "select_audio :: requesting index=$index label=${track.label} group=${track.group.id}",
+        )
+        val params = player.trackSelectionParameters.buildUpon()
+            .setOverrideForType(track.toOverride())
+            .build()
+        player.trackSelectionParameters = params
+
+        Log.i(
+            SmokeProbeActivity.TAG,
+            "select_audio :: applied override group=${track.group.id} index=${track.trackIndex}",
+        )
     }
 
     /**
@@ -186,8 +218,21 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             return
         }
 
-        val lines = PlaybackReport.flatten(tracks)
+        val lines = com.gan.spatialplayer.media.MediaTracks.from(tracks).all
         Log.i(SmokeProbeActivity.TAG, "tracks :: count=${lines.size}")
+
+        // Group layout: Media3 addresses a track as (group id, index within that group), and for
+        // some containers several streams share one group.
+        tracks.groups.forEachIndexed { gi, g ->
+            val members = (0 until g.length).joinToString(",") { i ->
+                val f = g.getTrackFormat(i)
+                "${i}:${f.sampleMimeType}${if (g.isTrackSelected(i)) "*" else ""}"
+            }
+            Log.i(
+                SmokeProbeActivity.TAG,
+                "group :: index=$gi id=${g.mediaTrackGroup.id} type=${g.type} len=${g.length} [$members]",
+            )
+        }
 
         for (line in lines) {
             Log.i(
@@ -228,9 +273,10 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_PATH = "track_probe_path"
         const val EXTRA_SELECT_TEXT = "track_probe_select_text"
+        const val EXTRA_SELECT_AUDIO = "track_probe_select_audio"
         private const val TRACK_SETTLE_MS = 3000L
 
         /** Time allowed for the playback thread to pick up a track-selection override. */
-        private const val SELECTION_SETTLE_MS = 2000L
+        private const val SELECTION_SETTLE_MS = 5000L
     }
 }

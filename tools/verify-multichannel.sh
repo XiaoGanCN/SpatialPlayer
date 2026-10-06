@@ -211,7 +211,7 @@ adb_ logcat -c
 sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
     --es track_probe_path "$MEDIA_DIR/h264_aac_subs_720p.mkv" \
     --ez track_probe_select_text true > /dev/null
-sleep 8
+sleep 14
 adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/mc-subs.txt" 2>/dev/null
 touch "$OUT_DIR/mc-subs.txt"
 
@@ -238,7 +238,7 @@ sleep 1
 adb_ logcat -c
 sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
     --es track_probe_path "$MEDIA_DIR/truehd_51_720p.mkv" > /dev/null
-sleep 8
+sleep 11
 adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/mc-trackselect.txt" 2>/dev/null
 touch "$OUT_DIR/mc-trackselect.txt"
 

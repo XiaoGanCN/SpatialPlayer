@@ -386,13 +386,34 @@ class InspectorSheet @JvmOverloads constructor(
         }
     }
 
-    private fun sectionHeader(text: String): TextView = TextView(context).apply {
-        this.text = text.uppercase()
-        typeface = Typeface.SANS_SERIF
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        letterSpacing = 0.16f
-        setTextColor(ContextCompat.getColor(context, R.color.text_tertiary))
-        setPadding(0, dp(16), 0, dp(6))
+    /**
+     * A section heading preceded by a hairline rule.
+     *
+     * The rule is what makes the grouping readable; with headings alone the option rows ran
+     * together and the panel looked like one undifferentiated list.
+     */
+    private fun sectionHeader(text: String): View {
+        val wrapper = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(14), 0, dp(2))
+        }
+        wrapper.addView(
+            View(context).apply {
+                setBackgroundColor(ContextCompat.getColor(context, R.color.divider))
+            },
+            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(1))
+                .apply { bottomMargin = dp(10) },
+        )
+        wrapper.addView(
+            TextView(context).apply {
+                this.text = text.uppercase()
+                typeface = Typeface.SANS_SERIF
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                letterSpacing = 0.16f
+                setTextColor(ContextCompat.getColor(context, R.color.text_tertiary))
+            },
+        )
+        return wrapper
     }
 
     private fun optionRow(choice: Choice): View {
@@ -457,8 +478,8 @@ class InspectorSheet @JvmOverloads constructor(
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
-        /** Blur strength for the frosted backdrop, in dp. */
-        const val BLUR_RADIUS_DP = 26
+        /** Blur strength for the frosted backdrop, in dp. Raises with the display density. */
+        const val BLUR_RADIUS_DP = 40
     }
 }
 

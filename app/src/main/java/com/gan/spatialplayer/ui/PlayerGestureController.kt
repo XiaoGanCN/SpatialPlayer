@@ -128,7 +128,16 @@ class PlayerGestureController(
                     val slop = SLOP_DP * context.resources.displayMetrics.density
                     if (dx > slop || dy > slop) {
                         mode = when {
-                            dx > dy -> Mode.SEEK
+                            // Horizontal drags scrub, but not when they began inside the band the
+                            // system reserves for its own back gesture.
+                            dx > dy ->
+                                if (startedInSystemGestureEdge(downX)) Mode.NONE else Mode.SEEK
+
+                            // Vertical drags adjust brightness/volume, but not when they began
+                            // near the top, where the system reads the same swipe as "pull down
+                            // the notification shade".
+                            downY < topSystemGestureInset() -> Mode.NONE
+
                             downX < viewWidth / 2f -> Mode.BRIGHTNESS
                             else -> Mode.VOLUME
                         }
@@ -174,6 +183,25 @@ class PlayerGestureController(
         return true
     }
 
+    /**
+     * True when [x] is inside the left or right edge band the system uses for the back gesture.
+     *
+     * Touch events are still delivered to the app during an edge swipe - the system only claims
+     * them once it recognises the gesture - so without this a scrub would begin underneath the
+     * user's back gesture.
+     */
+    private fun startedInSystemGestureEdge(x: Float): Boolean {
+        val inset = systemGestureInset()
+        return x < inset || x > viewWidth - inset
+    }
+
+    /** Height of the region reserved at the top for pulling down the notification shade. */
+    private fun topSystemGestureInset(): Float =
+        context.resources.displayMetrics.density * TOP_SYSTEM_INSET_DP
+
+    private fun systemGestureInset(): Float =
+        context.resources.displayMetrics.density * SIDE_GESTURE_INSET_DP
+
     private fun span(event: MotionEvent): Float {
         if (event.pointerCount < 2) return 0f
         val dx = event.getX(1) - event.getX(0)
@@ -182,7 +210,19 @@ class PlayerGestureController(
     }
 
     private companion object {
-        const val SLOP_DP = 14f
+        /**
+         * Touch travel, in dp, before a drag is interpreted as anything.
+         *
+         * Was 14dp, which is below the distance at which a system edge swipe is recognised, so the
+         * player often claimed touches the user meant for the system.
+         */
+        const val SLOP_DP = 30f
+
+        /** Matches the platform's typical back-gesture edge band. */
+        const val SIDE_GESTURE_INSET_DP = 30f
+
+        /** Top region where a downward swipe belongs to the notification shade. */
+        const val TOP_SYSTEM_INSET_DP = 60f
 
         /**
          * Fraction of the full range that one screen-height drag covers.

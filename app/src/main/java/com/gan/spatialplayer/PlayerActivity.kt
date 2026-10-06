@@ -32,12 +32,15 @@ import com.gan.spatialplayer.databinding.ActivityPlayerBinding
 import com.gan.spatialplayer.media.DecoderProfile
 import com.gan.spatialplayer.media.DeviceCapabilities
 import com.gan.spatialplayer.media.FfmpegCodecs
+import com.gan.spatialplayer.media.MediaTrack
+import com.gan.spatialplayer.media.MediaTracks
 import com.gan.spatialplayer.media.PlaybackReport
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
 import com.gan.spatialplayer.media.DecoderPolicy
 import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.AmbientSampler
+import com.gan.spatialplayer.ui.Haptics
 import com.gan.spatialplayer.ui.InspectorSheet
 import com.gan.spatialplayer.ui.PlayerAnimation
 import com.gan.spatialplayer.ui.PlayerGestureController
@@ -75,7 +78,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private var controlsVisible = true
     private var lastSample: PlayerSample = PlayerSample.EMPTY
-    private var lastTracks: Tracks? = null
+    private var mediaTracks: MediaTracks = MediaTracks.EMPTY
     private var videoSize: VideoSize? = null
     private var refreshJob: Job? = null
     private var isScrubbing = false
@@ -205,6 +208,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.seekBar.listener = object : com.gan.spatialplayer.ui.SeekBarView.Listener {
             override fun onScrubStart() {
                 isScrubbing = true
+                Haptics.touch(binding.seekBar)
                 showControlsTemporarily()
             }
 
@@ -221,6 +225,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                     engine.player?.seekTo((duration * fraction).toLong().coerceAtLeast(0L))
                 }
                 isScrubbing = false
+                Haptics.release(binding.seekBar)
             }
         }
 
@@ -265,12 +270,16 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun togglePlayPause() {
         val player = engine.player ?: return
         if (player.isPlaying) player.pause() else player.play()
+        Haptics.release(binding.buttonPlayPause)
         syncPlayPauseIcon()
         showControlsTemporarily()
     }
 
     private fun seekBy(deltaMs: Long) {
         val player = engine.player ?: return
+        // A double-tap seek is a deliberate jump, so it gets the firm confirmation rather than a
+        // passing tick.
+        Haptics.release(binding.gestureLayer)
         val duration = player.duration
         val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
         val clamped = if (duration > 0) target.coerceAtMost(duration) else target
@@ -302,6 +311,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         // A mode change resets any pinch zoom, so the two controls never fight.
         userZoom = 1f
+        Haptics.release(binding.buttonAspect)
         binding.playerView.resizeMode = when (scaleMode) {
             VideoRectCalculator.SCALE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             VideoRectCalculator.SCALE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -566,7 +576,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onEngineTracksChanged(tracks: Tracks) {
-        lastTracks = tracks
+        mediaTracks = MediaTracks.from(tracks)
+        // A track change can flip which selection is active, so refresh any open control panel.
+        when (inspectorSheet.shownPanel) {
+            InspectorSheet.Panel.AUDIO -> populateAudioPanel()
+            InspectorSheet.Panel.SUBTITLES -> populateSubtitlePanel()
+            else -> Unit
+        }
         refreshOpenReadoutPanel()
     }
 
@@ -724,8 +740,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun populateAudioPanel() {
         val sheet = inspectorSheet
         val spatial = DeviceCapabilities.spatialSnapshot(this)
-        val tracks = lastTracks
-        val choices = ArrayList<InspectorSheet.Choice>()
+                val choices = ArrayList<InspectorSheet.Choice>()
 
         choices += InspectorSheet.Choice(
             panel = InspectorSheet.Panel.AUDIO,
@@ -757,19 +772,30 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             enabled = true,
         )
 
-        if (tracks != null) {
-            val audioLines = PlaybackReport.flatten(tracks).filter { it.type == "audio" }
-            for ((index, line) in audioLines.withIndex()) {
-                choices += InspectorSheet.Choice(
-                    panel = InspectorSheet.Panel.AUDIO,
-                    value = "track_$index",
-                    title = line.label,
-                    subtitle = line.detail,
-                    selected = line.selected,
-                    enabled = true,
-                    section = if (index == 0) "Audio track" else null,
-                )
-            }
+        // One row per audio stream. A file with several dubs has to be switchable mid-playback.
+        val audio = mediaTracks.audio
+        if (audio.size > 1) {
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.AUDIO,
+                value = VALUE_AUDIO_HEADER,
+                title = "${audio.size} audio tracks",
+                subtitle = "Selecting one keeps playing and switches the stream",
+                selected = false,
+                enabled = false,
+                section = "Audio track",
+            )
+        }
+        for ((index, track) in audio.withIndex()) {
+            val id = mediaTracks.all.indexOf(track)
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.AUDIO,
+                value = "$VALUE_AUDIO_PREFIX$id",
+                title = track.label,
+                subtitle = track.detail,
+                selected = track.selected,
+                enabled = track.supported,
+                section = if (audio.size == 1 && index == 0) "Audio track" else null,
+            )
         }
 
         sheet.setChoices(InspectorSheet.Panel.AUDIO, choices)
@@ -777,30 +803,40 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private fun populateSubtitlePanel() {
         val sheet = inspectorSheet
-        val tracks = lastTracks
         val choices = ArrayList<InspectorSheet.Choice>()
 
-        val textLines = tracks?.let { PlaybackReport.flatten(it).filter { line -> line.type == "text" } }
-            ?: emptyList()
+        val textTracks = mediaTracks.text
 
         choices += InspectorSheet.Choice(
             panel = InspectorSheet.Panel.SUBTITLES,
             value = SUBTITLE_OFF,
             title = getString(R.string.subtitle_off),
-            subtitle = null,
-            selected = textLines.none { it.selected },
+            subtitle = "Hide subtitles for this item",
+            selected = textTracks.none { it.selected },
             enabled = true,
             section = "Tracks",
         )
 
-        for ((index, line) in textLines.withIndex()) {
+        for (track in textTracks) {
+            val id = mediaTracks.all.indexOf(track)
             choices += InspectorSheet.Choice(
                 panel = InspectorSheet.Panel.SUBTITLES,
-                value = "text_$index",
-                title = line.label,
-                subtitle = line.detail,
-                selected = line.selected,
-                enabled = true,
+                value = "$VALUE_TEXT_PREFIX$id",
+                title = track.label,
+                subtitle = track.detail,
+                selected = track.selected,
+                enabled = track.supported,
+            )
+        }
+
+        if (textTracks.isEmpty()) {
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.SUBTITLES,
+                value = VALUE_TEXT_HEADER,
+                title = "No embedded subtitle tracks",
+                subtitle = "Add a sidecar file, or drop one next to the video",
+                selected = false,
+                enabled = false,
             )
         }
 
@@ -860,7 +896,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         return when (panel) {
             InspectorSheet.Panel.INSPECTION -> PlaybackReport.inspection(
                 sample = engine.sample(),
-                tracks = lastTracks?.let { PlaybackReport.flatten(it) } ?: emptyList(),
+                tracks = mediaTracks.all,
                 decoderProfile = engine.decoderProfile,
                 spatial = spatial,
                 hdr = hdr,
@@ -873,7 +909,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 displayName = displayName,
                 sizeBytes = sizeBytes,
                 sample = engine.sample(),
-                tracks = lastTracks?.let { PlaybackReport.flatten(it) } ?: emptyList(),
+                tracks = mediaTracks.all,
                 containerMime = PlaybackReport.containerFor(displayName, mimeType),
             )
 
@@ -914,19 +950,35 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 populateAudioPanel()
             }
 
-            choice.value.startsWith("track_") -> selectTrackByIndex(C.TRACK_TYPE_AUDIO, choice.value)
+            choice.value.startsWith(VALUE_AUDIO_PREFIX) -> {
+                val id = choice.value.removePrefix(VALUE_AUDIO_PREFIX).toIntOrNull() ?: return
+                mediaTracks.byId(id)?.let { applyTrackChoice(it) }
+                populateAudioPanel()
+            }
         }
     }
 
     private fun handleSubtitleChoice(choice: InspectorSheet.Choice) {
         when {
-            choice.value == SUBTITLE_OFF -> engine.applyPreferredSubtitleLanguage(null)
+            choice.value == SUBTITLE_OFF -> {
+                val player = engine.player
+                if (player != null) {
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .build()
+                }
+                engine.applyPreferredSubtitleLanguage(null)
+                Haptics.touch(binding.gestureLayer)
+            }
             choice.value == "add_external" -> {
                 pickSubtitle.launch(arrayOf("application/x-subrip", "text/*", "*/*"))
                 return
             }
 
-            choice.value.startsWith("text_") -> selectTrackByIndex(C.TRACK_TYPE_TEXT, choice.value)
+            choice.value.startsWith(VALUE_TEXT_PREFIX) -> {
+                val id = choice.value.removePrefix(VALUE_TEXT_PREFIX).toIntOrNull() ?: return
+                mediaTracks.byId(id)?.let { applyTrackChoice(it) }
+            }
         }
         populateSubtitlePanel()
     }
@@ -960,21 +1012,37 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     /**
-     * Selects the nth track of a type by building a [androidx.media3.common.TrackSelectionOverride]
-     * over the matching track group, which is the only override Media3 accepts.
+     * Applies a chosen track.
+     *
+     * Selection is expressed as a [TrackSelectionOverride] over the *specific* track group the
+     * track belongs to, with its index inside that group. A flat list index would be wrong as soon
+     * as an item has more than one group (which is exactly the multi-stream case), so the track
+     * carries its own identity.
+     *
+     * The choice is also remembered as a language preference, so it survives the decoder rebuild
+     * that a policy change triggers.
      */
-    private fun selectTrackByIndex(trackType: Int, value: String) {
-        val index = value.substringAfterLast('_').toIntOrNull() ?: return
-        val tracks = lastTracks ?: return
+    private fun applyTrackChoice(track: MediaTrack) {
         val player = engine.player ?: return
-        val matching = tracks.groups.filter { it.type == trackType }
-        val group = matching.getOrNull(index) ?: matching.firstOrNull() ?: return
-        val override = androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0)
+
+        // MediaCodec/Media3 needs the group to still be current; a stale reference after a rebuild
+        // is dropped rather than applied to the wrong stream.
+        val current = mediaTracks.all.firstOrNull {
+            it.group.id == track.group.id && it.trackIndex == track.trackIndex
+        } ?: track
+
         val updated = player.trackSelectionParameters.buildUpon()
-            .setOverrideForType(override)
+            .setOverrideForType(current.toOverride())
             .build()
         player.trackSelectionParameters = updated
-        refreshOpenReadoutPanel()
+
+        Haptics.touch(binding.gestureLayer)
+
+        when (track.type) {
+            MediaTracks.TYPE_AUDIO -> track.language?.let { engine.applyPreferredAudioLanguage(it) }
+            MediaTracks.TYPE_TEXT -> track.language?.let { engine.applyPreferredSubtitleLanguage(it) }
+            else -> Unit
+        }
     }
 
     private fun attachSubtitle(uri: Uri) {
@@ -1056,6 +1124,11 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         const val EXTRA_MIME_TYPE = "extra_mime_type"
         const val EXTRA_SIZE_BYTES = "extra_size_bytes"
         const val SUBTITLE_OFF = "subtitle_off"
+
+        private const val VALUE_AUDIO_PREFIX = "audiotrack_"
+        private const val VALUE_TEXT_PREFIX = "texttrack_"
+        private const val VALUE_AUDIO_HEADER = "audio_header"
+        private const val VALUE_TEXT_HEADER = "text_header"
 
         private const val TAG = "PlayerActivity"
 

@@ -49,10 +49,12 @@ class SeekBarView @JvmOverloads constructor(
     private val playedRect = RectF()
     private val bufferedRect = RectF()
 
-    @ColorInt private var trackColor: Int = Color.argb(61, 255, 255, 255)
-    @ColorInt private var playedColor: Int = Color.parseColor("#8AB4F8")
-    @ColorInt private var bufferedColor: Int = Color.argb(110, 255, 255, 255)
-    @ColorInt private var thumbColor: Int = Color.parseColor("#F2F4F7")
+    // Monochrome by design: a white played portion on a faint white track, with a white thumb.
+    // Colour here would compete with the picture and the ambient wash.
+    @ColorInt private var trackColor: Int = Color.argb(48, 255, 255, 255)
+    @ColorInt private var playedColor: Int = Color.argb(242, 255, 255, 255)
+    @ColorInt private var bufferedColor: Int = Color.argb(92, 255, 255, 255)
+    @ColorInt private var thumbColor: Int = Color.argb(255, 255, 255, 255)
 
     /** 0..1, the value actually drawn. */
     private var progress = 0f
@@ -72,17 +74,20 @@ class SeekBarView @JvmOverloads constructor(
     private var thumbScale = 1f
     private var thumbAnimator: ValueAnimator? = null
 
-    private var trackHeightPx = 3f
-    private var thumbRadiusPx = 6f
-    private var scrubThumbRadiusPx = 9f
+    private var trackHeightPx = 2.5f
+    private var thumbRadiusPx = 5.5f
+    private var scrubThumbRadiusPx = 8.5f
+
+    /** The played portion thickens slightly while the user is engaged. */
+    private var playedThicknessScale = 1f
     private var touchSlopPx = 0f
 
     init {
         val density = resources.displayMetrics.density
-        trackHeightPx = 3f * density
-        thumbRadiusPx = 6f * density
-        scrubThumbRadiusPx = 9f * density
-        touchSlopPx = 24f * density
+        trackHeightPx = 2.5f * density
+        thumbRadiusPx = 5.5f * density
+        scrubThumbRadiusPx = 8.5f * density
+        touchSlopPx = 34f * density
 
         trackPaint.color = trackColor
         playedPaint.color = playedColor
@@ -190,24 +195,26 @@ class SeekBarView @JvmOverloads constructor(
         val halfTrack = trackHeightPx / 2f
         trackRect.set(left, centerY - halfTrack, right, centerY + halfTrack)
 
-        // Remainder
+        // Remainder, kept faint so the played portion is what the eye follows.
         canvas.drawRoundRect(trackRect, halfTrack, halfTrack, trackPaint)
 
-        // Buffered
+        // Buffered, a half-step brighter than the remainder.
         val bufferedX = left + (right - left) * buffered.coerceAtLeast(progress)
         if (bufferedX > left) {
             bufferedRect.set(left, centerY - halfTrack, bufferedX, centerY + halfTrack)
             canvas.drawRoundRect(bufferedRect, halfTrack, halfTrack, bufferedPaint)
         }
 
-        // Played
+        // Played. Slightly thicker than the track, and thicker again while scrubbing, which reads
+        // as the bar "picking up" under the finger without any colour change.
+        val playedHalf = halfTrack * playedThicknessScale
         val playedX = left + (right - left) * progress
         if (playedX > left) {
-            playedRect.set(left, centerY - halfTrack, playedX, centerY + halfTrack)
-            canvas.drawRoundRect(playedRect, halfTrack, halfTrack, playedPaint)
+            playedRect.set(left, centerY - playedHalf, playedX, centerY + playedHalf)
+            canvas.drawRoundRect(playedRect, playedHalf, playedHalf, playedPaint)
         }
 
-        // Thumb
+        // Thumb: a plain white dot that grows on touch.
         val radius = if (scrubbing) scrubThumbRadiusPx else thumbRadiusPx * thumbScale
         canvas.drawCircle(playedX, centerY, radius, thumbPaint)
     }
@@ -269,11 +276,16 @@ class SeekBarView @JvmOverloads constructor(
 
     private fun animateThumb(target: Float) {
         thumbAnimator?.cancel()
-        thumbAnimator = ValueAnimator.ofFloat(thumbScale, target).apply {
-            duration = 140L
+        val thicknessTarget = if (target > 1f) 1.8f else 1f
+        thumbAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 160L
             interpolator = DecelerateInterpolator()
+            val fromScale = thumbScale
+            val fromThickness = playedThicknessScale
             addUpdateListener {
-                thumbScale = it.animatedValue as Float
+                val t = it.animatedFraction
+                thumbScale = fromScale + (target - fromScale) * t
+                playedThicknessScale = fromThickness + (thicknessTarget - fromThickness) * t
                 invalidate()
             }
             start()

@@ -23,4 +23,7 @@
 
     <color name="scrim">#A6000000</color>
     <color name="track_inactive">#3DFFFFFF</color>
+
+    <!-- Hairline rules between groups of settings. -->
+    <color name="divider">#24FFFFFF</color>
 </resources>
