@@ -69,6 +69,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private lateinit var binding: ActivityPlayerBinding
     private lateinit var engine: PlayerEngine
+    private val prefs by lazy { getSharedPreferences("spatial_player", MODE_PRIVATE) }
+
     private lateinit var gestures: PlayerGestureController
 
     /** Touch dispatch must not reach the controller before it and the player exist. */
@@ -94,6 +96,25 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private var scrubAnchorMs = 0L
     private var scrubTargetMs = 0L
+
+    /**
+     * Double-tap seek length, in ms.
+     *
+     * Owned by the activity rather than the player: Media3 exposes the seek increments only as
+     * getters, and the only way to change them is to rebuild the player, which is far too heavy to do
+     * while a slider is being dragged. The gesture controller and the repeatable skip buttons read
+     * this value directly, so a double tap and a skip button move by the same amount. A headset's own
+     * skip button stays at its own fixed length, which is the platform's business.
+     *
+     * Persisted because a preferred jump length is a habit, not a per-session choice.
+     */
+    private var doubleTapJumpMs: Long = DEFAULT_DOUBLE_TAP_JUMP_MS
+        set(value) {
+            val clamped = value.coerceIn(MIN_DOUBLE_TAP_JUMP_MS, MAX_DOUBLE_TAP_JUMP_MS)
+            field = clamped
+            if (::gestures.isInitialized) gestures.doubleTapJumpMs = clamped
+            prefs.edit().putLong(KEY_DOUBLE_TAP_JUMP_MS, clamped).apply()
+        }
 
     /** Subtitle tuning, adjustable from the subtitle panel while playing. */
     private var subtitleSizeSp: Float = DEFAULT_SUBTITLE_SP
@@ -147,6 +168,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         gestures = PlayerGestureController(this, this)
         gestures.verticalGain = DEFAULT_VERTICAL_GAIN
+        // Restores the saved jump length, and through the setter also configures the controller and
+        // the player's seek increments.
+        doubleTapJumpMs = prefs.getLong(KEY_DOUBLE_TAP_JUMP_MS, DEFAULT_DOUBLE_TAP_JUMP_MS)
         // The controller scales drags by the viewport, so it must be told the real size. It was
         // never being given it, which left viewWidth/viewHeight at 1: every vertical delta then
         // saturated its per-event cap and a short drag moved the volume by many steps at once.
@@ -202,8 +226,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.buttonPlayPause.setOnClickListener { togglePlayPause() }
         binding.centerPlayPause.setOnClickListener { togglePlayPause() }
 
-        binding.buttonRewind.setOnClickListener { seekBy(-PlayerEngine.SEEK_STEP_MS) }
-        binding.buttonForward.setOnClickListener { seekBy(PlayerEngine.SEEK_STEP_MS) }
+        // The skip buttons follow the same configurable length as a double tap, so the two never
+        // disagree about what "jump" means.
+        binding.buttonRewind.setOnClickListener { seekBy(-doubleTapJumpMs) }
+        binding.buttonForward.setOnClickListener { seekBy(doubleTapJumpMs) }
 
         binding.buttonSpeed.setOnClickListener { cycleSpeed() }
 
@@ -454,7 +480,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // A sheet is a separate window, so anything arriving here while it is open belongs to it.
         if (inspectorSheet.isOpen) return super.dispatchTouchEvent(ev)
 
-        if (!isInsideControls(ev.rawX, ev.rawY)) {
+        val inside = isInsideControls(ev.rawX, ev.rawY)
+        if (!inside) {
             if (gestures.onTouchEvent(ev)) return true
         }
         return super.dispatchTouchEvent(ev)
@@ -568,6 +595,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             Haptics.tick(binding.gestureLayer)
         }
         volumeAccumulator = exact.coerceIn(0f, max.toFloat())
+        Log.d(TAG, "volDelta delta=$delta exact=$exact next=$next max=$max")
         showFeedback("VOL ${(next * 100) / max}%")
     }
 
@@ -644,6 +672,25 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     // ------------------------------------------------------------------ lifecycle
+
+    /**
+     * Recomputes the picture geometry after a configuration change.
+     *
+     * The manifest handles orientation changes in-process (`configChanges="orientation|screenSize|…"`)
+     * so playback is not interrupted by a rotation - which means the activity is *not* recreated, and
+     * nothing afterwards recomputes where the picture sits. The ambient wash and the sampler kept
+     * using the portrait geometry in landscape: reported as "ambient glow out of bounds when
+     * switching between portrait and landscape".
+     *
+     * The geometry is recomputed here and again on the next layout pass, because at this point the
+     * player view has not been measured at its new size yet.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateVideoRect()
+        binding.controlsOverlay.post { updateVideoRect() }
+        binding.playerView.post { updateVideoRect() }
+    }
 
     override fun onResume() {
         super.onResume()
@@ -920,8 +967,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         choices += InspectorSheet.Choice(
             panel = InspectorSheet.Panel.AUDIO,
             value = "spatial_off",
-            title = "Disable spatialization",
-            subtitle = "Send multichannel audio straight to the output",
+            title = "Ask the system not to spatialise",
+            // Deliberately worded as a request: the platform has the final say, and on the
+            // reference device it keeps spatialising even when asked not to.
+            subtitle = "The platform and connected headset make the final decision",
             selected = !engine.spatialAudioEnabled,
             enabled = true,
         )
@@ -1049,6 +1098,15 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             selected = ambientEnabled,
             enabled = true,
             section = "Ambient",
+        ) + InspectorSheet.Choice(
+            panel = InspectorSheet.Panel.SCALING,
+            value = doubleTapJumpMs.toString(),
+            title = getString(R.string.double_tap_jump),
+            subtitle = "Double tap the left half to go back, the right half to go forward",
+            // A slider over the four lengths people actually ask for; 10s is the default.
+            range = 1f..10f,
+            stepSize = 0.5f,
+            section = "Gestures",
         )
 
         sheet.setChoices(InspectorSheet.Panel.SCALING, choices)
@@ -1168,6 +1226,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun handleScalingChoice(choice: InspectorSheet.Choice) {
+        // Slider rows report a numeric reading rather than an action token, so they are matched on
+        // their title before the value-based cases below.
+        if (choice.range != null && choice.title == getString(R.string.double_tap_jump)) {
+            val ms = (choice.value.toFloatOrNull() ?: 10f) * 1000f
+            doubleTapJumpMs = ms.toLong()
+            return
+        }
+
         when {
             choice.value.startsWith("scale_") -> {
                 scaleMode = choice.value.removePrefix("scale_").toIntOrNull()
@@ -1321,6 +1387,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f
+
+        /** Double-tap seek range and default, in ms. */
+        private const val DEFAULT_DOUBLE_TAP_JUMP_MS = 10_000L
+        private const val MIN_DOUBLE_TAP_JUMP_MS = 1_000L
+        private const val MAX_DOUBLE_TAP_JUMP_MS = 30_000L
+        private const val KEY_DOUBLE_TAP_JUMP_MS = "double_tap_jump_ms"
 
         /** How long the chrome stays up after an interaction. */
         private const val CONTROLS_TIMEOUT_MS = 6_000L

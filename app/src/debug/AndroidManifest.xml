@@ -63,5 +63,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+            <activity
+            android:name=".SmokeSpatialToggleProbeActivity"
+            android:exported="true"
+            android:theme="@style/Theme.SpatialPlayer">
+            <intent-filter>
+                <action android:name="com.gan.spatialplayer.SMOKE_SPATIAL_TOGGLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>

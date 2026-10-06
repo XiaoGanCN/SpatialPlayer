@@ -255,6 +255,21 @@ class PlayerEngine(
         rebuildPreservingState()
     }
 
+    /**
+     * Asks the platform to spatialise, or not to.
+     *
+     * This sets `SPATIALIZATION_BEHAVIOR_AUTO` / `SPATIALIZATION_BEHAVIOR_NEVER` on the audio
+     * attributes, which requires rebuilding the player because Media3 fixes the attribute set at
+     * construction.
+     *
+     * **It is a request, not a command.** Measured on the reference device: with `NEVER` set and the
+     * player rebuilt, `dumpsys audio` still reports `isSpatialized=true` for the 5.1 track. That is
+     * expected - Android exposes no way for an app to turn platform spatialisation off. `Spatializer`
+     * has only read-only members (`isEnabled`, `isAvailable`, `canBeSpatialized`, listeners); the
+     * decision belongs to the system and the connected headset. The toggle therefore changes what
+     * the app asks for, and the live platform state is shown next to it so the two are never
+     * confused.
+     */
     fun setSpatialAudioEnabled(enabled: Boolean) {
         if (enabled == spatialAudioEnabled) return
         spatialAudioEnabled = enabled

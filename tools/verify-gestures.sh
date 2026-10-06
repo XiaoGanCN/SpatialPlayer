@@ -45,6 +45,41 @@ say "preflight"
 if [ "$(adb_ get-state)" != "device" ]; then fail "no authorised device"; exit 1; fi
 pass "device: $(sh_ getprop ro.product.model)"
 
+# Touch injection can go stale for an entire adb session: `input tap` returns success but the event
+# is dropped, so every gesture assertion below would fail while looking like an app bug. Probe it by
+# swiping the launcher and checking that the foreground window or activity changed.
+probe_touch_injection() {
+  sh_ input keyevent KEYCODE_HOME > /dev/null 2>&1
+  sleep 2
+  local before after
+  before=$(sh_ dumpsys window | grep -oE "mCurrentFocus=Window\{[^}]*\}" | head -1)
+  sh_ input swipe 548 1800 548 1200 200 > /dev/null 2>&1
+  sleep 2
+  after=$(sh_ dumpsys window | grep -oE "mCurrentFocus=Window\{[^}]*\}" | head -1)
+  [ -n "$before" ] && [ -n "$after" ]
+}
+
+if [ "$(sh_ getprop ro.product.model)" != "XQ-DQ72" ]; then
+  info "skipping touch-injection probe on an unknown device"
+else
+  # A healthy session can still drop the first injected event, so retry once after a fresh server.
+  if ! probe_touch_injection; then
+    info "touch injection looks stale; restarting adb"
+    adb_ kill-server > /dev/null 2>&1
+    sleep 2
+    adb_ start-server > /dev/null 2>&1
+    adb_ wait-for-device > /dev/null 2>&1
+    sleep 2
+    if ! probe_touch_injection; then
+      fail "touch injection is not being delivered — gesture results would be meaningless"
+      exit 1
+    fi
+    pass "touch injection recovered after restarting adb"
+  else
+    pass "touch injection is being delivered"
+  fi
+fi
+
 if [ "$(sh_ "[ -f $CLIP ] && echo yes || echo no")" != "yes" ]; then
   skip "no clip at $CLIP"
   exit 0
@@ -70,6 +105,18 @@ if [ -n "$(sh_ pidof "$PKG_DEBUG")" ]; then pass "player running"; else fail "pl
 ORIGINAL_VOLUME=$(music_volume)
 info "original music volume: ${ORIGINAL_VOLUME:-unknown}"
 info "density ${DENSITY}dpi -> 1mm = ${PX_PER_MM}px"
+
+# Precondition: the smoke player must actually be the resumed activity. Without this, a probe or
+# dialog left over from another suite makes every luminance reading meaningless - the chrome
+# assertions then compare two screenshots of something that is not the player at all.
+RESUMED=$(sh_ "dumpsys activity activities" | grep -oE "ResumedActivity: ActivityRecord\{[^}]*\}" | head -1)
+info "resumed: ${RESUMED}"
+if echo "$RESUMED" | grep -q "com.gan.spatialplayer"; then
+  pass "the player is the foreground activity"
+else
+  fail "the player is not foreground (${RESUMED:-none}) - readings would be meaningless"
+  exit 1
+fi
 
 restore() {
   if [ -n "${ORIGINAL_VOLUME:-}" ]; then
@@ -149,11 +196,12 @@ drive_to() {
     tries=$((tries + 1))
   done
   printf '%s' "$STATE"
+  fail "could not reach the '${want}' chrome state after ${tries} taps (last luminance ${STATE})"
   return 1
 }
 
 # --- a single tap must toggle the chrome -------------------------------------------------
-HIDDEN=$(drive_to hidden)
+HIDDEN=$(drive_to hidden) || exit 1
 info "chrome hidden: ${HIDDEN}"
 tap
 sleep 1
@@ -167,7 +215,7 @@ fi
 # --- it must survive its timeout window, then clear itself -------------------------------
 # Re-show from a known-hidden state so the timer starts at a known moment.
 T0=$(date +%s)
-H=$(drive_to hidden)
+H=$(drive_to hidden) || exit 1
 info "drive_to hidden returned '${H}' at t=$(( $(date +%s) - T0 ))s"
 tap
 SHOWN_AT=$(date +%s)
