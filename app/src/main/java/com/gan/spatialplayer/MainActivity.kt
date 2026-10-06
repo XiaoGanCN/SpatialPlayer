@@ -127,14 +127,61 @@ class MainActivity : AppCompatActivity() {
         handleViewIntent(intent)
     }
 
+    /**
+     * Opens a file handed over by another app.
+     *
+     * Three different shapes have to be handled, because they are what apps actually send:
+     *
+     *  * `ACTION_VIEW` with the item as the intent data (a file manager's "open with").
+     *  * `ACTION_SEND` with the item on `EXTRA_STREAM` (the share sheet).
+     *  * `clipData` with one or more items, which is what a modern picker attaches even for a
+     *    single file.
+     *
+     * Only the first item is played when several arrive: this is a player, not a queue builder, and
+     * silently ignoring the rest is better than refusing the whole share.
+     */
     private fun handleViewIntent(intent: Intent?): Boolean {
-        val uri = intent?.data ?: return false
-        if (intent.action != Intent.ACTION_VIEW) return false
+        if (intent == null) return false
+        val uri = firstSharedUri(intent) ?: return false
+
+        // The grant is per-URI and lives on the intent, so it has to be taken explicitly; without it
+        // the provider throws SecurityException when the player opens the stream.
+        runCatching {
+            intent.data?.let { grantUriPermission(packageName, it, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+
         lifecycleScope.launch {
             val entry = repository.describe(uri)
-            if (entry != null) openPlayer(entry)
+            if (entry != null) {
+                openPlayer(entry)
+            } else {
+                showToast(getString(R.string.cannot_open_shared_file))
+            }
         }
         return true
+    }
+
+    /** Pulls the first readable URI out of whichever shape the intent used. */
+    private fun firstSharedUri(intent: Intent): Uri? {
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data?.let { return it }
+
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                val stream = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                if (stream != null) return stream
+            }
+
+            Intent.ACTION_SEND_MULTIPLE -> {
+                @Suppress("DEPRECATION")
+                val streams = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                streams?.firstOrNull()?.let { return it }
+            }
+        }
+        // clipData is populated by most modern pickers regardless of the action.
+        val clip = intent.clipData
+        if (clip != null && clip.itemCount > 0) return clip.getItemAt(0).uri
+        return intent.data
     }
 
     // ------------------------------------------------------------------ setup

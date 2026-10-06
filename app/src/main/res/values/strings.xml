@@ -80,4 +80,6 @@
     <string name="open_settings">Open sound settings</string>
     <string name="library">Library</string>
     <string name="library_empty">empty</string>
+    <string name="cannot_open_shared_file">Could not open the shared file</string>
+    <string name="copy_detail">Copy detail</string>
 </resources>

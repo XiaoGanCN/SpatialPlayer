@@ -56,6 +56,30 @@ class PlayerEngine(
         private set
 
     private var currentMedia: MediaItem? = null
+
+    /**
+     * Whether a decoder failure should automatically retry with a different renderer stack.
+     *
+     * Off means failures surface immediately; the user can still change the profile by hand.
+     */
+    var autoFallbackEnabled: Boolean = true
+
+    /** Human-readable detail for the most recent failure, shown on the error card and in reports. */
+    var lastErrorDetail: String? = null
+        private set
+
+    /**
+     * Whether the most recent [Listener.onEngineError] is a final failure.
+     *
+     * A retry also reports an error, but the user should not be shown a failure card for something
+     * the player is already recovering from. The host reads this to decide between a transient
+     * notice and the card.
+     */
+    var lastErrorIsTerminal: Boolean = true
+        private set
+
+    /** The profile that was tried when the current failure occurred. */
+    private var fallbackTried: MutableSet<DecoderProfile> = mutableSetOf()
     private var subtitleConfigurations: List<MediaItem.SubtitleConfiguration> = emptyList()
 
     /** Preferred audio language tag, "und" meaning "no preference". */
@@ -63,6 +87,14 @@ class PlayerEngine(
 
     /** Preferred subtitle language tag; null means do not auto-select subtitles. */
     var preferredSubtitleLanguageCode: String? = null
+
+    /**
+     * Highest channel count the track selector may choose.
+     *
+     * 8 admits 7.1. If a sink cannot take that many channels the failure does not appear as a track
+     * selection problem, so this is only lowered deliberately (or by the 7.1 retry below).
+     */
+    var maxAudioChannelCount: Int = 8
 
     fun build() {
         release()
@@ -148,7 +180,9 @@ class PlayerEngine(
     private fun buildTrackSelectionParameters(): TrackSelectionParameters {
         val builder = TrackSelectionParameters.Builder()
             .setPreferredAudioLanguage(preferredAudioLanguageCode)
-            .setMaxAudioChannelCount(8)
+            // 8 admits 7.1 (TrueHD Atmos on a UHD remux is 8 discrete channels). The selector refuses
+            // to pick a track above this, so capping it lower would silently force a downmix.
+            .setMaxAudioChannelCount(maxAudioChannelCount)
 
         val subtitleLanguage = preferredSubtitleLanguageCode
         if (subtitleLanguage != null) {
@@ -170,6 +204,7 @@ class PlayerEngine(
         }
         val item = builder.build()
         currentMedia = item
+        resetFallbackState()
         player?.setMediaItem(item)
     }
 
@@ -283,9 +318,132 @@ class PlayerEngine(
         )
     }
 
+    /**
+     * Pushes the spatial attributes back onto the player after the audio sink was rebuilt.
+     *
+     * `setAudioAttributes(..., handleAudioFocus = false)` deliberately does not re-request focus:
+     * the seek did not change who owns audio, and asking again can make the player duck or pause.
+     */
+    private fun reassertSpatialAttributes() {
+        val exo = player ?: return
+        runCatching { exo.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus= */ false) }
+            .onFailure { listener.onEngineError("could not re-apply spatial audio: ${it.message}", it) }
+    }
+
+    /**
+     * Moves to the next decoder tier after a failure, restoring position and play state.
+     *
+     * The order is chosen so the cheapest change happens first: keep the user's own preference,
+     * then fall back to software video (which rescues an unsupported profile or an over-level
+     * bitstream), and finally to audio only, which at least keeps the soundtrack playing rather than
+     * failing outright. Each tier is attempted once, so a file that cannot be decoded at all reaches
+     * the error card quickly instead of looping.
+     *
+     * @return true when a retry was started, false when the chain is exhausted.
+     */
+    private fun advanceFallbackTier(): Boolean {
+        lastErrorIsTerminal = false
+        fallbackTried += decoderProfile
+        val next = fallbackOrder.firstOrNull { it !in fallbackTried } ?: return false
+
+        val position = player?.currentPosition ?: 0L
+        val wasPlaying = player?.isPlaying == true
+        val media = currentMedia ?: return false
+
+        decoderProfile = next
+        build()
+        player?.setMediaItem(media, position)
+        player?.prepare()
+        if (wasPlaying) player?.play()
+
+        // Built outside the string template: Kotlin cannot contain a nested quoted literal inside
+        // an interpolation, and the profile name needs its underscores turned into spaces.
+        val tierName = next.name.lowercase().replace('_', ' ')
+        val detail = lastErrorDetail?.let { " ($it)" }.orEmpty()
+        listener.onEngineError("decoder failed, retrying with $tierName$detail", null)
+        return true
+    }
+
+    /**
+     * The fallback ladder.
+     *
+     * Ordered by how likely the change is to help without costing anything: software video is the
+     * common rescue, audio-only is the last resort that still plays something.
+     */
+    private val fallbackOrder: List<DecoderProfile> = listOf(
+        DecoderProfile.FFMPEG_VIDEO,
+        DecoderProfile.FFMPEG_AUDIO,
+        DecoderProfile.HARDWARE_ONLY,
+        DecoderProfile.FFMPEG_ONLY,
+    )
+
+    /**
+     * Turns a [PlaybackException] into something worth showing.
+     *
+     * The default message is often just "Source error", which tells the user nothing and makes the
+     * report useless. The error code name, the numeric code and - most usefully - the format that
+     * could not be handled are all included, because those are what identify the actual cause.
+     */
+    private fun describeError(error: androidx.media3.common.PlaybackException): String {
+        val parts = ArrayList<String>()
+        parts += error.errorCodeName
+        parts += "(code ${error.errorCode})"
+
+        val failing = failingFormat()
+        if (failing != null) {
+            val bits = ArrayList<String>()
+            failing.sampleMimeType?.let { bits += it }
+            failing.codecs?.let { bits += it }
+            if (failing.width > 0 && failing.height > 0) bits += "${failing.width}x${failing.height}"
+            if (failing.channelCount > 0) bits += "${failing.channelCount}ch"
+            if (failing.frameRate > 0) bits += "${failing.frameRate}fps"
+            if (bits.isNotEmpty()) parts += "[" + bits.joinToString(" ") + "]"
+        }
+
+        val cause = error.cause?.message?.takeIf { it.isNotBlank() }
+        if (cause != null) parts += "- $cause"
+
+        return parts.joinToString(" ")
+    }
+
+    /**
+     * Best guess at the format that failed.
+     *
+     * Media3 does not attach the offending track to the exception, so the most recently reported
+     * audio and video formats are the closest available evidence. A decoder failure is far more often
+     * video than audio, so video is reported when both exist.
+     */
+    private fun failingFormat(): androidx.media3.common.Format? =
+        player?.videoFormat ?: player?.audioFormat
+
+    /** Clears the failure memo so a fresh item is not judged by the previous one's history. */
+    private fun resetFallbackState() {
+        fallbackTried.clear()
+        lastErrorDetail = null
+        lastErrorIsTerminal = true
+    }
+
     // ------------------------------------------------------------------ listeners
 
     private val playerListener = object : Player.Listener {
+        /**
+         * Re-asserts the spatial audio configuration whenever the playhead jumps.
+         *
+         * A seek tears down and rebuilds the audio sink. The sink is what carries the spatialisation
+         * attributes to the platform, and the rebuild does not always carry them across - reported as
+         * "head tracking sometimes stops after repositioning the playhead", which matches an
+         * intermittent rebuild. Re-applying the attributes is cheap and idempotent, so doing it on
+         * every seek is a safe way to close a race that is not reliably reproducible.
+         */
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            if (reason != Player.DISCONTINUITY_REASON_SEEK) return
+            reassertSpatialAttributes()
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             listener.onEnginePlaybackState(playbackState)
         }
@@ -303,7 +461,17 @@ class PlayerEngine(
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-            listener.onEngineError(error.message ?: error.errorCodeName, error)
+            lastErrorDetail = describeError(error)
+
+            // Try the next decoder tier before giving up. A remux with a Dolby Vision profile 7 base
+            // layer, or a bitstream above what the hardware decoder advertises, fails in the decoder
+            // rather than in the container - and the same file often plays once the renderer stack
+            // changes. Only fall back when the player is already prepared, so a genuine "file is
+            // unreadable" error is not retried forever.
+            if (autoFallbackEnabled && advanceFallbackTier()) return
+
+            lastErrorIsTerminal = true
+            listener.onEngineError(lastErrorDetail ?: error.errorCodeName, error)
         }
 
         override fun onRenderedFirstFrame() {

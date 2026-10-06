@@ -340,12 +340,27 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp" />
 
-        <TextView
-            android:id="@+id/buttonDismissError"
-            style="@style/GlassButton"
-            android:layout_width="wrap_content"
+        <!-- Actions. Copy exists because the exact error text is what makes a bug report useful. -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:text="@string/close" />
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/buttonDismissError"
+                style="@style/GlassButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/close" />
+
+            <TextView
+                android:id="@+id/buttonCopyError"
+                style="@style/GlassButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/copy_detail" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

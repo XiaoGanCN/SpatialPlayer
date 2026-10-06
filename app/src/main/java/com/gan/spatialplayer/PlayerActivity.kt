@@ -1,6 +1,8 @@
 package com.gan.spatialplayer
 
 import android.app.PictureInPictureParams
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Rect
@@ -255,6 +257,16 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         binding.buttonDismissError.setOnClickListener {
             PlayerAnimation.hide(binding.errorCard)
+        }
+
+        // The precise error text is the whole point of the card, so make it easy to hand over.
+        binding.buttonCopyError.setOnClickListener {
+            val clipboard = getSystemService(ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(
+                ClipData.newPlainText("SpatialPlayer error", binding.errorText.text),
+            )
+            Haptics.release(binding.buttonCopyError)
+            showFeedback(getString(R.string.copied))
         }
 
         // Long-press the inspect button jumps straight to the decoder panel.
@@ -720,6 +732,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onEngineError(message: String, cause: Throwable?) {
+        // A decoder failure that the engine is already retrying is not a failure yet: show it as a
+        // transient notice so the user knows why playback paused, but do not raise the error card
+        // for something that is about to recover.
+        if (!engine.lastErrorIsTerminal) {
+            showFeedback(message)
+            return
+        }
+
         binding.errorText.text = message
         // Surface the controls and stop the idle countdown: while an error is on screen the user
         // needs the dismiss affordance and the way out, not a chrome that fades away underneath it.
