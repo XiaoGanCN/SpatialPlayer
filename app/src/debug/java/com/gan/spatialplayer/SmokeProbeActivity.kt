@@ -121,8 +121,9 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val path = intent.getStringExtra(EXTRA_PATH)
-        if (path.isNullOrBlank()) {
-            Log.w(SmokeProbeActivity.TAG, "tracks :: no path supplied")
+        val directUriArg = intent.getStringExtra(EXTRA_URI)
+        if (path.isNullOrBlank() && directUriArg.isNullOrBlank()) {
+            Log.w(SmokeProbeActivity.TAG, "tracks :: no path or uri supplied")
             finish()
             return
         }
@@ -133,7 +134,7 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             override fun onEngineTracksChanged(tracks: androidx.media3.common.Tracks) = Unit
             override fun onEngineVideoSize(size: androidx.media3.common.VideoSize) = Unit
             override fun onEngineError(message: String, cause: Throwable?) {
-                Log.e(SmokeProbeActivity.TAG, "tracks :: player error: $message")
+                Log.e(SmokeProbeActivity.TAG, "tracks :: player error: $message", cause)
             }
             override fun onEngineFirstFrame() = Unit
             override fun onEnginePlaybackParameters(speed: Float) = Unit
@@ -155,7 +156,18 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             else -> Unit
         }
         engine.build()
-        engine.setMedia(android.net.Uri.parse("file://$path"))
+        val directUri = directUriArg
+        if (directUri != null) {
+            Log.i(SmokeProbeActivity.TAG, "source :: uri=$directUri")
+            engine.setMedia(android.net.Uri.parse(directUri))
+        } else {
+            val file = java.io.File(path)
+            Log.i(
+                SmokeProbeActivity.TAG,
+                "source :: exists=${file.exists()} readable=${file.canRead()} len=${file.length()}",
+            )
+            engine.setMedia(android.net.Uri.fromFile(file))
+        }
         engine.prepare()
 
         // Give the extractor time to publish its track list before reporting.
@@ -290,6 +302,7 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         const val EXTRA_SELECT_TEXT = "track_probe_select_text"
         const val EXTRA_SELECT_AUDIO = "track_probe_select_audio"
         const val EXTRA_PROFILE = "track_probe_profile"
+        const val EXTRA_URI = "track_probe_uri"
         private const val TRACK_SETTLE_MS = 3000L
 
         /** Time allowed for the playback thread to pick up a track-selection override. */

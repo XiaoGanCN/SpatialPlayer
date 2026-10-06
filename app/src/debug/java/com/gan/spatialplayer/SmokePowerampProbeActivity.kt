@@ -33,6 +33,27 @@ class SmokePowerampProbeActivity : AppCompatActivity() {
             }
             val withDuration = result.entries.count { it.durationMs > 0 }
             Log.i(TAG, "summary :: total=${result.entries.size} with_duration=$withDuration")
+
+            // Can the app actually OPEN a Poweramp content URI? Reading the library and being able
+            // to stream from it are different questions, and the difference is what produces a
+            // "source error" on playback.
+            result.entries.take(2).forEach { entry ->
+                val open = runCatching {
+                    contentResolver.openInputStream(entry.uri)?.use { it.read() } ?: -1
+                }
+                Log.i(
+                    TAG,
+                    "openStream :: ${entry.uri} -> " +
+                        (open.getOrNull()?.let { "ok firstByte=$it" } ?: "FAILED ${open.exceptionOrNull()?.message}"),
+                )
+                val afd = runCatching {
+                    contentResolver.openAssetFileDescriptor(entry.uri, "r")?.use { it.length } ?: -1L
+                }
+                Log.i(
+                    TAG,
+                    "assetFd :: " + (afd.getOrNull()?.let { "ok length=$it" } ?: "FAILED ${afd.exceptionOrNull()?.message}"),
+                )
+            }
             finish()
         }
     }

@@ -54,6 +54,18 @@ class MainActivity : AppCompatActivity() {
             refresh()
         }
 
+    /**
+     * Audio access is needed to open Poweramp's files directly.
+     *
+     * Poweramp's own content URIs cannot be streamed (its provider rejects `openInputStream`), so
+     * playback resolves the real file path instead - which requires this permission.
+     */
+    private val requestAudioPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) loadPowerampLibrary()
+            else showToast(getString(R.string.poweramp_needs_audio_permission))
+        }
+
     private val pickFile =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
@@ -185,6 +197,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPowerampLibrary() {
+        // Without audio access Poweramp's files cannot be opened, so ask before trying.
+        val audioGranted = ContextCompat.checkSelfPermission(
+            this@MainActivity,
+            Manifest.permission.READ_MEDIA_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!audioGranted) {
+            requestAudioPermission.launch(Manifest.permission.READ_MEDIA_AUDIO)
+            return
+        }
+
         setScanning(true)
         lifecycleScope.launch {
             val result = poweramp.readLibrary()

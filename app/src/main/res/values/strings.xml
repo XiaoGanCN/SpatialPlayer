@@ -9,6 +9,7 @@
     <string name="no_video_found">No video files found</string>
     <string name="empty_hint">Open a file, or grant access to a folder to list what is in it.</string>
     <string name="scanning">Scanning…</string>
+    <string name="poweramp_needs_audio_permission">Audio access is needed to play Poweramp\'s files directly</string>
     <string name="poweramp_missing">Poweramp\'s database was not reachable. It may not be installed, or its provider may be disabled.</string>
 
     <!-- Player controls -->

@@ -21,6 +21,9 @@ data class FileEntry(
     val mimeType: String?,
     val source: Source,
     val subtitleHint: String? = null,
+    /** Optional tags, used to describe a track in the list. */
+    val artist: String? = null,
+    val album: String? = null,
 ) {
     enum class Source { MEDIA_STORE, FOLDER, POWERAMP, EXTERNAL }
 
