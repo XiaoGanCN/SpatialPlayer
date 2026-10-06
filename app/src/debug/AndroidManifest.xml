@@ -74,5 +74,15 @@
         </activity>
 
 
+            <activity
+            android:name=".SmokeAudioOutputProbeActivity"
+            android:exported="true"
+            android:theme="@style/Theme.SpatialPlayer">
+            <intent-filter>
+                <action android:name="com.gan.spatialplayer.SMOKE_AUDIO_OUTPUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>

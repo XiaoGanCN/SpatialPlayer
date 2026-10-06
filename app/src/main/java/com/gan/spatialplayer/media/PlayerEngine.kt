@@ -80,6 +80,14 @@ class PlayerEngine(
 
     /** The profile that was tried when the current failure occurred. */
     private var fallbackTried: MutableSet<DecoderProfile> = mutableSetOf()
+
+    /**
+     * Channel cap forced after the sink refused a higher one.
+     *
+     * The platform advertises more channels than the active output will actually open, so a refusal
+     * has to be remembered - otherwise rebuilding would ask for the same rejected layout again.
+     */
+    private var forcedChannelCap: Int? = null
     private var subtitleConfigurations: List<MediaItem.SubtitleConfiguration> = emptyList()
 
     /** Preferred audio language tag, "und" meaning "no preference". */
@@ -94,10 +102,31 @@ class PlayerEngine(
      * 8 admits 7.1. If a sink cannot take that many channels the failure does not appear as a track
      * selection problem, so this is only lowered deliberately (or by the 7.1 retry below).
      */
-    var maxAudioChannelCount: Int = 8
+    var maxAudioChannelCount: Int = AudioOutputCapability.MAX_CHANNELS
+        private set
+
+    /**
+     * Re-reads the output capability and applies it.
+     *
+     * Called at build time and whenever the output device changes. The channel cap has to be right
+     * *before* the sink is created, because a sink that refuses a channel count fails the whole
+     * playback - the 7.1-over-Bluetooth case.
+     */
+    fun refreshOutputCapability() {
+        val channels = AudioOutputCapability.verifiedMaxChannels(context)
+        if (channels == maxAudioChannelCount) return
+        maxAudioChannelCount = channels
+        // The selector reads this at prepare time, so a running player needs its parameters updated.
+        player?.trackSelectionParameters = buildTrackSelectionParameters()
+    }
 
     fun build() {
         release()
+
+        // Must be decided before the sink exists: a refused channel count fails playback outright
+        // rather than degrading, which is what happened with a 7.1 Atmos remux over Bluetooth.
+        maxAudioChannelCount = forcedChannelCap
+            ?: AudioOutputCapability.verifiedMaxChannels(context)
 
         val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile)
         configureRenderers(renderersFactory)
@@ -357,6 +386,55 @@ class PlayerEngine(
     }
 
     /**
+     * True when the error is the output sink refusing the channel layout.
+     *
+     * Matched on the message because Media3 reports it as an audio sink error with the native
+     * `AudioTrack init failed` text; the error code alone (`ERROR_CODE_AUDIO_TRACK_INIT_FAILED`) is
+     * also accepted when the platform supplies it.
+     */
+    private fun isAudioSinkChannelFailure(error: androidx.media3.common.PlaybackException): Boolean {
+        val message = (error.message ?: "") + " " + (error.cause?.message ?: "")
+        val mentionsInit = message.contains("AudioTrack init failed", ignoreCase = true) ||
+            message.contains("init failed", ignoreCase = true)
+        val codeMatches = error.errorCode == androidx.media3.common.PlaybackException
+            .ERROR_CODE_AUDIO_TRACK_INIT_FAILED
+        return codeMatches || mentionsInit
+    }
+
+    /**
+     * Rebuilds with a lower channel cap after the sink refused the current one.
+     *
+     * Steps 8 -> 6 -> 2, which covers 7.1 refused outright, 7.1 accepted but 5.1 preferred, and an
+     * output that can only take stereo. Each step is attempted once.
+     *
+     * @return true when a retry was started.
+     */
+    private fun downgradeChannelsForSink(): Boolean {
+        val next = when {
+            maxAudioChannelCount > 6 -> 6
+            maxAudioChannelCount > 2 -> 2
+            else -> return false
+        }
+        // Remember the refusal so build() does not immediately raise the cap back to its advertised
+        // value - the platform claims a capability the sink then rejects.
+        forcedChannelCap = next
+
+        val position = player?.currentPosition ?: 0L
+        val wasPlaying = player?.isPlaying == true
+        val media = currentMedia ?: return false
+
+        build()
+        player?.setMediaItem(media, position)
+        player?.prepare()
+        if (wasPlaying) player?.play()
+
+        lastErrorIsTerminal = false
+        val detail = lastErrorDetail?.let { " ($it)" }.orEmpty()
+        listener.onEngineError("output refused that channel layout, downmixing to $next channels$detail", null)
+        return true
+    }
+
+    /**
      * Moves to the next decoder tier after a failure, restoring position and play state.
      *
      * The order is chosen so the cheapest change happens first: keep the user's own preference,
@@ -447,6 +525,8 @@ class PlayerEngine(
         fallbackTried.clear()
         lastErrorDetail = null
         lastErrorIsTerminal = true
+        // A new item should be judged on the output as it is now, not on an earlier refusal.
+        forcedChannelCap = null
     }
 
     // ------------------------------------------------------------------ listeners
@@ -488,6 +568,11 @@ class PlayerEngine(
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             lastErrorDetail = describeError(error)
+
+            // An audio sink that cannot open its channel count is not a decoder problem, so the
+            // decoder fallback ladder below cannot help. Capping the channels and rebuilding does,
+            // and it is what turns a failed 7.1 film into a playing one over Bluetooth.
+            if (isAudioSinkChannelFailure(error) && downgradeChannelsForSink()) return
 
             // Try the next decoder tier before giving up. A remux with a Dolby Vision profile 7 base
             // layer, or a bitstream above what the hardware decoder advertises, fails in the decoder
