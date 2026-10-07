@@ -776,6 +776,19 @@ Work that is wanted but not started, or that works and is not right yet.
       re-read. Poweramp's rows are now held in their own field that a refresh merges back in, the chip
       re-reads on every open, a persisted open fold is filled on launch, and an empty read no longer
       latches "loaded" (which had made a failed read look like an empty library, permanently).
+      **Verified in source, not yet on the device.** The suite that would prove it needs a UI step and
+      `tools/verify-poweramp.sh` only ever cold-loads the provider, so extending it is the follow-up -
+      see the entry below. The refresh path itself was driven on the device (`incoming=326 poweramp=0`
+      before and after a refresh, i.e. the non-Poweramp rows survive), but the fold chips did not
+      respond to injected taps at their dumped coordinates, so the 140-row half is unproven.
+
+- [ ] **`tools/verify-poweramp.sh` should test the refresh path, not only a cold load.** It launches
+      `SmokePowerampProbeActivity`, which reads the provider in a fresh process and cannot see
+      `MainActivity`'s list state at all - which is why the refresh bug lived here unnoticed. The shape
+      that matches §6: a broadcast aimed at the *running* `MainActivity` that opens the Poweramp fold,
+      logs the header text, calls `refresh()`, and logs it again; then assert the count is unchanged.
+      Worth doing with it: find out why the fold chips ignored injected taps during this round while the
+      refresh button accepted them - the coordinates came from `uiautomator dump` and were correct.
 
 - [ ] **Setting icon at `ImageButton` need rework** The library header's gear reads as a smudge at
       24 dp: three slider bars whose gaps are the knobs, so the bars vanish into the track. Replace
