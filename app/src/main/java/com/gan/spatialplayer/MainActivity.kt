@@ -31,6 +31,7 @@ import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.FileEntry
 import com.gan.spatialplayer.media.MediaRepository
 import com.gan.spatialplayer.media.PowerampReader
+import com.gan.spatialplayer.ui.ChipFade
 import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.FileListAdapter
 import com.gan.spatialplayer.ui.ThumbnailLoader
@@ -136,6 +137,7 @@ class MainActivity : AppCompatActivity() {
         setUpList()
         setUpActions()
         applyAmbientSetting()
+        ChipFade.attach(binding.chipScroll, binding.chipFade)
         restoreFolderGrant()
         playIntro()
         requestNotificationPermission()
@@ -649,6 +651,8 @@ class MainActivity : AppCompatActivity() {
                 .setData(entry.uri)
                 .putExtra(PlayerActivity.EXTRA_DISPLAY_NAME, entry.displayName)
                 .putExtra(PlayerActivity.EXTRA_MIME_TYPE, entry.mimeType)
+                .putExtra(PlayerActivity.EXTRA_ARTIST, entry.artist)
+                .putExtra(PlayerActivity.EXTRA_ALBUM, entry.album)
                 .putExtra(PlayerActivity.EXTRA_SIZE_BYTES, entry.sizeBytes),
         )
     }

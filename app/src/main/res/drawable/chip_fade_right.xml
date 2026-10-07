@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The scroll cue at the end of a chip strip.
+
+  Replaces `requiresFadingEdge`, which on this device drew a hard-edged band roughly a chip and a
+  half wide instead of a gradient - it read as a rectangle laid over the last chip, which is exactly
+  what it looked like in the screenshot. This one is drawn by us, is a third of the width, and is
+  mostly transparent, so the chip underneath stays legible and the cue is only "there is more".
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="0"
+        android:startColor="#00000000"
+        android:endColor="#B3000000"
+        android:type="linear" />
+</shape>

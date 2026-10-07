@@ -49,6 +49,7 @@ import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
 import com.gan.spatialplayer.media.DecoderPolicy
+import com.gan.spatialplayer.ui.ChipFade
 import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.AmbientSampler
 import com.gan.spatialplayer.ui.Haptics
@@ -93,6 +94,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private var displayName: String = ""
     private var mimeType: String? = null
+    private var artist: String? = null
+    private var album: String? = null
     private var sizeBytes: Long = 0L
     private var mediaUri: Uri? = null
 
@@ -218,6 +221,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             ?: intent.data?.lastPathSegment?.substringAfterLast('/')
             ?: "Untitled"
         mimeType = intent.getStringExtra(EXTRA_MIME_TYPE)
+        artist = intent.getStringExtra(EXTRA_ARTIST)
+        album = intent.getStringExtra(EXTRA_ALBUM)
         sizeBytes = intent.getLongExtra(EXTRA_SIZE_BYTES, 0L)
         mediaUri = intent.data
 
@@ -228,6 +233,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         binding.playerView.player = engine.player
         configurePlayerView()
+        ChipFade.attach(binding.playerChipScroll, binding.playerChipFade)
         // Started here rather than when playback begins so the session exists from the first frame;
         // the notification itself only appears once there is sound (see PlaybackService).
         startService(Intent(this, PlaybackService::class.java))
@@ -275,7 +281,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             // drop the notification's position.
             val alreadyLoaded = engine.currentMediaUri == uri
             if (!alreadyLoaded) {
-                engine.setMedia(uri, mimeType ?: PlayerEngine.mimeForExtension(displayName.substringAfterLast('.', "")))
+                engine.setMedia(
+                    uri = uri,
+                    mimeType = mimeType
+                        ?: PlayerEngine.mimeForExtension(displayName.substringAfterLast('.', "")),
+                    title = displayName,
+                    artist = artist,
+                    album = album,
+                )
                 engine.prepare()
             }
 
@@ -1538,6 +1551,50 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             enabled = true,
         )
 
+        // The upmix, where the user already is. Having to leave the player, find the library, open
+        // Settings and come back made a control that changes how the current song sounds into one
+        // nobody would reach mid-playback.
+        val currentUpmix = when {
+            engine.upmixAdvanced -> "advanced"
+            engine.upmixMode == UpmixMode.WIDE -> getString(R.string.upmix_wide)
+            engine.upmixMode == UpmixMode.FRONT -> getString(R.string.upmix_front)
+            else -> getString(R.string.upmix_surround)
+        }
+        choices += InspectorSheet.Choice(
+            panel = InspectorSheet.Panel.AUDIO,
+            value = VALUE_UPMIX_HEADER,
+            title = getString(R.string.settings_upmix),
+            subtitle = "How stereo is spread across 5.1, for music. Now: $currentUpmix",
+            selected = false,
+            enabled = false,
+            section = "Upmix",
+        )
+        if (!engine.hasVideo) {
+            for (mode in listOf(UpmixMode.SURROUND, UpmixMode.WIDE, UpmixMode.FRONT)) {
+                val label = when (mode) {
+                    UpmixMode.WIDE -> getString(R.string.upmix_wide)
+                    UpmixMode.FRONT -> getString(R.string.upmix_front)
+                    else -> getString(R.string.upmix_surround)
+                }
+                choices += InspectorSheet.Choice(
+                    panel = InspectorSheet.Panel.AUDIO,
+                    value = "$VALUE_UPMIX_PREFIX${mode.name}",
+                    title = label,
+                    subtitle = null,
+                    selected = !engine.upmixAdvanced && engine.upmixMode == mode,
+                    enabled = true,
+                )
+            }
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.AUDIO,
+                value = VALUE_UPMIX_ADVANCED,
+                title = "Advanced matrix",
+                subtitle = "Per-channel mapping; opens Settings",
+                selected = engine.upmixAdvanced,
+                enabled = true,
+            )
+        }
+
         // One row per audio stream. A file with several dubs has to be switchable mid-playback.
         val audio = mediaTracks.audio
         if (audio.size > 1) {
@@ -1799,6 +1856,25 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 populateAudioPanel()
             }
 
+            choice.value == VALUE_UPMIX_ADVANCED -> {
+                settings.upmixAdvanced = true
+                engine.reloadUpmixSettings()
+                binding.playerView.player = engine.player
+                startActivity(Intent(this, SettingsActivity::class.java))
+                populateAudioPanel()
+            }
+
+            choice.value.startsWith(VALUE_UPMIX_PREFIX) -> {
+                val mode = runCatching {
+                    UpmixMode.valueOf(choice.value.removePrefix(VALUE_UPMIX_PREFIX))
+                }.getOrDefault(UpmixMode.SURROUND)
+                engine.switchUpmix(false, mode, engine.upmixMatrix)
+                binding.playerView.player = engine.player
+                // The panel is rebuilt so the selection actually moves; leaving it as it was made the
+                // tap look like it had done nothing.
+                populateAudioPanel()
+            }
+
             choice.value.startsWith(VALUE_AUDIO_PREFIX) -> {
                 val key = choice.value.removePrefix(VALUE_AUDIO_PREFIX)
                 mediaTracks.resolve(key)?.let { applyTrackChoice(it) }
@@ -1999,6 +2075,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     companion object {
         const val EXTRA_DISPLAY_NAME = "extra_display_name"
         const val EXTRA_MIME_TYPE = "extra_mime_type"
+        const val EXTRA_ARTIST = "extra_artist"
+        const val EXTRA_ALBUM = "extra_album"
         const val EXTRA_SIZE_BYTES = "extra_size_bytes"
         private const val VALUE_CHAPTER_PREFIX = "chapter_"
 
@@ -2006,6 +2084,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val VALUE_TEXT_SHOW_ALL = "show_all_subtitle_tracks"
 
         const val SUBTITLE_OFF = "subtitle_off"
+
+        private const val VALUE_UPMIX_HEADER = "upmix_header"
+        private const val VALUE_UPMIX_PREFIX = "upmix_"
+        private const val VALUE_UPMIX_ADVANCED = "upmix_advanced"
 
         private const val VALUE_AUDIO_PREFIX = "audiotrack_"
         private const val VALUE_TEXT_PREFIX = "texttrack_"

@@ -18,7 +18,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.gan.spatialplayer.media.DecoderPolicy
-import com.gan.spatialplayer.media.Source
+import com.gan.spatialplayer.media.PlaybackEngine
 import com.gan.spatialplayer.media.UpmixMatrix
 import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.DeviceCapabilities
@@ -162,6 +162,7 @@ class SettingsActivity : AppCompatActivity() {
                 selected = if (settings.upmixAdvanced) "advanced" else "simple",
             ) {
                 settings.upmixAdvanced = it == "advanced"
+                applyUpmixNow()
                 recreate()
             },
         )
@@ -169,6 +170,10 @@ class SettingsActivity : AppCompatActivity() {
         if (settings.upmixAdvanced) {
             buildAdvancedUpmix(column)
         } else {
+            // The options and their explanation are one card: the explanation says what the selected
+            // option *does*, so splitting it into a separate row below made it read as a caption for
+            // the section rather than for the choice - and it went stale the moment a different
+            // option was tapped, because only the segments were rebuilt.
             column.addView(
                 segmentedRow(
                     title = getString(R.string.settings_upmix),
@@ -178,19 +183,11 @@ class SettingsActivity : AppCompatActivity() {
                         getString(R.string.upmix_front) to UpmixMode.FRONT.name,
                     ),
                     selected = settings.upmixMode,
-                ) { settings.upmixMode = it },
-            )
-
-            column.addView(
-                infoRow(
-                    getString(R.string.settings_upmix),
-                    when (runCatching { UpmixMode.valueOf(settings.upmixMode) }
-                        .getOrDefault(UpmixMode.SURROUND)) {
-                        UpmixMode.WIDE -> getString(R.string.upmix_wide_hint)
-                        UpmixMode.FRONT -> getString(R.string.upmix_front_hint)
-                        else -> getString(R.string.upmix_surround_hint)
-                    },
-                ),
+                    hint = ::upmixHint,
+                ) {
+                    settings.upmixMode = it
+                    applyUpmixNow()
+                },
             )
         }
 
@@ -217,23 +214,23 @@ class SettingsActivity : AppCompatActivity() {
         )
     }
 
+    /** What the selected preset actually does; shown inside the same card as the options. */
+    private fun upmixHint(mode: String): CharSequence = when (mode) {
+        UpmixMode.WIDE.name -> getString(R.string.upmix_wide_hint)
+        UpmixMode.FRONT.name -> getString(R.string.upmix_front_hint)
+        else -> getString(R.string.upmix_surround_hint)
+    }
+
     /**
-     * The manual matrix: one row per output channel, each naming its own source.
+     * The manual matrix: one card per output channel, with a slider for each input.
      *
-     * Laid out as six rows of five short labels rather than as a grid of coefficients, because the
-     * question a person actually has is "what should be in the surround left", and the answer is one
-     * of five things. Coefficients would be a spreadsheet.
+     * Two sliders rather than a list of named sources, because the interesting mappings are not
+     * "left or right" - they are "mostly left with a little of the right, inverted". A source list
+     * cannot express that, and the point of the advanced editor is the freedom the presets do not
+     * have.
      */
     private fun buildAdvancedUpmix(column: LinearLayout) {
-        val sourceOptions = listOf(
-            getString(R.string.upmix_source_l) to Source.LEFT.name,
-            getString(R.string.upmix_source_r) to Source.RIGHT.name,
-            getString(R.string.upmix_source_sum) to Source.SUM.name,
-            getString(R.string.upmix_source_diff) to Source.DIFFERENCE.name,
-            getString(R.string.upmix_source_diff_inv) to Source.DIFFERENCE_INVERTED.name,
-            getString(R.string.upmix_source_mute) to Source.MUTE.name,
-        )
-        val titles = listOf(
+        val labels = listOf(
             R.string.upmix_channel_fl,
             R.string.upmix_channel_fr,
             R.string.upmix_channel_c,
@@ -243,15 +240,18 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         var matrix = UpmixMatrix.decode(settings.upmixMatrix)
-        for ((index, titleRes) in titles.withIndex()) {
+
+        for ((index, labelRes) in labels.withIndex()) {
+            val gains = matrix.gains[index]
             column.addView(
-                segmentedRow(
-                    title = getString(titleRes),
-                    options = sourceOptions,
-                    selected = matrix.channels[index].name,
-                ) { chosen ->
-                    matrix = UpmixMatrix.withChannel(matrix, index, Source.parse(chosen))
+                matrixRow(
+                    title = "${getString(labelRes)}  ·  ${UpmixMatrix.CHANNEL_IDS[index]}",
+                    fromLeft = gains.first,
+                    fromRight = gains.second,
+                ) { left, right ->
+                    matrix = matrix.withChannel(index, left, right)
                     settings.upmixMatrix = matrix.encode()
+                    applyUpmixNow()
                 },
             )
         }
@@ -264,12 +264,93 @@ class SettingsActivity : AppCompatActivity() {
             ) {
                 matrix = matrix.copy(subwooferLowPass = it)
                 settings.upmixMatrix = matrix.encode()
+                applyUpmixNow()
             },
         )
 
         column.addView(
             infoRow(getString(R.string.settings_upmix), getString(R.string.upmix_advanced_hint)),
         )
+    }
+
+    /**
+     * One output channel's two contributions, as percentages from -100 to +100.
+     *
+     * Negative is polarity. It is offered rather than hidden because a surround pair carrying the same
+     * signal in phase reads as one wide source behind the listener instead of as a space - which is
+     * why the presets fill their two rears with opposite signs.
+     */
+    private fun matrixRow(
+        title: String,
+        fromLeft: Int,
+        fromRight: Int,
+        onChange: (Int, Int) -> Unit,
+    ): View {
+        var left = fromLeft
+        var right = fromRight
+
+        val leftReading = valuePill(percent(fromLeft), false)
+        val rightReading = valuePill(percent(fromRight), false)
+
+        fun bar(initial: Int, reading: TextView, onValue: (Int) -> Unit): SeekBar =
+            SeekBar(this).apply {
+                max = UpmixMatrix.MAX_GAIN - UpmixMatrix.MIN_GAIN
+                progress = initial - UpmixMatrix.MIN_GAIN
+                setPadding(0, dp(4), 0, 0)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        val current = progress + UpmixMatrix.MIN_GAIN
+                        reading.text = percent(current)
+                        onValue(current)
+                    }
+
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                        Haptics.tick(seekBar ?: return)
+                    }
+                })
+            }
+
+        val leftBar = bar(fromLeft, leftReading) { value ->
+            left = value
+            onChange(left, right)
+        }
+        val rightBar = bar(fromRight, rightReading) { value ->
+            right = value
+            onChange(left, right)
+        }
+
+        fun labelled(text: String, view: View, pill: View): View {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(
+                TextView(this).apply {
+                    this.text = text
+                    typeface = Typeface.MONOSPACE
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_secondary))
+                },
+                LinearLayout.LayoutParams(dp(28), WRAP_CONTENT),
+            )
+            row.addView(view, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            row.addView(pill, LinearLayout.LayoutParams(dp(52), WRAP_CONTENT))
+            return row
+        }
+
+        return rowShell(title, null, null).apply {
+            addView(labelled("L", leftBar, leftReading))
+            addView(labelled("R", rightBar, rightReading))
+        }
+    }
+
+    private fun percent(value: Int): String = if (value > 0) "+$value%" else "$value%"
+
+    /** Pushes the mapping at the running player, so a change is audible before leaving this screen. */
+    private fun applyUpmixNow() {
+        PlaybackEngine.peek()?.reloadUpmixSettings()
     }
 
     private fun buildDecoding(column: LinearLayout) {
@@ -488,6 +569,7 @@ class SettingsActivity : AppCompatActivity() {
         title: String,
         options: List<Pair<String, String>>,
         selected: String,
+        hint: ((String) -> CharSequence)? = null,
         onSelect: (String) -> Unit,
     ): View {
         val strip = LinearLayout(this).apply {
@@ -507,6 +589,18 @@ class SettingsActivity : AppCompatActivity() {
             addView(strip)
         }
         val buttons = HashMap<String, TextView>()
+
+        // Lives in the same card as the options and is rewritten in place, so the explanation always
+        // describes the option that is actually selected.
+        val hintView = hint?.let { provider ->
+            TextView(this).apply {
+                text = provider(selected)
+                typeface = Typeface.SANS_SERIF
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_tertiary))
+                setPadding(0, dp(9), 0, 0)
+            }
+        }
 
         fun restyle(active: String) {
             for ((value, view) in buttons) {
@@ -531,6 +625,7 @@ class SettingsActivity : AppCompatActivity() {
                 setOnClickListener {
                     Haptics.touch(this)
                     restyle(value)
+                    hintView?.text = hint?.invoke(value)
                     onSelect(value)
                 }
             }
@@ -546,7 +641,10 @@ class SettingsActivity : AppCompatActivity() {
         }
         restyle(selected)
 
-        return rowShell(title, null, null).apply { addView(scroller) }
+        return rowShell(title, null, null).apply {
+            addView(scroller)
+            hintView?.let { addView(it) }
+        }
     }
 
     private fun sliderRow(

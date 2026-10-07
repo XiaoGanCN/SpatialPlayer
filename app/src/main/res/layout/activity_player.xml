@@ -129,22 +129,32 @@
                   decoder pill is rendered *through* the gradient - which reads as a broken chip
                   rather than as "there is more here, scroll".
                 -->
-                <HorizontalScrollView
-                    android:id="@+id/playerChipScroll"
+                <FrameLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
-                    android:clipToPadding="false"
-                    android:fadingEdgeLength="@dimen/chip_fade_length"
-                    android:paddingEnd="@dimen/chip_fade_length"
-                    android:requiresFadingEdge="horizontal"
-                    android:scrollbars="none">
+                    android:layout_marginTop="5dp">
 
-                    <com.gan.spatialplayer.ui.ChipStrip
-                        android:id="@+id/playerChips"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
-                </HorizontalScrollView>
+                    <HorizontalScrollView
+                        android:id="@+id/playerChipScroll"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clipToPadding="false"
+                        android:scrollbars="none">
+
+                        <com.gan.spatialplayer.ui.ChipStrip
+                            android:id="@+id/playerChips"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+                    </HorizontalScrollView>
+
+                    <View
+                        android:id="@+id/playerChipFade"
+                        android:layout_width="@dimen/chip_fade_length"
+                        android:layout_height="match_parent"
+                        android:layout_gravity="end"
+                        android:background="@drawable/chip_fade_right"
+                        android:importantForAccessibility="no" />
+                </FrameLayout>
             </LinearLayout>
 
             <ImageButton

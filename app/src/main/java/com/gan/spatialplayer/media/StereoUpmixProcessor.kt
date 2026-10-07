@@ -247,7 +247,7 @@ class StereoUpmixProcessor(
             // rather than multiplied by zero so the modes read as distinct mappings instead of one
             // mapping with a volume knob.
             val centre = when {
-                advanced -> channel(matrix.centre, left, right, centreGain) * TRIM_NUM / TRIM_DEN
+                advanced -> mix(matrix.gains[2], left, right, centreGain) * TRIM_NUM / TRIM_DEN
                 mode == UpmixMode.FRONT -> 0
                 else -> ((left + right).toLong() * centreGain / GAIN_SCALE).toInt() * TRIM_NUM / TRIM_DEN
             }
@@ -259,11 +259,11 @@ class StereoUpmixProcessor(
 
             if (advanced) {
                 // Unity for the front pair, and the same trims the presets use for the others, so a
-                // manual mapping sounds like the presets rather than like six raw copies.
-                frontLeft = channel(matrix.frontLeft, left, right, GAIN_SCALE)
-                frontRight = channel(matrix.frontRight, left, right, GAIN_SCALE)
-                rearLeft = channel(matrix.backLeft, left, right, rearGain) * TRIM_NUM / TRIM_DEN
-                rearRight = channel(matrix.backRight, left, right, rearGain) * TRIM_NUM / TRIM_DEN
+                // manual matrix sounds like the presets rather than like six raw copies.
+                frontLeft = mix(matrix.gains[0], left, right, GAIN_SCALE)
+                frontRight = mix(matrix.gains[1], left, right, GAIN_SCALE)
+                rearLeft = mix(matrix.gains[4], left, right, rearGain) * TRIM_NUM / TRIM_DEN
+                rearRight = mix(matrix.gains[5], left, right, rearGain) * TRIM_NUM / TRIM_DEN
             } else {
                 // Media3's 5.1 order is the platform's CHANNEL_OUT_5POINT1 order: front left, front
                 // right, front centre, LFE, back left, back right, interleaved. The platform reads
@@ -308,7 +308,7 @@ class StereoUpmixProcessor(
             // In the manual matrix the low-pass can be switched off, because there the user may be
             // feeding the subwoofer a full-range source on purpose.
             val lfeSignal = if (advanced && !matrix.subwooferLowPass) {
-                channel(matrix.lfe, left, right, GAIN_SCALE).toFloat() / GAIN_SCALE
+                mix(matrix.gains[3], left, right, GAIN_SCALE).toFloat() / GAIN_SCALE
             } else {
                 filtered
             }
@@ -406,18 +406,16 @@ class StereoUpmixProcessor(
      * audio thread only reads.
      */
     /**
-     * One output channel from one input source.
+     * One output channel from the two inputs, at the matrix's percentages.
      *
-     * [gain] is a fixed-point multiplier at [GAIN_SCALE]; the input is a 16-bit sample, so the
-     * intermediate is widened before scaling rather than after.
+     * [channelGain] is the channel's own fixed-point trim at [GAIN_SCALE]; [weights] are percentages
+     * from -100 to 100. The 16-bit inputs are widened before scaling, and the two contributions are
+     * summed in full precision so a pair like (+100, -100) stays exact.
      */
-    private fun channel(source: Source, left: Int, right: Int, gain: Int): Int = when (source) {
-        Source.LEFT -> (left.toLong() * gain / GAIN_SCALE).toInt()
-        Source.RIGHT -> (right.toLong() * gain / GAIN_SCALE).toInt()
-        Source.SUM -> ((left + right).toLong() * gain / GAIN_SCALE).toInt()
-        Source.DIFFERENCE -> ((left - right).toLong() * gain / GAIN_SCALE).toInt()
-        Source.DIFFERENCE_INVERTED -> ((right - left).toLong() * gain / GAIN_SCALE).toInt()
-        Source.MUTE -> 0
+    private fun mix(weights: Pair<Int, Int>, left: Int, right: Int, channelGain: Int): Int {
+        val fromLeft = left.toLong() * weights.first
+        val fromRight = right.toLong() * weights.second
+        return (((fromLeft + fromRight) / 100L) * channelGain / GAIN_SCALE).toInt()
     }
 
     private fun designLowPass(sampleRate: Int) {

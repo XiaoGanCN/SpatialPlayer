@@ -1,109 +1,74 @@
 package com.gan.spatialplayer.media
 
 /**
- * What feeds one output channel.
+ * A manual six-channel matrix, per output channel and per input channel.
  *
- * Five options rather than a continuous mix, because the useful matrices are few and a list of names
- * can be read at a glance where a pair of coefficients per channel cannot.
- */
-enum class Source {
-    /** The left input channel. */
-    LEFT,
-
-    /** The right input channel. */
-    RIGHT,
-
-    /** Both, summed. */
-    SUM,
-
-    /** The difference, which is the out-of-phase part of the stereo image. */
-    DIFFERENCE,
-
-    /**
-     * The difference the other way round.
-     *
-     * Not a nicety: a surround pair carrying the *same* difference signal is in phase, which reads
-     * as a single wide source behind the listener rather than as a space. The presets fill the two
-     * rears with opposite polarity for exactly this reason, so the manual matrix needs to be able to
-     * say the same thing.
-     */
-    DIFFERENCE_INVERTED,
-
-    /** Nothing. */
-    MUTE,
-    ;
-
-    companion object {
-        fun parse(token: String?): Source =
-            entries.firstOrNull { it.name == token } ?: MUTE
-    }
-}
-
-/**
- * A manual six-channel mapping.
+ * This is the "more freedom" version of the presets: every output channel states how much of the left
+ * input and how much of the right input it receives, as a percentage from -100 to +100. Negative is
+ * not a curiosity - it is polarity, and it is what makes a surround pair sound like a space instead of
+ * like one wide source behind the listener, so the presets use opposite signs on their two rears.
  *
- * The simple modes are opinions about how stereo should be spread; this is the answer for someone
- * who has their own. Every channel names its own source, so "put the left channel in the surround
- * left" is expressed directly rather than inferred.
+ * ## Channel identity
  *
- * ## What the mapping does and does not control
+ * The six entries are in the platform's own order, which is the order Media3 writes and the audio HAL
+ * reads: **FL, FR, FC, LFE, BL, BR** - `CHANNEL_OUT_5POINT1`. The settings screen labels each row with
+ * that identifier, because "FC" is what every other audio tool calls it and "centre" alone does not
+ * say which of the six slots it is.
  *
- * It chooses the *source*. The per-channel level is still the channel's own - the centre and the
- * rears sit at their usual trims, the subwoofer keeps its own gain - because those are what make the
- * result sound like a surround mix rather than like six copies of the same thing. The subwoofer's
- * 120 Hz low-pass is a separate switch, since a full-range signal in the LFE channel is a good way
- * to waste headroom and a bad way to drive a subwoofer.
- *
- * There is deliberately **no delay** in this mode. The simple modes delay the difference signal so
- * the rears read as space rather than as an echo, but here the user is stating exactly what they
- * want where, and a hidden delay would make the result not match what they asked for.
+ * Levels are the channel's own afterwards - the centre, the rears and the subwoofer keep their trims -
+ * because those are what make six channels sound like a mix rather than like six copies of the same
+ * signal.
  */
 data class UpmixMatrix(
-    val frontLeft: Source = Source.LEFT,
-    val frontRight: Source = Source.RIGHT,
-    val centre: Source = Source.SUM,
-    val lfe: Source = Source.SUM,
-    val backLeft: Source = Source.DIFFERENCE,
-    val backRight: Source = Source.DIFFERENCE_INVERTED,
+    /** (from left, from right) as percentages for FL, FR, FC, LFE, BL, BR. */
+    val gains: List<Pair<Int, Int>> = DEFAULT_GAINS,
     val subwooferLowPass: Boolean = true,
 ) {
 
-    /** Per-channel sources in the order the settings screen lists them. */
-    val channels: List<Source>
-        get() = listOf(frontLeft, frontRight, centre, lfe, backLeft, backRight)
+    fun withChannel(index: Int, left: Int, right: Int): UpmixMatrix {
+        if (index !in gains.indices) return this
+        val next = gains.toMutableList()
+        next[index] = left.coerceIn(MIN_GAIN, MAX_GAIN) to right.coerceIn(MIN_GAIN, MAX_GAIN)
+        return copy(gains = next)
+    }
 
-    /** Compact form for preferences: six source names, then the low-pass flag. */
-    fun encode(): String = channels.joinToString(",") { it.name } + ";" + subwooferLowPass
+    /** `100,0|0,100|...|1` - compact enough for a preference and readable in a bug report. */
+    fun encode(): String =
+        gains.joinToString("|") { "${it.first},${it.second}" } + "|" + if (subwooferLowPass) "1" else "0"
 
     companion object {
-        /** The mapping the simple SURROUND mode is closest to, minus its delay. */
+        /** FL, FR, FC, LFE, BL, BR. Mirrors the SURROUND preset, minus its delay. */
+        val DEFAULT_GAINS: List<Pair<Int, Int>> = listOf(
+            100 to 0,      // FL
+            0 to 100,      // FR
+            50 to 50,      // FC, half of each
+            50 to 50,      // LFE
+            100 to -100,   // BL, the difference
+            -100 to 100,   // BR, the same difference inverted
+        )
+
+        const val MIN_GAIN = -100
+        const val MAX_GAIN = 100
+
+        /** Names in the platform's channel order; the settings screen shows these as the IDs. */
+        val CHANNEL_IDS = listOf("FL", "FR", "FC", "LFE", "BL", "BR")
+
         val DEFAULT = UpmixMatrix()
 
         fun decode(value: String?): UpmixMatrix {
             if (value.isNullOrBlank()) return DEFAULT
-            val parts = value.split(";")
-            val tokens = parts.firstOrNull()?.split(",").orEmpty()
-            if (tokens.size < 6) return DEFAULT
+            val parts = value.split("|")
+            if (parts.size < 7) return DEFAULT
+            val gains = parts.take(6).map { pair ->
+                val halves = pair.split(",")
+                val l = halves.getOrNull(0)?.trim()?.toIntOrNull() ?: 0
+                val r = halves.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+                l.coerceIn(MIN_GAIN, MAX_GAIN) to r.coerceIn(MIN_GAIN, MAX_GAIN)
+            }
             return UpmixMatrix(
-                frontLeft = Source.parse(tokens[0]),
-                frontRight = Source.parse(tokens[1]),
-                centre = Source.parse(tokens[2]),
-                lfe = Source.parse(tokens[3]),
-                backLeft = Source.parse(tokens[4]),
-                backRight = Source.parse(tokens[5]),
-                subwooferLowPass = parts.getOrNull(1)?.toBooleanStrictOrNull() ?: true,
+                gains = gains,
+                subwooferLowPass = parts[6].trim() != "0",
             )
         }
-
-        /** A copy with one channel replaced, for the settings screen. */
-        fun withChannel(matrix: UpmixMatrix, index: Int, source: Source): UpmixMatrix =
-            when (index) {
-                0 -> matrix.copy(frontLeft = source)
-                1 -> matrix.copy(frontRight = source)
-                2 -> matrix.copy(centre = source)
-                3 -> matrix.copy(lfe = source)
-                4 -> matrix.copy(backLeft = source)
-                else -> matrix.copy(backRight = source)
-            }
     }
 }

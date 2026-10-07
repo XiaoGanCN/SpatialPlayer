@@ -3,6 +3,7 @@ package com.gan.spatialplayer
 import android.app.PendingIntent
 import android.content.Intent
 import android.util.Log
+import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.gan.spatialplayer.media.PlaybackEngine
@@ -46,12 +47,42 @@ class PlaybackService : MediaSessionService() {
     private fun attach() {
         val engine = PlaybackEngine.acquire(this)
         val player = engine.player ?: return
-        session?.let { old ->
-            runCatching { removeSession(old) }
-            old.release()
+        // One session for the service's lifetime, re-pointed at each new player rather than replaced.
+        // Replacing it released a session and added another, and the notification from the released
+        // one could outlive it - which is how the media centre came to show a track that had finished
+        // while a different one was playing.
+        session?.let { existing ->
+            val moved = runCatching { existing.setPlayer(player) }
+            if (moved.isSuccess) {
+                engine.onPlayerChanged = { attach() }
+                return
+            }
+            Log.w(TAG, "could not re-point the session; rebuilding it", moved.exceptionOrNull())
+            runCatching { removeSession(existing) }
+            existing.release()
+            session = null
         }
+
         val built = MediaSession.Builder(this, player)
             .setSessionActivity(openPlayer())
+            // A finished item ignores play(): the position is already at the end, so the button does
+            // nothing at all. Rewinding first is what makes play work again on the notification and
+            // the lock screen, and mirrors what PlayerEngine.play() does for the in-app button.
+            .setCallback(object : MediaSession.Callback {
+                override fun onPlayerCommandRequest(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    playerCommand: Int,
+                ): Int {
+                    if (playerCommand == Player.COMMAND_PLAY_PAUSE) {
+                        val current = session.player
+                        if (current.playbackState == Player.STATE_ENDED) {
+                            current.seekTo(0)
+                        }
+                    }
+                    return super.onPlayerCommandRequest(session, controller, playerCommand)
+                }
+            })
             .build()
         // A session that is only returned from onGetSession is not necessarily *added* to the
         // service, and `MediaNotificationManager.shouldShowNotification` asks `isSessionAdded` before

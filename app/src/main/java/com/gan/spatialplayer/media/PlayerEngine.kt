@@ -9,6 +9,7 @@ import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
@@ -321,9 +322,30 @@ class PlayerEngine(
 
     // ------------------------------------------------------------------ playback
 
-    fun setMedia(uri: Uri, mimeType: String? = null) {
+    /**
+     * Loads an item.
+     *
+     * [title], [artist] and [album] become the item's `MediaMetadata`, which is what the media
+     * notification, the lock screen and the media centre display. Without them the system has nothing
+     * to label the session with, and the notification was left showing whichever item it last had a
+     * description for rather than the one playing.
+     */
+    fun setMedia(
+        uri: Uri,
+        mimeType: String? = null,
+        title: String? = null,
+        artist: String? = null,
+        album: String? = null,
+    ) {
         val builder = MediaItem.Builder().setUri(uri)
         if (mimeType != null) builder.setMimeType(mimeType)
+        if (title != null || artist != null || album != null) {
+            val metadata = MediaMetadata.Builder()
+            title?.let { metadata.setTitle(it) }
+            artist?.let { metadata.setArtist(it) }
+            album?.let { metadata.setAlbumTitle(it) }
+            builder.setMediaMetadata(metadata.build())
+        }
         if (subtitleConfigurations.isNotEmpty()) {
             builder.setSubtitleConfigurations(subtitleConfigurations)
         }
@@ -353,7 +375,17 @@ class PlayerEngine(
         player?.prepare()
     }
 
+    /**
+     * Starts or resumes.
+     *
+     * A finished item is rewound first: `play()` on a player sitting at the end of its timeline sets
+     * playWhenReady and then does nothing at all, which is what made the play button appear dead once
+     * a track had run out.
+     */
     fun play() {
+        if (player?.playbackState == Player.STATE_ENDED) {
+            player?.seekTo(0)
+        }
         player?.play()
     }
 
@@ -409,6 +441,19 @@ class PlayerEngine(
         settings.upmixMode = mode.name
         settings.upmixAdvanced = false
         rebuildPreservingState()
+    }
+
+    /**
+     * Re-reads the mapping from settings and applies it.
+     *
+     * Called by the settings screen itself, not only when the player resumes: the engine is one
+     * object shared by both screens, so a change can be heard while the settings are still open
+     * rather than after backing out and reopening the item.
+     */
+    fun reloadUpmixSettings() {
+        val mode = runCatching { UpmixMode.valueOf(settings.upmixMode) }
+            .getOrDefault(UpmixMode.SURROUND)
+        switchUpmix(settings.upmixAdvanced, mode, UpmixMatrix.decode(settings.upmixMatrix))
     }
 
     /**
