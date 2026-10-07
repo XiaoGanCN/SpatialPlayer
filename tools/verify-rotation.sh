@@ -43,7 +43,7 @@ trap restore_rotation EXIT
 # Reports the geometry the running player is using, as one line.
 geometry() {
   sh_ logcat -c > /dev/null 2>&1
-  sh_ am start -n "$ACT_PROBE" > /dev/null 2>&1
+  sh_ am start -n "$ACT_PROBE" --es probe geometry > /dev/null 2>&1
   sleep 3
   sh_ "logcat -d -s PanelProbe:I" | grep -o "geometry :: .*" | tail -1 | sed 's/geometry :: //'
 }

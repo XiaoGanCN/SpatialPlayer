@@ -60,7 +60,7 @@ fi
 
 say "probe every panel"
 sh_ logcat -c
-sh_ am start -n "$ACT_PROBE" > /dev/null
+sh_ am start -n "$ACT_PROBE" --es probe panel > /dev/null
 sleep 3
 
 REPORT=$(sh_ "logcat -d -s PanelProbe:I" | grep -o "panel probe :: .*" | tail -1 | sed 's/panel probe :: //')

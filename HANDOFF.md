@@ -421,7 +421,10 @@ same trick is worth reaching for whenever a suite needs to assert on something t
 
 `PanelProbeReceiver` and `PanelProbeActivity` (debug variant only) are the same trick in a second
 shape: a broadcast aimed at the **running** player opens each inspector panel through the same
-`show(panel)` a tab click makes, and logs what that panel rendered. It has to be the running activity -
+`show(panel)` a tab click makes, and logs what that panel rendered. The shim takes
+`--es probe panel|chrome|geometry`; all three probes report through the same tag, so firing more than
+one and grepping for "the last line" reads whichever landed last - which is exactly how
+`verify-panels.sh` started failing against a geometry line that had nothing to do with panels. It has to be the running activity -
 the bug it guards was in the wiring between the sheet and the activity, so a probe with its own sheet
 would test a copy of the code that was wrong. `verify-panels.sh` starts it and parses the log line.
 The sheet cannot be dumped from the shell at all: `uiautomator dump` answers "could not get idle state"
