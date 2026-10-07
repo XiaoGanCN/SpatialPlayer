@@ -102,11 +102,30 @@ class FileListAdapter(
                 ThumbnailLoader.PLACEHOLDER_VIDEO
             }
 
-            if (thumbnails != null && !isAudio) {
-                // Reset padding/scale because the placeholder path below sets them for the icon.
+            if (thumbnails != null) {
                 icon.setPadding(0, 0, 0, 0)
-                icon.scaleType = ImageView.ScaleType.CENTER_CROP
-                thumbnails.load(entry.uri, entry.mimeType, icon, placeholder)
+                // A decoded frame fills the 16:9 slot. Cover art is square, so its *bounds* are made
+                // square too: drawing a square inside a 16:9 frame leaves two dead panels of frame
+                // either side, which reads as a broken image rather than as a cover.
+                //
+                // The end margin makes up the difference, so the text still starts at the same x for
+                // both kinds of row - a mixed list must not have its titles stepping in and out.
+                val density = itemView.resources.displayMetrics.density
+                val params = icon.layoutParams
+                if (isAudio) {
+                    params.width = (AUDIO_ART_DP * density).toInt()
+                    params.height = (AUDIO_ART_DP * density).toInt()
+                    (params as? ViewGroup.MarginLayoutParams)?.marginEnd =
+                        ((VIDEO_SLOT_DP - AUDIO_ART_DP) * density).toInt()
+                    icon.scaleType = ImageView.ScaleType.CENTER_CROP
+                } else {
+                    params.width = (VIDEO_SLOT_DP * density).toInt()
+                    params.height = (VIDEO_SLOT_HEIGHT_DP * density).toInt()
+                    (params as? ViewGroup.MarginLayoutParams)?.marginEnd = 0
+                    icon.scaleType = ImageView.ScaleType.CENTER_CROP
+                }
+                icon.layoutParams = params
+                thumbnails.load(entry.uri, entry.mimeType, isAudio, icon, placeholder)
             } else {
                 // An icon needs its own inset and must not be cropped.
                 val inset = (7 * itemView.resources.displayMetrics.density).toInt()
@@ -123,6 +142,15 @@ class FileListAdapter(
             val AUDIO_EXTENSIONS = setOf(
                 "flac", "opus", "mp3", "m4a", "ac3", "eac3", "dts", "thd", "mka",
             )
+
+            /** Width of a video row's 16:9 thumbnail slot, in dp. Matches `item_file.xml`. */
+            const val VIDEO_SLOT_DP = 58
+
+            /** Height of a video row's thumbnail slot, in dp. */
+            const val VIDEO_SLOT_HEIGHT_DP = 34
+
+            /** Cover art is square; this is also the height of an audio row's art. */
+            const val AUDIO_ART_DP = 40
         }
     }
 }

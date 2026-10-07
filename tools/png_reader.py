@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Mean luminance of the player's control-bar strip, used as a proxy for "is the chrome visible".
+"""Minimal PNG reader, so the harnesses can look at screenshots without pulling in Pillow.
 
-Extracted into its own file so the shell harness never has to embed Python: the nested quoting
-needed for that is exactly the kind of thing that breaks silently.
+Screenshots are the only way to check anything about what the player actually looks like, and the
+device has no imaging libraries. This decodes the subset `screencap` produces: 8-bit, non-interlaced,
+any of the standard colour types, all five filter types.
+
+Shared deliberately. Two harnesses used to carry their own copy, and when one of them was replaced
+the other broke on the import.
 """
 import struct
-import sys
 import zlib
 
 
 def read_png(path):
+    """Returns (width, height, channels, pixels) with pixels as a flat bytearray."""
     data = open(path, "rb").read()
     pos = 8
     idat = b""
@@ -57,26 +61,18 @@ def read_png(path):
     return width, height, channels, out
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("0")
-        return
-    try:
-        width, height, channels, px = read_png(sys.argv[1])
-    except Exception:
-        print("0")
-        return
+class Png:
+    """A screenshot with the lookups the harnesses keep needing."""
 
-    # The floating capsule lives in the bottom eighth of the screen.
-    total = 0.0
-    count = 0
-    for y in range(int(height * 0.86), int(height * 0.95)):
-        for x in range(200, min(width - 1, 900), 11):
-            i = (y * width + x) * channels
-            total += (px[i] + px[i + 1] + px[i + 2]) / 3 if channels >= 3 else px[i]
-            count += 1
-    print(f"{total / max(count, 1):.1f}")
+    def __init__(self, path):
+        self.w, self.h, self.ch, self.px = read_png(path)
 
+    def rgb(self, x, y):
+        i = (y * self.w + x) * self.ch
+        if self.ch >= 3:
+            return self.px[i], self.px[i + 1], self.px[i + 2]
+        return self.px[i], self.px[i], self.px[i]
 
-if __name__ == "__main__":
-    main()
+    def luma(self, x, y):
+        r, g, b = self.rgb(x, y)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b

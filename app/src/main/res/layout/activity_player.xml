@@ -123,12 +123,18 @@
                   Scrollable so a long chip set never has to compress: inside a weighted parent a
                   plain ChipStrip gets squeezed and single-line labels such as "5.1" end up
                   truncated to "5.".
+
+                  The fading edge hides the fact that the strip is clipped by the inspect button:
+                  without it the last chip is cut off mid-label, which reads as a rendering fault
+                  rather than as "there is more here, scroll".
                 -->
                 <HorizontalScrollView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="5dp"
                     android:clipToPadding="false"
+                    android:fadingEdgeLength="36dp"
+                    android:requiresFadingEdge="horizontal"
                     android:scrollbars="none">
 
                     <com.gan.spatialplayer.ui.ChipStrip
@@ -170,7 +176,10 @@
              The bottom margin is rewritten at runtime so the capsule floats just inside the bottom
              edge of the picture - over the frame, not in the letterbox below it, because the glass
              has nothing to refract over black bars. The margin below is only what is used before the
-             first measurement. -->
+             first measurement.
+
+             Padding is tight because the capsule is a single row now: the row's tallest child is the
+             play button, so anything more than a few dp around it is dead glass. -->
         <com.gan.spatialplayer.ui.LiquidGlassView
             android:id="@+id/controlGlass"
             android:layout_width="match_parent"
@@ -179,53 +188,33 @@
             android:layout_marginEnd="12dp"
             android:layout_marginBottom="14dp"
             android:orientation="vertical"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingTop="14dp"
-            android:paddingBottom="12dp">
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
 
-            <!-- Timecode row: monospace, deliberately quiet -->
+            <!--
+              The capsule is ONE row.
+
+              It was three stacked rows - a timecode row, the seek bar, then a transport row that
+              spread nine controls across the full width with a void between the transport keys and
+              the settings keys. The reference layout is a single row, and a single row is what makes
+              it read as one object instead of a panel with three shelves.
+
+              Speed, scaling, subtitles and audio do not fit and are behind the overflow button; each
+              of them shows its current value inside that sheet, so nothing is lost by not having
+              them permanently on screen.
+            -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/timeCurrent"
-                    style="@style/Text.Mono.Time"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0:00" />
-
-                <TextView
-                    android:id="@+id/timeRemaining"
-                    style="@style/Text.Mono.Time"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="end"
-                    android:text="0:00" />
-            </LinearLayout>
-
-            <com.gan.spatialplayer.ui.SeekBarView
-                android:id="@+id/seekBar"
-                android:layout_width="match_parent"
-                android:layout_height="30dp"
-                android:layout_marginTop="4dp" />
-
-            <!-- Transport row -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <ImageButton
                     android:id="@+id/buttonRewind"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/seek_back"
                     android:padding="9dp"
@@ -234,9 +223,9 @@
 
                 <ImageButton
                     android:id="@+id/buttonPlayPause"
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:layout_marginStart="6dp"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="2dp"
                     android:background="@drawable/bg_glass_button"
                     android:contentDescription="@string/play"
                     android:padding="13dp"
@@ -245,65 +234,48 @@
 
                 <ImageButton
                     android:id="@+id/buttonForward"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="6dp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="2dp"
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/seek_forward"
                     android:padding="9dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_forward10" />
 
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
                 <TextView
-                    android:id="@+id/buttonSpeed"
+                    android:id="@+id/timeCurrent"
                     style="@style/Text.Mono.Time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:background="@drawable/bg_glass_button"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:paddingTop="9dp"
-                    android:paddingBottom="9dp"
-                    android:text="1.00×" />
+                    android:layout_marginStart="10dp"
+                    android:text="0:00" />
+
+                <com.gan.spatialplayer.ui.SeekBarView
+                    android:id="@+id/seekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="10dp"
+                    android:layout_marginEnd="10dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:id="@+id/timeRemaining"
+                    style="@style/Text.Mono.Time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0:00" />
 
                 <ImageButton
-                    android:id="@+id/buttonAspect"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="8dp"
+                    android:id="@+id/buttonMore"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="4dp"
                     android:background="@drawable/bg_glass_button"
-                    android:contentDescription="@string/aspect_settings"
+                    android:contentDescription="@string/more_controls"
                     android:padding="10dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/ic_aspect" />
-
-                <ImageButton
-                    android:id="@+id/buttonSubtitles"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_glass_button"
-                    android:contentDescription="@string/subtitle_settings"
-                    android:padding="10dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_cc" />
-
-                <ImageButton
-                    android:id="@+id/buttonAudio"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_glass_button"
-                    android:contentDescription="@string/audio_settings"
-                    android:padding="10dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_audio" />
-
+                    android:src="@drawable/ic_more" />
             </LinearLayout>
         </com.gan.spatialplayer.ui.LiquidGlassView>
     </LinearLayout>

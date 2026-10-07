@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
+import android.util.Size
 import android.widget.ImageView
 import com.gan.spatialplayer.R
 import java.util.concurrent.ConcurrentHashMap
@@ -16,7 +17,7 @@ import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Loads small frame previews for the library list.
+ * Loads small previews for the library list: a frame for a video, album art for a recording.
  *
  * ## Why not decode at row size
  *
@@ -64,8 +65,18 @@ class ThumbnailLoader(context: Context) {
      *
      * [target] is tagged with the request so a result arriving after the row has been recycled for a
      * different file is discarded rather than shown against the wrong title.
+     *
+     * [isAudio] selects what "a preview" means: a decoded frame for a video, album art for a
+     * recording. It is passed in rather than inferred from [mimeType] because the list also knows
+     * audio by extension, and a file whose type the provider did not report still deserves its cover.
      */
-    fun load(uri: Uri, mimeType: String?, target: ImageView, fallbackRes: Int) {
+    fun load(
+        uri: Uri,
+        mimeType: String?,
+        isAudio: Boolean,
+        target: ImageView,
+        fallbackRes: Int,
+    ) {
         val key = uri.toString()
         val token = pendingTag.incrementAndGet()
         target.tag = token
@@ -78,8 +89,13 @@ class ThumbnailLoader(context: Context) {
 
         target.setImageResource(fallbackRes)
 
-        // Only video containers have a frame worth showing.
-        if (mimeType?.startsWith("video/") != true) return
+        // Only pictures and recordings have anything worth showing.
+        val decode: ((Uri) -> Bitmap?)? = when {
+            isAudio -> ::decodeAlbumArt
+            mimeType?.startsWith("video/") == true -> ::decodeFrame
+            else -> null
+        }
+        if (decode == null) return
         if (inFlight.containsKey(key)) return
 
         val task = executor.submit {
@@ -103,7 +119,7 @@ class ThumbnailLoader(context: Context) {
      * and the first one that yields a frame which is not almost entirely black wins. The darkness
      * test is what stops a black lead-in from being accepted just because a frame exists.
      */
-    private fun decode(uri: Uri): Bitmap? {
+    private fun decodeFrame(uri: Uri): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(appContext, uri)
@@ -126,6 +142,35 @@ class ThumbnailLoader(context: Context) {
         } catch (_: Exception) {
             // Includes RuntimeException from failed setDataSource and allocation failures; a missing
             // preview is never worth surfacing to the user.
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    /**
+     * Cover art for a recording.
+     *
+     * Two sources, in order of preference. `loadThumbnail` is the cheap one: it is the system's own
+     * audio thumbnailer, already cached per album, and it also covers the case where the art lives on
+     * the album rather than inside the file. Embedded art is the fallback for anything the media
+     * store does not index - a file from a user-granted folder, or a Poweramp row whose URI the store
+     * no longer knows.
+     *
+     * Without this the audio rows are the only ones in the list with an empty frame, which is exactly
+     * what "the Poweramp page has no cover art" looks like from the outside.
+     */
+    private fun decodeAlbumArt(uri: Uri): Bitmap? {
+        runCatching {
+            appContext.contentResolver.loadThumbnail(uri, Size(ART_SIZE, ART_SIZE), null)
+        }.getOrNull()?.let { return it }
+
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(appContext, uri)
+            val embedded = retriever.embeddedPicture ?: return null
+            BitmapFactory.decodeByteArray(embedded, 0, embedded.size)
+        } catch (_: Exception) {
             null
         } finally {
             runCatching { retriever.release() }
@@ -180,6 +225,12 @@ class ThumbnailLoader(context: Context) {
 
         private const val THUMB_WIDTH = 256
         private const val THUMB_HEIGHT = 144
+
+        /**
+         * Cover art is square, and the row slot is 16:9, so art is drawn inside the slot rather than
+         * cropped to a band of it. 256 px is comfortably above the ~34 dp it is shown at.
+         */
+        private const val ART_SIZE = 256
 
         /**
          * Timestamps tried in order, in microseconds.

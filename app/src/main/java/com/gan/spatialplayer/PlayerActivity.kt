@@ -46,6 +46,7 @@ import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.AmbientSampler
 import com.gan.spatialplayer.ui.Haptics
 import com.gan.spatialplayer.ui.InspectorSheet
+import com.gan.spatialplayer.ui.OverflowSheet
 import com.gan.spatialplayer.ui.PlayerAnimation
 import com.gan.spatialplayer.ui.PlayerGestureController
 import com.gan.spatialplayer.ui.TextSpans
@@ -77,6 +78,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     /** Touch dispatch must not reach the controller before it and the player exist. */
     private var gesturesReady = false
     private lateinit var inspectorSheet: InspectorSheet
+
+    /** The capsule's overflow: speed, scaling, subtitles and audio. */
+    private lateinit var overflowSheet: OverflowSheet
     private var ambientSampler: AmbientSampler? = null
     private val ambientHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -183,7 +187,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         gesturesReady = true
 
+        // Where the picture sits is a function of the player view's size, and the only reliable
+        // moment to recompute it is when that size actually changes. Posting from
+        // `onConfigurationChanged` instead raced the layout pass: the posted run could still see the
+        // pre-rotation width, which left the ambient wash drawn for the old orientation - the bands
+        // landed on top of the picture instead of in the letterbox.
+        binding.playerView.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
+            if (r - l != or - ol || b - t != ob - ot) updateVideoRect()
+        }
+
         inspectorSheet = InspectorSheet(this).apply { callback = this@PlayerActivity }
+        overflowSheet = OverflowSheet(this)
 
         setUpControls()
         setUpBackHandling()
@@ -245,30 +259,19 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.buttonRewind.setOnClickListener { seekBy(-doubleTapJumpMs) }
         binding.buttonForward.setOnClickListener { seekBy(doubleTapJumpMs) }
 
-        binding.buttonSpeed.setOnClickListener { cycleSpeed() }
-
-        binding.buttonAspect.setOnClickListener {
-            cycleScaleMode()
-        }
-
-        binding.buttonSubtitles.setOnClickListener {
-            populateSubtitlePanel()
-            inspectorSheet.show(InspectorSheet.Panel.SUBTITLES)
-        }
-
-        binding.buttonAudio.setOnClickListener {
-            populateAudioPanel()
-            inspectorSheet.show(InspectorSheet.Panel.AUDIO)
-        }
+        // Speed, scaling, subtitles and audio no longer fit in a single-row capsule. They are behind
+        // one overflow button, and each row in the sheet carries its current value, so the state the
+        // old row of buttons showed at a glance is still one tap away rather than hidden.
+        binding.buttonMore.setOnClickListener { showOverflowSheet() }
 
         // The live readouts. These are the primary way in, so they sit in the chrome rather than
         // hiding behind a long-press.
         binding.buttonInspect.setOnClickListener {
-            inspectorSheet.show(InspectorSheet.Panel.INSPECTION)
+            showInspector(InspectorSheet.Panel.INSPECTION)
         }
 
         binding.buttonMetadata.setOnClickListener {
-            inspectorSheet.show(InspectorSheet.Panel.METADATA)
+            showInspector(InspectorSheet.Panel.METADATA)
         }
 
         binding.seekBar.listener = object : com.gan.spatialplayer.ui.SeekBarView.Listener {
@@ -312,16 +315,31 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // Long-press the inspect button jumps straight to the decoder panel.
         binding.buttonInspect.setOnLongClickListener {
             populateDecoderPanel()
-            inspectorSheet.show(InspectorSheet.Panel.DECODER)
+            showInspector(InspectorSheet.Panel.DECODER)
             true
         }
 
         // Long-press the play button opens the decoder sheet: discoverable but not in the way.
         binding.buttonPlayPause.setOnLongClickListener {
             populateDecoderPanel()
-            inspectorSheet.show(InspectorSheet.Panel.DECODER)
+            showInspector(InspectorSheet.Panel.DECODER)
             true
         }
+
+        // Press and lift feedback for the chrome, from one place so every control matches. The
+        // capsule's own listener for `buttonMore` is gone: this covers it, and doing both would
+        // buzz twice on the same touch.
+        listOf(
+            binding.buttonBack,
+            binding.buttonInspect,
+            binding.buttonMetadata,
+            binding.buttonRewind,
+            binding.buttonPlayPause,
+            binding.buttonForward,
+            binding.buttonMore,
+            binding.centerPlayPause,
+            binding.buttonCopyError,
+        ).forEach { Haptics.attachTo(it) }
     }
 
     private fun hideSystemBars() {
@@ -387,11 +405,90 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         val index = options.indexOfFirst { kotlin.math.abs(it - current) < 0.01f }
         val next = options[(index + 1).mod(options.size)]
         player.setPlaybackSpeed(next)
-        updateSpeedLabel(next)
     }
 
-    private fun updateSpeedLabel(speed: Float) {
-        binding.buttonSpeed.text = String.format(Locale.US, "%.2f×", speed)
+    /**
+     * The controls that do not fit in the capsule's single row.
+     *
+     * Speed and scaling change on tap rather than opening a submenu, which is what they did as
+     * buttons and keeps a frequent adjustment to a single tap. Subtitles and audio open their
+     * panels, which is where their choices already lived.
+     */
+    private fun showOverflowSheet() {
+        Log.d(TAG, "overflow sheet requested")
+        hideControls()
+        val speed = engine.player?.playbackParameters?.speed ?: 1f
+        overflowSheet.show(
+            listOf(
+                OverflowSheet.Action(
+                    label = getString(R.string.speed),
+                    detail = String.format(Locale.US, "%.2f×", speed),
+                    iconRes = R.drawable.ic_speed,
+                    run = { cycleSpeed() },
+                ),
+                OverflowSheet.Action(
+                    label = getString(R.string.aspect_settings),
+                    detail = scaleModeLabel(),
+                    iconRes = R.drawable.ic_aspect,
+                    run = { cycleScaleMode() },
+                ),
+                OverflowSheet.Action(
+                    label = getString(R.string.subtitle_settings),
+                    detail = subtitleSummary(),
+                    iconRes = R.drawable.ic_cc,
+                    run = {
+                        populateSubtitlePanel()
+                        showInspector(InspectorSheet.Panel.SUBTITLES)
+                    },
+                ),
+                OverflowSheet.Action(
+                    label = getString(R.string.audio_settings),
+                    detail = audioSummary(),
+                    iconRes = R.drawable.ic_audio,
+                    run = {
+                        populateAudioPanel()
+                        showInspector(InspectorSheet.Panel.AUDIO)
+                    },
+                ),
+            ),
+            // The sheet covers the capsule; leaving the chrome drawn underneath shows it through the
+            // translucent rows. Take it away while the sheet is up and bring it back afterwards.
+            dismissed = { showControlsTemporarily() },
+        )
+    }
+
+    /** The current scaling mode's label; also what the overflow row shows. */
+    private fun scaleModeLabel(): String = when (scaleMode) {
+        VideoRectCalculator.SCALE_FIT -> getString(R.string.scale_fit)
+        VideoRectCalculator.SCALE_FILL -> getString(R.string.scale_fill)
+        VideoRectCalculator.SCALE_ZOOM -> getString(R.string.scale_zoom)
+        else -> getString(R.string.scale_stretch)
+    }
+
+    /** Short "what is playing" text for the overflow sheet, or null when there is nothing to say. */
+    private fun audioSummary(): String? {
+        val format = engine.player?.audioFormat ?: return null
+        val layout = if (format.channelCount > 0) {
+            PlaybackReport.channelLayout(format.channelCount)
+        } else {
+            null
+        }
+        val codec = format.sampleMimeType?.substringAfter('/')?.uppercase()
+        return listOfNotNull(layout, codec).joinToString(" · ").ifEmpty { null }
+    }
+
+    /**
+     * What the Subtitles row reports.
+     *
+     * "Off" and "this file has no subtitles at all" are different answers, and the row shows one of
+     * them by having a value or not - a file with three tracks and none selected must not look like
+     * a file that cannot have subtitles.
+     */
+    private fun subtitleSummary(): String? {
+        val text = mediaTracks.text
+        if (text.isEmpty()) return null
+        val selected = mediaTracks.selectedText ?: return getString(R.string.subtitles_off)
+        return selected.language ?: selected.label
     }
 
     private fun cycleScaleMode() {
@@ -403,7 +500,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         // A mode change resets any pinch zoom, so the two controls never fight.
         userZoom = 1f
-        Haptics.release(binding.buttonAspect)
+        Haptics.release(binding.buttonMore)
         binding.playerView.resizeMode = when (scaleMode) {
             VideoRectCalculator.SCALE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             VideoRectCalculator.SCALE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -491,8 +588,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (!gesturesReady) return super.dispatchTouchEvent(ev)
 
-        // A sheet is a separate window, so anything arriving here while it is open belongs to it.
-        if (inspectorSheet.isOpen) return super.dispatchTouchEvent(ev)
+        // A sheet is a separate window, so anything arriving here while one is open belongs to it.
+        if (inspectorSheet.isOpen || overflowSheet.isOpen) return super.dispatchTouchEvent(ev)
 
         val inside = isInsideControls(ev.rawX, ev.rawY)
         if (!inside) {
@@ -501,18 +598,44 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         return super.dispatchTouchEvent(ev)
     }
 
-    /** True when the point falls on the control capsule, so its buttons keep priority. */
+    /**
+     * True when the point falls on one of the capsule's controls, so that control keeps priority.
+     *
+     * Deliberately tests the individual controls and not the capsule's bounds. The capsule is a
+     * full-width floating bar, and while the chrome sits *over* the picture - which is the whole
+     * point, glass needs something behind it to refract - a bounds test turns the entire pill into a
+     * dead band that swallows vertical drags. Dragging up from the middle of the screen to raise the
+     * volume would do nothing at all.
+     *
+     * The glass between and around the buttons is not a control, so it behaves like the picture:
+     * a tap there toggles the chrome and a drag adjusts whatever the drag is over.
+     */
     private fun isInsideControls(rawX: Float, rawY: Float): Boolean {
         if (!PlayerAnimation.isShown(binding.controlsOverlay)) return false
-        val capsule = binding.controlGlass
-        if (capsule.width == 0 || capsule.height == 0) return false
-        val loc = IntArray(2)
-        capsule.getLocationOnScreen(loc)
-        // A small bleed keeps the touch target comfortable at the edges of the pill.
+        // A small bleed keeps the touch target comfortable at the edges of each control.
         val bleed = 6f * resources.displayMetrics.density
-        return rawX >= loc[0] - bleed && rawX <= loc[0] + capsule.width + bleed &&
-            rawY >= loc[1] - bleed && rawY <= loc[1] + capsule.height + bleed
+        val location = IntArray(2)
+        for (control in capsuleControls()) {
+            if (control.width == 0 || control.height == 0) continue
+            control.getLocationOnScreen(location)
+            val left = location[0] - bleed
+            val top = location[1] - bleed
+            if (rawX >= left && rawX <= left + control.width + bleed * 2 &&
+                rawY >= top && rawY <= top + control.height + bleed * 2
+            ) {
+                return true
+            }
+        }
+        return false
     }
+
+    private fun capsuleControls(): List<View> = listOf(
+        binding.buttonRewind,
+        binding.buttonPlayPause,
+        binding.buttonForward,
+        binding.seekBar,
+        binding.buttonMore,
+    )
 
     override fun onSingleTap() {
         if (inspectorSheet.isOpen) return
@@ -747,16 +870,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        // A first pass so anything that can be answered from the current geometry is not left stale
+        // until the next layout. The real work happens in the layout listener below: at this point
+        // the player view has not been re-measured, so `container.width/height` are still the
+        // pre-rotation values and anything derived from them is wrong.
         updateVideoRect()
-        binding.controlsOverlay.post { updateVideoRect() }
-        binding.playerView.post { updateVideoRect() }
     }
 
     override fun onResume() {
         super.onResume()
         engine.play()
         startAmbientSampling()
-        refreshSpatialState()
     }
 
     override fun onPause() {
@@ -888,7 +1012,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onEnginePlaybackParameters(speed: Float) {
-        updateSpeedLabel(speed)
+        // The capsule no longer shows the speed; the overflow sheet reads it from the player when it
+        // opens, so there is nothing to keep in sync here.
     }
 
     // ------------------------------------------------------------------ refresh loop
@@ -983,12 +1108,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
 
         binding.playerChips.setChips(chips)
-    }
-
-    private fun refreshSpatialState() {
-        val spatial = DeviceCapabilities.spatialSnapshot(this)
-        // The audio sheet reflects head-tracking availability; keep the button state honest.
-        binding.buttonAudio.alpha = if (spatial.active) 1f else 0.7f
     }
 
     // ------------------------------------------------------------------ sheets
@@ -1194,6 +1313,18 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         )
 
         sheet.setChoices(InspectorSheet.Panel.SCALING, choices)
+    }
+
+    /**
+     * Opens a panel with the chrome taken away.
+     *
+     * A sheet is a window over the activity, and the capsule is drawn underneath it. Leaving the
+     * chrome up shows it through the sheet's translucent rows, which reads as a rendering fault
+     * rather than as a menu. [InspectorSheet.Callback.onSheetClosed] brings the chrome back.
+     */
+    private fun showInspector(panel: InspectorSheet.Panel) {
+        hideControls()
+        inspectorSheet.show(panel)
     }
 
     override fun onSheetClosed() {

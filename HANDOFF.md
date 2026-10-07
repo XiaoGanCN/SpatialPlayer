@@ -289,10 +289,17 @@ the full native text that no log line produced.
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
 
-**80 checks total, all green** (76 in the five suites above, plus the glass one). `tools/chrome_luminance.py`
-is a dependency-free PNG reader used as a visibility proxy (mean luma of the bottom strip);
-`tools/glass_tracking.py` reuses its reader and adds the freeze/tracking maths.
+**80 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
+harnesses; `tools/chrome_presence.py` reports how much structure is in the **top bar** as the
+"chrome is visible" proxy, and `tools/glass_tracking.py` adds the freeze/tracking maths.
 `tools/verify-chapters.sh` is still to be written.
+
+**Chrome visibility had to be re-thought** when the capsule moved over the picture: the old probe
+averaged a fixed band in the bottom eighth, and the capsule now floats just inside the *picture's*
+bottom edge, which moves with the aspect ratio (≈54–60% of the height for a 16:9 clip). The top bar
+is anchored to the window instead. Brightness is a poor discriminator there (9.1 up against 1.9
+down); the **spread** is not (28.5 against 2.7), so the probe returns the standard deviation and the
+harness thresholds at 10.
 
 `verify-glass-backdrop.sh` is the tool to run after **any** change to the glass or to the chrome's
 placement. It forces landscape (restoring the rotation settings on exit), plays a static pattern,
@@ -348,6 +355,51 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
 17. **Glass backdrop coordinate mapping** — window → picture → buffer, plus the out-of-picture mask.
     Verified pixel-exact (§4.10). This is the fix for "it is sampling the whole screen at a
     made-up aspect ratio".
+18. **Player capsule is one row** — `⏪ ▶ ⏩ · elapsed · seek · remaining · ⋯`, the reference's shape.
+    Speed, scaling, subtitles and audio are behind `⋯` in `ui/OverflowSheet.kt`, and each row reports
+    its current value (`1.00×`, `Fit`, `Off`, `stereo · MP4A-LATM`) so the readout the old button row
+    gave at a glance is not lost. The sheet reuses the `InspectorSheet` window treatment, including
+    the **real compositor blur** — which is the only place in this app where genuine background blur
+    works today (§4.8), so it is worth copying again. It also has to hide the system bars itself: a
+    dialog window does not inherit the activity's immersive state, so the status bar reappeared over
+    the picture the first time it opened. It also takes the chrome away while it is up
+    (`hideControls()` on show, `showControlsTemporarily()` when it is dismissed) — a sheet is a window
+    over the activity, so a chrome that is still drawn underneath shows through the translucent rows.
+    The existing `InspectorSheet` is routed through `showInspector()` for the same reason.
+19. **Main screen is one action chip** — `[Open file (largest, accent)] [Poweramp ⌄] [Library ⌄]`,
+    replacing a bottom bar plus a separate "Library" disclosure row above the list. All three segments
+    are a fixed 44 dp so they are exactly the same height; sized to their own content they came out
+    105 px / 83 px / 89 px with three different label baselines.
+    **Poweramp and Library are two folding libraries over one list**, mutually exclusive: Poweramp
+    holds the music, Library holds everything else, and the filter decides which is on screen. Each
+    has its own chevron, and both animate on the same 280 ms curve. When one opens the chip docks
+    under the status chips (measured: chips bottom 338 → chip top 364 = +10 dp) and the list reserves
+    room for it; the position is recomputed from the layout so rotation and font-scale changes are
+    covered. The pref key changed (`folded_library`), so an old install starts folded, which is fine.
+20. **Chips no longer cut off mid-pill** — both chip strips have horizontal fading edges, so the
+    strip dissolving at the edge is the affordance that there is more to scroll.
+21. **Audio rows have cover art, square** — `ThumbnailLoader` had
+    `if (mimeType?.startsWith("video/") != true) return`, so recordings could never get a preview. It
+    now takes an `isAudio` flag and loads art via `ContentResolver.loadThumbnail` with
+    embedded-picture as the fallback. The *bounds* are made square too (40 dp, with a matching end
+    margin so titles still line up with video rows) — a square cover inside a 16:9 frame leaves two
+    dead panels of frame either side and reads as a broken image.
+22. **Refresh button icon** — was `ic_ambient`, two concentric circles, i.e. an empty ring that read
+    as a toggle in the "off" state. Now `ic_refresh`. The user explicitly did not want a text label.
+23. **Ambient glow on rotation** — `onConfigurationChanged` posted `updateVideoRect()` two extra
+    times and still raced the layout pass: the posted run could see the *pre-rotation* width, so the
+    wash was drawn for the old orientation and its bands landed on top of the picture. The player view
+    now has an `addOnLayoutChangeListener` that recomputes when its size actually changes. Verified by
+    rotating back and forth twice: the picture's black areas inside the frame read `(0,0,0)` and the
+    glow is confined to the pillarbox/letterbox.
+24. **Press and lift haptics** — `Haptics.attachTo(view)` installs the pair in one place (VIRTUAL_KEY
+    on `ACTION_DOWN`, a new and deliberately lighter `Haptics.lift` on `ACTION_UP`). `ACTION_CANCEL`
+    is ignored on purpose: that is a parent taking the gesture over, and buzzing on the way out of a
+    scroll is noise. Applied to the player chrome, the chip, the header buttons and the overflow rows.
+25. **Capsule hit-testing is per control, not per capsule** — `isInsideControls` used the capsule's
+    bounds, which turned the full-width pill into a dead band: a vertical volume drag starting on the
+    chrome did nothing. It now tests the actual controls, so the glass between them behaves like the
+    picture (tap toggles the chrome, drag adjusts).
 
 ### Remaining — functions first, UI after (user's explicit ordering)
 - **C8** chapters (EBML parser + chapter UI + `verify-chapters.sh`).
@@ -360,17 +412,47 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 
-### Remaining — UI/shader (user strongly supports doing this next; B2 then B3)
+### Glass backlog — user-reported, explicitly deferred ("we will address this later")
+The four below are the user's own list, in their words, and they are the acceptance criteria for
+calling the glass finished. Do not re-litigate the coordinate fix (§4.10) — it was necessary (the
+pane was sampling an unrelated corner of the frame) but it only made the backdrop *correct*, not the
+optics *complete*.
+
+1. **"The blur are gone."** Correct, and this is a real omission, not a regression: the reference has
+   a dedicated blur stage (`/tmp/lg/liquidglass/src/main/java/com/example/liquidglass/AdvancedFastBlur.kt`
+   — downscale to 0.4, box blur, upscale, with a bitmap pool) and the port took the refraction, bevel,
+   dispersion and rim model but **never that pass**. Add a blur of the sampled backdrop before the
+   refraction offsets are applied.
+2. **"Fold refraction at the very edge are also gone."** The rim bend is in the shader
+   (`uRefract`/`uFalloff`) but is no longer visible. Suspects, in order: `uBevel` (16 dp) and
+   `uRefract` (12 dp) are far too small relative to a pane this size; the one-texel-per-~1.3-view-px
+   resolution of the copy limits how far the rim can reach before it visibly stair-steps; and the
+   bevel profile may be being swamped by the tint. The probe to write is a still frame with the pane
+   over a high-contrast edge (the bars/grid clip) zoomed 8x at the left rim.
+3. **"Refresh rate ... super slow compared to the original repo demo that reaches 240fps easily."**
+   Expected from the design: this polls `PixelCopy` every `REFRESH_MS = 90` (≈11 Hz) because a
+   `SurfaceView` cannot be sampled from the view tree, while the reference draws its host view tree
+   into a bitmap in-process on every frame (`BackdropCapture` + `AsyncRenderer`) and so runs at
+   display rate. Closing this gap means changing *how* the backdrop is obtained, not tuning the timer
+   — and every alternative (TextureView) gives up HDR passthrough, which is the player's reason to
+   exist. §4.8 has the full trade-off.
+4. **"Can't we just render the panel in HDR as well?"** The picture is HDR on its own `SurfaceView`
+   layer, but the UI window is an SDR `V0_SRGB` layer (verified in the `dumpsys SurfaceFlinger` dump),
+   so the chrome is composited in SDR next to an HDR layer. Chrome drawn *over* the picture is
+   therefore tone-mapped against it by SurfaceFlinger, not by us. A genuinely HDR panel means making
+   the window HDR, which is not something a normal app can switch on. Worth answering honestly with
+   the layer dump rather than attempting.
+
+### Remaining — UI/shader (user reprioritised: **UI first**, glass later)
+The user's latest instruction is explicit: *"Fix other ui related issue first (buttons, progress bar,
+chips etc.), we will address this later"* — "this" being the four glass items above.
 - **B2** component set: `GlassButton`, `GlassToggle`, `GlassSlider`, `GlassSheet`, `GlassPopup`,
   `GlassMaterial` (REGULAR/CLEAR), `Motion.kt` (260 ms standard, 120 ms press, 320 ms layout).
   Replace `bg_glass_*.xml` and `AlertDialog`. All elements must follow the design, not just the bar.
-- **B3** single-row capsule matching the reference (§5) **and move the chrome over the video** so the
-  glass has something to refract (§4.9). Seek bar 2.5 dp / 6.6 dp thumb, tap-to-seek, eased 260 ms.
-- **Chip merge**: one chip for **Open file** (largest) → **Poweramp** → **Library**; Library opens
-  full-screen as now, the other two dock below the status chips.
-- **Poweramp cover art** on its page.
-- Launcher icon: the user rejected earlier attempts as "nearly unusable" — needs a real double-check.
-  `README.md`: keep it terse, no excessive explanation.
+  **Still open** — the single-row capsule and the chip merge below are layout/behaviour, and they
+  deliberately kept the existing `bg_glass_*.xml` look rather than restyling everything at once.
+- **Launcher icon**: the user rejected earlier attempts as "nearly unusable" — needs a real
+  double-check. `README.md`: keep it terse, no excessive explanation.
 
 ### Answers already given (do not re-derive)
 - **Q1** feasible but needs app-side upmix (§4.1). **Q2** not possible without root (§4.3).

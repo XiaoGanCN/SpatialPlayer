@@ -49,12 +49,32 @@ class MainActivity : AppCompatActivity() {
     private lateinit var poweramp: PowerampReader
     private lateinit var adapter: FileListAdapter
 
-    /** Whether the library list is expanded; persisted so the choice sticks. */
-    private var libraryExpanded = false
+    /**
+     * Which library is folded open, if any; persisted so the choice sticks.
+     *
+     * Poweramp and Library are the same kind of control over the same list - one holds the music,
+     * the other everything else - so "open" is a single choice rather than two independent flags.
+     * That is also why only one of the two chevrons is ever folded at a time.
+     */
+    private var folded = Fold.NONE
+
+    private enum class Fold { NONE, LIBRARY, POWERAMP }
+
+    /**
+     * True while the action chip is animating between the bottom and the dock.
+     *
+     * The dock position is recomputed from the layout, and expanding the list changes the layout on
+     * every frame of its animation. Without this the recompute would snap the chip to its
+     * destination on the first frame and the movement would never be seen.
+     */
+    private var actionBarDocking = false
     private val prefs by lazy { getSharedPreferences("spatial_player", MODE_PRIVATE) }
 
     private val entries = ArrayList<FileEntry>()
     private var scopedFolderUri: Uri? = null
+
+    /** Poweramp's provider is queried once; after that the fold just filters what is already here. */
+    private var powerampLoaded = false
 
     private val requestMediaPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -221,7 +241,17 @@ class MainActivity : AppCompatActivity() {
 
         binding.buttonRefresh.setOnClickListener { refresh() }
         binding.buttonSpatialStatus.setOnClickListener { showSpatialSummary() }
-        binding.buttonPoweramp.setOnClickListener { loadPowerampLibrary() }
+        // buttonPoweramp's click is owned by setUpLibraryDisclosure: it is a fold, not an action.
+
+        // Press and lift feedback for every control in the chip and the header, from one place, so
+        // they all feel the same. See Haptics.attachTo.
+        listOf(
+            binding.buttonOpenFile,
+            binding.buttonPoweramp,
+            binding.buttonLibrary,
+            binding.buttonRefresh,
+            binding.buttonSpatialStatus,
+        ).forEach { Haptics.attachTo(it) }
     }
 
     private fun restoreFolderGrant() {
@@ -273,47 +303,85 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = poweramp.readLibrary()
             showToast(result.status)
-            if (result.entries.isEmpty()) {
-                setScanning(false)
-            } else {
-                // Poweramp entries are merged on top of whatever else is listed.
-                val merged = ArrayList<FileEntry>(result.entries)
-                merged += entries.filter { it.source != FileEntry.Source.POWERAMP }
-                publish(merged)
-            }
+            powerampLoaded = true
+            // Merged into the same store as everything else; which of them is on screen is decided by
+            // the filter, so the two libraries cannot drift apart.
+            val merged = ArrayList<FileEntry>(result.entries)
+            merged += entries.filter { it.source != FileEntry.Source.POWERAMP }
+            publish(merged)
         }
     }
 
     /**
-     * Wires the library disclosure header.
+     * Wires the two folding segments of the action chip.
      *
-     * The list starts collapsed: the useful first screen is the status chips and the actions, not a
-     * wall of filenames. The choice is remembered, so someone who prefers it open gets it open.
+     * Both open the same list, filtered to their own source: Poweramp shows the music, Library shows
+     * everything else. Tapping the open one folds it away. The list starts folded so the first screen
+     * is the status chips and the actions rather than a wall of filenames; the choice is remembered.
      */
     private fun setUpLibraryDisclosure() {
-        binding.libraryHeader.setOnClickListener {
-            Haptics.touch(binding.libraryHeader)
-            setLibraryExpanded(!libraryExpanded, animate = true)
+        binding.buttonLibrary.setOnClickListener {
+            setFold(if (folded == Fold.LIBRARY) Fold.NONE else Fold.LIBRARY, animate = true)
         }
-        setLibraryExpanded(prefs.getBoolean(KEY_LIBRARY_EXPANDED, false), animate = false)
+
+        binding.buttonPoweramp.setOnClickListener {
+            // Poweramp is read lazily: its provider costs a query and the audio permission may not
+            // have been granted yet, so the fold opens first and fills in when the read lands.
+            if (folded == Fold.POWERAMP) {
+                setFold(Fold.NONE, animate = true)
+            } else if (powerampLoaded) {
+                setFold(Fold.POWERAMP, animate = true)
+            } else {
+                setFold(Fold.POWERAMP, animate = true)
+                loadPowerampLibrary()
+            }
+        }
+
+        val restored = prefs.getString(KEY_FOLDED, null)
+        setFold(
+            runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.NONE),
+            animate = false,
+        )
+
+        // Where the chip docks depends on where the status chips ended up, which is only known after
+        // a layout pass - and it changes again on rotation or a font-scale change. Recompute from the
+        // layout instead of caching it.
+        binding.root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (folded != Fold.NONE && !actionBarDocking) dockActionBar(animate = false)
+        }
     }
 
     /**
-     * Shows or hides the file list.
+     * Opens one library and folds the other away, animating both chevrons and the list together.
      *
      * The body's height comes from `layout_weight`, so expanding animates the weight and the list
      * grows into place instead of appearing at full size. Below a whole number the weighted child
      * gets no height at all, which is why the visibility is flipped once the weight is non-zero
      * rather than up front.
      */
-    private fun setLibraryExpanded(expanded: Boolean, animate: Boolean) {
-        libraryExpanded = expanded
-        prefs.edit().putBoolean(KEY_LIBRARY_EXPANDED, expanded).apply()
+    private fun setFold(target: Fold, animate: Boolean) {
+        folded = target
+        prefs.edit().putString(KEY_FOLDED, target.name).apply()
 
+        val duration = if (animate) MOTION_MS else 0L
         binding.libraryChevron.animate()
-            .rotation(if (expanded) 180f else 0f)
-            .setDuration(if (animate) MOTION_MS else 0L)
+            .rotation(if (target == Fold.LIBRARY) 180f else 0f)
+            .setDuration(duration)
             .start()
+        binding.powerampChevron.animate()
+            .rotation(if (target == Fold.POWERAMP) 180f else 0f)
+            .setDuration(duration)
+            .start()
+
+        val expanded = target != Fold.NONE
+        showFold(expanded, animate)
+        dockActionBar(animate)
+    }
+
+    private fun showFold(expanded: Boolean, animate: Boolean) {
+        adapter.submit(visibleEntries())
+        updateEmptyState()
+        updateLibrarySummary()
 
         if (!animate) {
             (binding.libraryBody.layoutParams as LinearLayout.LayoutParams).weight =
@@ -343,6 +411,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Where the action chip sits when the list is open: directly below the status chips. */
+    private fun dockTranslation(): Float {
+        val bar = binding.actionBar
+        val chips = binding.chipStrip
+        if (bar.height == 0 || chips.height == 0) return 0f
+
+        val barLocation = IntArray(2)
+        bar.getLocationInWindow(barLocation)
+        val chipsLocation = IntArray(2)
+        chips.getLocationInWindow(chipsLocation)
+
+        // getLocationInWindow already includes whatever translation is applied, so take it back out
+        // to recover the position gravity alone would have given the bar.
+        val restingTop = barLocation[1] - bar.translationY
+        val dockedTop = chipsLocation[1] + chips.height + dp(DOCK_GAP_DP)
+        return dockedTop - restingTop
+    }
+
+    /**
+     * Moves the chip between its resting place at the bottom of the window and the dock under the
+     * status chips, and reserves room for it in the list.
+     *
+     * The two have to move together. The chip is a floating overlay, so while it is docked the list
+     * must start below it or the first row ends up underneath the glass.
+     *
+     * The chip used to sit at the bottom permanently, which put it on top of the last rows of the
+     * list - the one place the user is most likely to be reaching for when they have just finished
+     * scrolling.
+     */
+    private fun dockActionBar(animate: Boolean) {
+        val bar = binding.actionBar
+
+        val listInset = if (folded != Fold.NONE) bar.height + dp(DOCK_GAP_DP) else 0
+        if (binding.fileList.paddingTop != listInset) {
+            binding.fileList.setPaddingRelative(
+                binding.fileList.paddingStart,
+                listInset,
+                binding.fileList.paddingEnd,
+                binding.fileList.paddingBottom,
+            )
+        }
+
+        val target = if (folded != Fold.NONE) dockTranslation() else 0f
+        if (kotlin.math.abs(bar.translationY - target) < 0.5f) return
+
+        if (!animate) {
+            bar.translationY = target
+            return
+        }
+
+        actionBarDocking = true
+        bar.animate()
+            .translationY(target)
+            .setDuration(MOTION_MS)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction { actionBarDocking = false }
+            .start()
+    }
+
     private fun publish(list: List<FileEntry>) {
         entries.clear()
         // De-duplicate on URI so a folder grant does not double up MediaStore rows.
@@ -350,22 +477,47 @@ class MainActivity : AppCompatActivity() {
         for (entry in list) {
             if (seen.add(entry.uri.toString())) entries += entry
         }
-        adapter.submit(entries)
+        adapter.submit(visibleEntries())
         setScanning(false)
         updateEmptyState()
         updateCapabilityLine()
         updateLibrarySummary()
     }
 
-    /** One line telling the collapsed header what is inside. */
+    /**
+     * One line telling the first screen what is in the library.
+     *
+     * Counts whichever set the user is looking at: "461 · 2 folders" while everything is folded away
+     * would be a lie the moment they open the music, which holds a different number.
+     */
     private fun updateLibrarySummary() {
-        val count = entries.size
-        val folders = entries.mapNotNull { it.uri.path?.substringBeforeLast('/') }.distinct().size
-        binding.librarySummary.text = when {
-            count == 0 -> getString(R.string.library_empty)
-            folders > 0 -> "$count · $folders folders"
-            else -> count.toString()
+        // With nothing folded open the line describes the whole collection, not the empty set the
+        // filter would return - "empty" on a screen holding 461 files is simply wrong.
+        val showing = if (folded == Fold.NONE) entries else visibleEntries()
+        val count = showing.size
+        val folders = showing.mapNotNull { it.uri.path?.substringBeforeLast('/') }.distinct().size
+        val suffix = when {
+            folded == Fold.POWERAMP -> " " + getString(R.string.poweramp_library)
+            folded == Fold.LIBRARY -> " " + getString(R.string.library)
+            else -> ""
         }
+        binding.headerSubtitle.text = when {
+            count == 0 -> getString(R.string.library_empty)
+            folders > 0 -> "$count · $folders folders$suffix"
+            else -> "$count$suffix"
+        }
+    }
+
+    /**
+     * The entries the open library should show.
+     *
+     * One list serves both libraries. Poweramp owns the music and the media store owns everything
+     * else, so "which library is open" is a filter rather than two adapters to keep in step.
+     */
+    private fun visibleEntries(): List<FileEntry> = when (folded) {
+        Fold.NONE -> emptyList()
+        Fold.LIBRARY -> entries.filter { it.source != FileEntry.Source.POWERAMP }
+        Fold.POWERAMP -> entries.filter { it.source == FileEntry.Source.POWERAMP }
     }
 
     private fun setScanning(scanning: Boolean) {
@@ -373,7 +525,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateEmptyState() {
-        val empty = entries.isEmpty()
+        val empty = visibleEntries().isEmpty()
         binding.emptyState.visibility = if (empty) View.VISIBLE else View.GONE
         binding.fileList.visibility = if (empty) View.GONE else View.VISIBLE
     }
@@ -467,9 +619,12 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val PREF_FOLDER_URI = "scoped_folder_uri"
 
-        const val KEY_LIBRARY_EXPANDED = "library_expanded"
+        const val KEY_FOLDED = "folded_library"
 
         /** Disclosure animation length; a spring would overshoot the weighted height. */
         const val MOTION_MS = 280L
+
+        /** Gap between the docked action chip and the bottom of the status chips. */
+        const val DOCK_GAP_DP = 10
     }
 }

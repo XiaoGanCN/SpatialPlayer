@@ -41,7 +41,10 @@ adb_() { "$ADB" "$@" 2>/dev/null | tr -d '\r'; }
 music_volume() {
   sh_ "dumpsys audio" | awk '
     /STREAM_MUSIC:/                { in_stream = 1; next }
-    in_stream && /Current:/        { line = $0; sub(/^[^:]*:[^:]*:[^:]*:/, "", line); current = line }
+    # Keep the whole line. Stripping a leading "label:" off it with `sub` also ate the first entry
+    # in the list, so the device that happened to be listed first could never be found - which went
+    # unnoticed for as long as the headphones, listed far down, were the active output.
+    in_stream && /Current:/        { current = $0 }
     in_stream && /Devices:/        {
       dev = $0
       sub(/.*Devices:[ ]*/, "", dev)
@@ -224,7 +227,7 @@ fi
 
 # ---------------------------------------------------------------------------
 say "the chrome responds to a single tap, and does not time out early"
-LUM="$ROOT/tools/chrome_luminance.py"
+PRESENCE="$ROOT/tools/chrome_presence.py"
 TAP_X=$(( WIDTH / 2 )); TAP_Y=$(( HEIGHT / 2 ))
 TIMEOUT_MS=6000
 
@@ -232,10 +235,12 @@ chrome_state() {
   # Raw adb, not adb_(): that helper pipes through `tr -d '\r'`, which corrupts binary PNG data
   # and silently yields a zero-byte screenshot.
   "$ADB" exec-out screencap -p > "$OUT_DIR/.gesture-state.png" 2>/dev/null
-  python3 "$LUM" "$OUT_DIR/.gesture-state.png"
+  python3 "$PRESENCE" "$OUT_DIR/.gesture-state.png"
 }
 
-visible() { python3 -c "import sys; sys.exit(0 if float('${1:-0}') > 20 else 1)"; }
+# Measured on device: 28.5 with the chrome up against 2.7 without, so 10 is a wide margin
+# either side rather than a tuned threshold.
+visible() { python3 -c "import sys; sys.exit(0 if float('${1:-0}') > 10 else 1)"; }
 tap() { adb_ shell input tap "$TAP_X" "$TAP_Y" > /dev/null 2>&1; }
 
 # A tap toggles, so rather than assuming a starting state, tap until the wanted state is reached.

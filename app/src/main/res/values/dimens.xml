@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Height of a segment of the main action chip.
+
+      Fixed rather than derived from the content so the three segments are exactly the same height.
+      Sized to the content they came out at 105 px, 83 px and 89 px, which put the labels at three
+      different baselines inside what is meant to read as a single control.
+    -->
+    <dimen name="chip_segment_height">44dp</dimen>
+</resources>

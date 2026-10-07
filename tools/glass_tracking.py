@@ -19,7 +19,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from chrome_luminance import read_png  # noqa: E402  (dependency-free PNG reader lives there)
+from png_reader import read_png  # noqa: E402
 
 MIN_CORRELATION = 0.85
 MAX_BOX_CORRELATION = 0.50  # over the pillarbox there is no picture to track

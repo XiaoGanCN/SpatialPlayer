@@ -32,6 +32,8 @@
     <string name="subtitle_settings">Subtitles</string>
     <string name="audio_settings">Audio &amp; spatial</string>
     <string name="aspect_settings">Scaling</string>
+    <string name="more_controls">More controls</string>
+    <string name="subtitles_off">Off</string>
 
     <!-- Decoder panel -->
     <string name="decoder_policy">Decoder policy</string>

@@ -8,6 +8,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
 
 /**
@@ -49,6 +50,40 @@ object Haptics {
             HapticFeedbackConstants.KEYBOARD_TAP
         }
         view.performHapticFeedback(constant, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING)
+    }
+
+    /**
+     * A finger lifted off a control.
+     *
+     * Deliberately the lightest thing in this file, and lighter than [touch]. The press says "your
+     * finger has landed on something", the lift says "and now it has left"; making the two the same
+     * strength reads as two separate taps rather than as one press.
+     */
+    fun lift(view: View) {
+        compose(view, singlePulse(amplitude = 45, durationMs = 7L))
+            ?: view.performHapticFeedback(
+                HapticFeedbackConstants.CLOCK_TICK,
+                HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
+            )
+    }
+
+    /**
+     * Gives a control the press/lift pair in one place, so every control feels the same.
+     *
+     * The listener never consumes the event: returning false leaves the view's own click handling,
+     * ripples and long-press alone. `ACTION_CANCEL` is ignored on purpose - it means a parent
+     * (a scrolling list, say) took the gesture over, and buzzing on the way out of a scroll would be
+     * noise rather than feedback.
+     */
+    fun attachTo(view: View) {
+        view.setOnTouchListener { touched, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> touch(touched)
+                MotionEvent.ACTION_UP -> lift(touched)
+                else -> Unit
+            }
+            false
+        }
     }
 
     /** A discrete value was crossed during a continuous drag. */
