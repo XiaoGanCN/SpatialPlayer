@@ -429,6 +429,13 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
   then refuses the layout would turn a track that plays into one that does not. Needing `configure`
   to *decline* is worth knowing: the return type is not nullable, so the way to opt out is to throw
   `UnhandledAudioFormatException` (Media3 catches it and drops the processor).
+- **Q1 is the one item not verified on device.** It is wired, gated and observable - the processor
+  logs `upmix ... stereo to 5.1` when it engages and the factory logs when it puts it in the chain -
+  but the phone was on a call for the whole of the verification window, so audio focus was held
+  elsewhere, the sink was never configured and the log never fired. **Check this first next time**:
+  play a stereo FLAC or the AAC clip with the headset connected and confirm two things - the
+  `StereoUpmix` line appears, and the track still plays. If it appears and the track fails, the
+  fallback described below is what should catch it.
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 
