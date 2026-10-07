@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegAudioRenderer
@@ -52,6 +53,32 @@ class SpatialRenderersFactory(
         setEnableAudioFloatOutput(true)
         setEnableAudioTrackPlaybackParams(true)
     }
+
+    /**
+     * Builds the default sink with the stereo upmix in front of it.
+     *
+     * This is the documented seam for inserting an audio processor, and it has to reproduce what the
+     * superclass would have built: the float-output and playback-params flags come straight from the
+     * factory's own settings, and dropping either would change how every track is decoded.
+     *
+     * The gate is deliberately a runtime question rather than a build-time one - the sink is asked
+     * whether it can take six channels at the stream's own sample rate.
+     */
+    override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioTrackPlaybackParams: Boolean,
+    ): AudioSink = DefaultAudioSink.Builder(context)
+        .setAudioProcessors(
+            arrayOf(
+                StereoUpmixProcessor { sampleRate ->
+                    AudioOutputCapability.canOpenTrack(6, sampleRate)
+                },
+            ),
+        )
+        .setEnableFloatOutput(enableFloatOutput)
+        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+        .build()
 
     override fun buildAudioRenderers(
         context: Context,

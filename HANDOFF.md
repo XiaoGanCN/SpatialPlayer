@@ -288,11 +288,15 @@ the full native text that no log line produced.
 | `tools/verify-spatial-audio.sh` | 9 | `isSpatialized=true`, head tracking non-DISABLED |
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
+| `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
 
-**80 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
+**90 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
 harnesses; `tools/chrome_presence.py` reports how much structure is in the **top bar** as the
 "chrome is visible" proxy, and `tools/glass_tracking.py` adds the freeze/tracking maths.
-`tools/verify-chapters.sh` is still to be written.
+Probes: `SmokeChaptersProbeActivity` (`SMOKE_CHAPTERS`, `--es chapters_probe_path`) logs one flat
+line per chapter. It exists because the player animates continuously, so `uiautomator dump` will not
+settle on it - the UI cannot be introspected, and the alternative would be OCR of a screenshot. The
+same trick is worth reaching for whenever a suite needs to assert on something the UI renders.
 
 **Chrome visibility had to be re-thought** when the capsule moved over the picture: the old probe
 averaged a fixed band in the bottom eighth, and the capsule now floats just inside the *picture's*
@@ -401,14 +405,30 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
     chrome did nothing. It now tests the actual controls, so the glass between them behaves like the
     picture (tap toggles the chrome, drag adjusts).
 
-### Remaining — functions first, UI after (user's explicit ordering)
-- **C8** chapters (EBML parser + chapter UI + `verify-chapters.sh`).
-- **C5** Settings page (`SettingsStore`, misc/dev/debug/decode/app-info, built from the glass
-  components) — should collect: spatial toggle, jump length, decoder profile, gesture tuning,
-  glass material, subtitle parse cap.
-- **Q1** stereo→5.1 upmix `AudioProcessor` for head-tracked music (confirmed feasible, §4.1).
-- **C11 tail** subtitle parse cap (the failing film has 51 subtitle tracks) + surface the 7.1
-  downmix decision in the UI so it is not a silent surprise.
+### Functional items — done this round
+- **C8 chapters.** `media/MatroskaChapters.kt` (Media3 1.8 has no chapter API at all), a `Chapters`
+  panel, a **Chapters** row in the overflow showing "3 / 16", and `tools/verify-chapters.sh`
+  (10 checks). Verified on device against a five-chapter MKV: the panel lists the right titles and
+  times, and the parser reports none for a file without them.
+- **C5 settings.** `SettingsStore` (one home for every persisted value - there was none before, each
+  screen owned its own literals and defaults) and `SettingsActivity`, reached from the header gear.
+  Sections: Playback (spatial, ambient, skip length, subtitle cap), Decoding (decoder profile,
+  policy), Gestures (drag sensitivity), Appearance (glass material), Device and build, Diagnostics
+  (copy a report). **Choice rows show every option at once with the current one marked** - the user's
+  complaint that speed and scaling "just click and change state" applies here too, so nothing cycles.
+  The material setting is applied, not decorative: CLEAR darkens the picture where REGULAR lightens.
+- **C11.** The subtitle picker lists at most `subtitleTrackLimit` tracks (default 20, settable), keeps
+  whatever is selected visible regardless of where it falls, and offers "show all N" for the rest -
+  the reference film has 51. A channel downmix now reports itself: a new
+  `onEngineAudioDownmixed(from, to)` listener callback raises a "7.1 → 5.1" chip and a one-line
+  message, instead of the film quietly playing as 5.1 with nothing to say it was not 5.1.
+- **Q1 stereo upmix.** `media/StereoUpmixProcessor.kt`, inserted via
+  `SpatialRenderersFactory.buildAudioSink`. Front L/R bit-exact; centre `(L+R)/2` at -3 dB; LFE a
+  120 Hz second-order Butterworth sum at -6 dB; rears the difference signal at -6 dB with a 12 ms
+  delay. **Gated on `AudioOutputCapability.canOpenTrack(6, sampleRate)` - upmixing onto a sink that
+  then refuses the layout would turn a track that plays into one that does not. Needing `configure`
+  to *decline* is worth knowing: the return type is not nullable, so the way to opt out is to throw
+  `UnhandledAudioFormatException` (Media3 catches it and drops the processor).
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 

@@ -240,6 +240,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.buttonRefresh.setOnClickListener { refresh() }
+        binding.buttonSettings.setOnClickListener {
+            startActivity(android.content.Intent(this, SettingsActivity::class.java))
+        }
         binding.buttonSpatialStatus.setOnClickListener { showSpatialSummary() }
         // buttonPoweramp's click is owned by setUpLibraryDisclosure: it is a fold, not an action.
 
@@ -251,6 +254,7 @@ class MainActivity : AppCompatActivity() {
             binding.buttonLibrary,
             binding.buttonRefresh,
             binding.buttonSpatialStatus,
+            binding.buttonSettings,
         ).forEach { Haptics.attachTo(it) }
     }
 
@@ -383,28 +387,48 @@ class MainActivity : AppCompatActivity() {
         updateEmptyState()
         updateLibrarySummary()
 
+        val body = binding.libraryBody
+        val params = body.layoutParams as LinearLayout.LayoutParams
+        val settle = dp(LIST_SETTLE_DP).toFloat()
+
         if (!animate) {
-            (binding.libraryBody.layoutParams as LinearLayout.LayoutParams).weight =
-                if (expanded) 1f else 0f
-            binding.libraryBody.visibility = if (expanded) View.VISIBLE else View.GONE
+            params.weight = if (expanded) 1f else 0f
+            body.layoutParams = params
+            body.visibility = if (expanded) View.VISIBLE else View.GONE
+            body.alpha = if (expanded) 1f else 0f
+            body.translationY = 0f
             return
         }
 
-        val params = binding.libraryBody.layoutParams as LinearLayout.LayoutParams
-        if (expanded) binding.libraryBody.visibility = View.VISIBLE
-        val from = params.weight
-        val to = if (expanded) 1f else 0f
-        ValueAnimator.ofFloat(from, to).apply {
+        if (expanded) {
+            body.visibility = View.VISIBLE
+            // Start slightly high and settle down, which is the direction the panel is unfolding.
+            // Sliding up from below would put the rows outside the parent for the duration and the
+            // default clipChildren would cut them off.
+            body.translationY = -settle
+            body.alpha = 0f
+        }
+        body.animate().cancel()
+        body.animate()
+            .alpha(if (expanded) 1f else 0f)
+            .translationY(if (expanded) 0f else -settle)
+            .setDuration(MOTION_MS)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+
+        // The height has to be animated separately: the body's height comes from `layout_weight`, and
+        // a weight is not a property a ViewPropertyAnimator can drive.
+        ValueAnimator.ofFloat(params.weight, if (expanded) 1f else 0f).apply {
             duration = MOTION_MS
             interpolator = DecelerateInterpolator()
             addUpdateListener { animator ->
                 params.weight = animator.animatedValue as Float
-                binding.libraryBody.layoutParams = params
+                body.layoutParams = params
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     // Collapsing to exactly zero removes the body from the layout entirely.
-                    if (!expanded) binding.libraryBody.visibility = View.GONE
+                    if (!expanded) body.visibility = View.GONE
                 }
             })
             start()
@@ -623,6 +647,9 @@ class MainActivity : AppCompatActivity() {
 
         /** Disclosure animation length; a spring would overshoot the weighted height. */
         const val MOTION_MS = 280L
+
+        /** How far the list settles into place as a fold opens, in dp. */
+        const val LIST_SETTLE_DP = 12
 
         /** Gap between the docked action chip and the bottom of the status chips. */
         const val DOCK_GAP_DP = 10

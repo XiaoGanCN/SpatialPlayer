@@ -138,6 +138,7 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             }
             override fun onEngineFirstFrame() = Unit
             override fun onEnginePlaybackParameters(speed: Float) = Unit
+            override fun onEngineAudioDownmixed(from: Int, to: Int) = Unit
         })
         this.engine = engine
 

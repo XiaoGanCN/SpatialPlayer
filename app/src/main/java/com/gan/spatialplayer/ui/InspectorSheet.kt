@@ -52,6 +52,8 @@ class InspectorSheet @JvmOverloads constructor(
         SUBTITLES(R.string.subtitle_settings),
         AUDIO(R.string.audio_settings),
         SCALING(R.string.aspect_settings),
+        SPEED(R.string.speed),
+        CHAPTERS(R.string.chapters),
     }
 
     interface Callback {

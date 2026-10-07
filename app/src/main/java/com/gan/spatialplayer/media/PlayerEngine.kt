@@ -1,5 +1,7 @@
 package com.gan.spatialplayer.media
 
+import com.gan.spatialplayer.SettingsStore
+
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -41,6 +43,15 @@ class PlayerEngine(
         fun onEngineError(message: String, cause: Throwable?)
         fun onEngineFirstFrame()
         fun onEnginePlaybackParameters(speed: Float)
+
+        /**
+         * The output refused [from] channels and the player is retrying with [to].
+         *
+         * Its own callback rather than an error: nothing went wrong, the sink is simply narrower than
+         * its advertised capability, and the user is entitled to know why their 7.1 film is coming out
+         * as 5.1 instead of having to guess.
+         */
+        fun onEngineAudioDownmixed(from: Int, to: Int)
     }
 
     private val trackSelector = DefaultTrackSelector(context)
@@ -48,11 +59,16 @@ class PlayerEngine(
     var player: ExoPlayer? = null
         private set
 
-    var decoderProfile: DecoderProfile = DecoderProfile.DEFAULT
+    private val settings = SettingsStore(context)
+
+    /** Which renderer ordering to build. Read from settings so a choice survives the app. */
+    var decoderProfile: DecoderProfile = runCatching {
+        DecoderProfile.valueOf(settings.decoderProfile)
+    }.getOrDefault(DecoderProfile.DEFAULT)
         private set
 
     /** Set false to let the platform leave audio exactly where the app put it. */
-    var spatialAudioEnabled: Boolean = true
+    var spatialAudioEnabled: Boolean = settings.spatialEnabled
         private set
 
     private var currentMedia: MediaItem? = null
@@ -281,6 +297,7 @@ class PlayerEngine(
     fun switchDecoderProfile(profile: DecoderProfile) {
         if (profile == decoderProfile && player != null) return
         decoderProfile = profile
+        settings.decoderProfile = profile.name
         rebuildPreservingState()
     }
 
@@ -302,6 +319,7 @@ class PlayerEngine(
     fun setSpatialAudioEnabled(enabled: Boolean) {
         if (enabled == spatialAudioEnabled) return
         spatialAudioEnabled = enabled
+        settings.spatialEnabled = enabled
         rebuildPreservingState()
     }
 
@@ -410,6 +428,7 @@ class PlayerEngine(
      * @return true when a retry was started.
      */
     private fun downgradeChannelsForSink(): Boolean {
+        val refused = maxAudioChannelCount
         val next = when {
             maxAudioChannelCount > 6 -> 6
             maxAudioChannelCount > 2 -> 2
@@ -429,8 +448,7 @@ class PlayerEngine(
         if (wasPlaying) player?.play()
 
         lastErrorIsTerminal = false
-        val detail = lastErrorDetail?.let { " ($it)" }.orEmpty()
-        listener.onEngineError("output refused that channel layout, downmixing to $next channels$detail", null)
+        listener.onEngineAudioDownmixed(from = refused, to = next)
         return true
     }
 

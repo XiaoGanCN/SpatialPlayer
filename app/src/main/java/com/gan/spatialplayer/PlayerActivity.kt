@@ -38,6 +38,9 @@ import com.gan.spatialplayer.media.DeviceCapabilities
 import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.MediaTrack
 import com.gan.spatialplayer.media.MediaTracks
+import com.gan.spatialplayer.media.Chapter
+import com.gan.spatialplayer.media.MatroskaChapters
+import java.io.File
 import com.gan.spatialplayer.media.PlaybackReport
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
@@ -71,7 +74,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private lateinit var binding: ActivityPlayerBinding
     private lateinit var engine: PlayerEngine
-    private val prefs by lazy { getSharedPreferences("spatial_player", MODE_PRIVATE) }
+    private val settings by lazy { SettingsStore(this) }
 
     private lateinit var gestures: PlayerGestureController
 
@@ -92,6 +95,23 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private var lastSample: PlayerSample = PlayerSample.EMPTY
     private var mediaTracks: MediaTracks = MediaTracks.EMPTY
     private var videoSize: VideoSize? = null
+
+    /**
+     * Set when the sink refused the track's channel count, e.g. "7.1 → 5.1".
+     *
+     * The chip strip already reports the *current* layout, which after a downgrade reads "5.1" and
+     * looks like the film was always 5.1. This records that it was not.
+     */
+    private var audioDownmixNote: String? = null
+
+    /**
+     * Chapters found in the current item, empty when there are none or the container is not Matroska.
+     *
+     * Read once per item on a background thread: the reference film is a 70 GB remux, and walking its
+     * element tree on the main thread would stall the first frame.
+     */
+    private var chapters: List<Chapter> = emptyList()
+    private var chapterJob: Job? = null
     private var refreshJob: Job? = null
     private var isScrubbing = false
 
@@ -113,17 +133,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      *
      * Persisted because a preferred jump length is a habit, not a per-session choice.
      */
-    private var doubleTapJumpMs: Long = DEFAULT_DOUBLE_TAP_JUMP_MS
+    private var doubleTapJumpMs: Long = SettingsStore.DEFAULT_JUMP_MS
         set(value) {
-            val clamped = value.coerceIn(MIN_DOUBLE_TAP_JUMP_MS, MAX_DOUBLE_TAP_JUMP_MS)
+            val clamped = value.coerceIn(SettingsStore.MIN_JUMP_MS, SettingsStore.MAX_JUMP_MS)
             field = clamped
             if (::gestures.isInitialized) gestures.doubleTapJumpMs = clamped
-            prefs.edit().putLong(KEY_DOUBLE_TAP_JUMP_MS, clamped).apply()
+            settings.doubleTapJumpMs = clamped
         }
 
     /** Subtitle tuning, adjustable from the subtitle panel while playing. */
-    private var subtitleSizeSp: Float = DEFAULT_SUBTITLE_SP
-    private var subtitlePositionFraction: Float = DEFAULT_SUBTITLE_POSITION
+    private var subtitleSizeSp: Float = 0f
+    private var subtitlePositionFraction: Float = 0f
 
     private var scaleMode = VideoRectCalculator.SCALE_FIT
     private var userZoom = 1f
@@ -171,11 +191,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         configurePlayerView()
         attachGlassBackdrop()
 
+        subtitleSizeSp = settings.subtitleSizeSp
+        subtitlePositionFraction = settings.subtitlePositionFraction
+        ambientEnabled = settings.ambientEnabled
         gestures = PlayerGestureController(this, this)
-        gestures.verticalGain = DEFAULT_VERTICAL_GAIN
+        gestures.verticalGain = settings.verticalGain
         // Restores the saved jump length, and through the setter also configures the controller and
         // the player's seek increments.
-        doubleTapJumpMs = prefs.getLong(KEY_DOUBLE_TAP_JUMP_MS, DEFAULT_DOUBLE_TAP_JUMP_MS)
+        doubleTapJumpMs = settings.doubleTapJumpMs
         // The controller scales drags by the viewport, so it must be told the real size. It was
         // never being given it, which left viewWidth/viewHeight at 1: every vertical delta then
         // saturated its per-event cap and a short drag moved the volume by many steps at once.
@@ -242,6 +265,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.controlGlass.dispersionStrength = 0.10f
         binding.controlGlass.specularStrength = 1.0f
         binding.controlGlass.saturation = 1.06f
+        applyGlassMaterial()
 
         applySubtitleStyle()
     }
@@ -361,6 +385,24 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * landscape window, and a TV-style layout at once - and squashed or clipped subtitles are worse
      * than none.
      */
+    /**
+     * Applies the chosen glass material to every pane on this screen.
+     *
+     * Two materials, because one cannot serve both cases. REGULAR is the brighter, more opaque pane
+     * that reads as a solid object; CLEAR dims what is behind it and transmits more of it, which is
+     * the one to reach for over a bright picture, where REGULAR's white fill simply washes out.
+     *
+     * Re-applied rather than set once because the setting can change while the player is open.
+     */
+    private fun applyGlassMaterial() {
+        val clear = settings.glassMaterial == SettingsStore.GLASS_CLEAR
+        for (pane in listOf(binding.controlGlass)) {
+            pane.tintColor = if (clear) GLASS_CLEAR_TINT else GLASS_REGULAR_TINT
+            pane.glassTintColor = if (clear) GLASS_CLEAR_BODY else GLASS_REGULAR_BODY
+            pane.dimAmount = if (clear) GLASS_CLEAR_DIM else 0f
+        }
+    }
+
     private fun applySubtitleStyle() {
         binding.playerView.subtitleView?.apply {
             setApplyEmbeddedStyles(true)
@@ -371,6 +413,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun updateTitle() {
+        audioDownmixNote = null
+        loadChapters()
         binding.mediaTitle.text = displayName
         updateStreamChips()
     }
@@ -398,21 +442,85 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         showControlsTemporarily()
     }
 
-    private fun cycleSpeed() {
-        val player = engine.player ?: return
-        val options = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-        val current = player.playbackParameters.speed
-        val index = options.indexOfFirst { kotlin.math.abs(it - current) < 0.01f }
-        val next = options[(index + 1).mod(options.size)]
-        player.setPlaybackSpeed(next)
+    /**
+     * Reads the item's chapters in the background.
+     *
+     * Matroska is the only container handled: Media3 1.8 exposes no chapter API at all, so this is a
+     * direct read of the EBML tree, and the parser knows nothing about MP4's `chpl` box. A file with
+     * none - and every MP4 - simply reports none, which the panel says out loud rather than showing
+     * an empty list.
+     */
+    private fun loadChapters() {
+        chapterJob?.cancel()
+        chapters = emptyList()
+        val uri = mediaUri ?: return
+        chapterJob = lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                runCatching {
+                    val path = uri.path
+                    val file = if (uri.scheme == "file" && path != null) File(path) else null
+                    if (file != null && file.canRead()) {
+                        MatroskaChapters.read(file)
+                    } else {
+                        contentResolver.openInputStream(uri)?.use { MatroskaChapters.read(it) }
+                            ?: emptyList()
+                    }
+                }.getOrDefault(emptyList())
+            }
+            // A single chapter is a container quirk, not something worth offering a list of.
+            chapters = if (found.size > 1) found else emptyList()
+        }
+    }
+
+    /** The chapter containing [positionMs], or null when the item has none. */
+    private fun chapterAt(positionMs: Long): Chapter? =
+        chapters.lastOrNull { it.startMs <= positionMs }
+
+    private fun populateChaptersPanel() {
+        val choices = ArrayList<InspectorSheet.Choice>()
+        val position = engine.player?.currentPosition ?: 0L
+
+        if (chapters.isEmpty()) {
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.CHAPTERS,
+                value = "no_chapters",
+                title = getString(R.string.chapters_none),
+                subtitle = "Chapters are read from Matroska files",
+                selected = false,
+                enabled = false,
+            )
+        }
+
+        for ((index, chapter) in chapters.withIndex()) {
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.CHAPTERS,
+                value = "$VALUE_CHAPTER_PREFIX$index",
+                title = chapter.title ?: "Chapter ${index + 1}",
+                subtitle = TextSpans.timecode(chapter.startMs),
+                selected = chapterAt(position) === chapter,
+                enabled = true,
+                section = if (index == 0) getString(R.string.chapters) else null,
+            )
+        }
+
+        inspectorSheet.setChoices(InspectorSheet.Panel.CHAPTERS, choices)
+    }
+
+    private fun handleChapterChoice(choice: InspectorSheet.Choice) {
+        val index = choice.value.removePrefix(VALUE_CHAPTER_PREFIX).toIntOrNull() ?: return
+        val chapter = chapters.getOrNull(index) ?: return
+        engine.player?.seekTo(chapter.startMs)
+        showFeedback(chapter.title ?: "Chapter ${index + 1}")
+        populateChaptersPanel()
     }
 
     /**
      * The controls that do not fit in the capsule's single row.
      *
-     * Speed and scaling change on tap rather than opening a submenu, which is what they did as
-     * buttons and keeps a frequent adjustment to a single tap. Subtitles and audio open their
-     * panels, which is where their choices already lived.
+     * Every row opens a panel, and each panel lists all of its options with the current one marked.
+     * Speed and scaling used to *change on tap*: they cycled to the next value, so there was no way
+     * to see what the choices were or to go straight to the one you wanted - and getting back to the
+     * first scaling mode meant cycling through all of them.
      */
     private fun showOverflowSheet() {
         Log.d(TAG, "overflow sheet requested")
@@ -424,13 +532,19 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                     label = getString(R.string.speed),
                     detail = String.format(Locale.US, "%.2f×", speed),
                     iconRes = R.drawable.ic_speed,
-                    run = { cycleSpeed() },
+                    run = {
+                        populateSpeedPanel()
+                        showInspector(InspectorSheet.Panel.SPEED)
+                    },
                 ),
                 OverflowSheet.Action(
                     label = getString(R.string.aspect_settings),
                     detail = scaleModeLabel(),
                     iconRes = R.drawable.ic_aspect,
-                    run = { cycleScaleMode() },
+                    run = {
+                        populateScalingPanel()
+                        showInspector(InspectorSheet.Panel.SCALING)
+                    },
                 ),
                 OverflowSheet.Action(
                     label = getString(R.string.subtitle_settings),
@@ -439,6 +553,15 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                     run = {
                         populateSubtitlePanel()
                         showInspector(InspectorSheet.Panel.SUBTITLES)
+                    },
+                ),
+                OverflowSheet.Action(
+                    label = getString(R.string.chapters),
+                    detail = chapterSummary(),
+                    iconRes = R.drawable.ic_chapters,
+                    run = {
+                        populateChaptersPanel()
+                        showInspector(InspectorSheet.Panel.CHAPTERS)
                     },
                 ),
                 OverflowSheet.Action(
@@ -455,6 +578,37 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             // translucent rows. Take it away while the sheet is up and bring it back afterwards.
             dismissed = { showControlsTemporarily() },
         )
+    }
+
+    /** Playback rates offered, matching what Media3's `setPlaybackSpeed` handles cleanly. */
+    private fun populateSpeedPanel() {
+        val current = engine.player?.playbackParameters?.speed ?: 1f
+        val choices = SPEED_OPTIONS.map { speed ->
+            InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.SPEED,
+                value = speed.toString(),
+                title = String.format(Locale.US, "%.2f×", speed),
+                subtitle = speedHint(speed),
+                selected = kotlin.math.abs(speed - current) < 0.01f,
+                enabled = true,
+                section = if (speed == SPEED_OPTIONS.first()) "Playback speed" else null,
+            )
+        }
+        inspectorSheet.setChoices(InspectorSheet.Panel.SPEED, choices)
+    }
+
+    /** A word for the rates worth naming, so the list is not five bare numbers. */
+    private fun speedHint(speed: Float): String? = when (speed) {
+        0.5f -> "Half speed"
+        1f -> "Normal"
+        2f -> "Double speed"
+        else -> null
+    }
+
+    private fun handleSpeedChoice(choice: InspectorSheet.Choice) {
+        val speed = choice.value.toFloatOrNull() ?: return
+        engine.player?.setPlaybackSpeed(speed)
+        populateSpeedPanel()
     }
 
     /** The current scaling mode's label; also what the overflow row shows. */
@@ -484,6 +638,18 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * them by having a value or not - a file with three tracks and none selected must not look like
      * a file that cannot have subtitles.
      */
+    /**
+     * "3 / 16" for the overflow row, or null when the item has no chapters.
+     *
+     * Null rather than "none": the row is only useful when there is something behind it, and a row
+     * that opens an empty list is worse than no row.
+     */
+    private fun chapterSummary(): String? {
+        if (chapters.size <= 1) return null
+        val index = chapters.indexOfFirst { it === chapterAt(engine.player?.currentPosition ?: 0L) }
+        return if (index >= 0) "${index + 1} / ${chapters.size}" else null
+    }
+
     private fun subtitleSummary(): String? {
         val text = mediaTracks.text
         if (text.isEmpty()) return null
@@ -491,30 +657,26 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         return selected.language ?: selected.label
     }
 
-    private fun cycleScaleMode() {
-        scaleMode = when (scaleMode) {
-            VideoRectCalculator.SCALE_FIT -> VideoRectCalculator.SCALE_FILL
-            VideoRectCalculator.SCALE_FILL -> VideoRectCalculator.SCALE_ZOOM
-            VideoRectCalculator.SCALE_ZOOM -> VideoRectCalculator.SCALE_STRETCH
-            else -> VideoRectCalculator.SCALE_FIT
-        }
+    /**
+     * Applies a scaling mode.
+     *
+     * One place, because the resize mode, the stored value and the picture geometry have to move
+     * together - the ambient wash follows the picture, and a stale rectangle puts its bands on top of
+     * the frame.
+     */
+    private fun applyScaleMode(mode: Int) {
+        scaleMode = mode
         // A mode change resets any pinch zoom, so the two controls never fight.
         userZoom = 1f
-        Haptics.release(binding.buttonMore)
-        binding.playerView.resizeMode = when (scaleMode) {
+        binding.playerView.resizeMode = when (mode) {
             VideoRectCalculator.SCALE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             VideoRectCalculator.SCALE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
             VideoRectCalculator.SCALE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             else -> AspectRatioFrameLayout.RESIZE_MODE_FILL
         }
-        val label = when (scaleMode) {
-            VideoRectCalculator.SCALE_FIT -> getString(R.string.scale_fit)
-            VideoRectCalculator.SCALE_FILL -> getString(R.string.scale_fill)
-            VideoRectCalculator.SCALE_ZOOM -> getString(R.string.scale_zoom)
-            else -> getString(R.string.scale_stretch)
-        }
-        showFeedback(label)
+        Haptics.release(binding.buttonMore)
         updateVideoRect()
+        showFeedback(scaleModeLabel())
     }
 
     private fun toggleControls() {
@@ -1011,6 +1173,18 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         startAmbientSampling()
     }
 
+    /**
+     * The picture is HDR, the panel is driving it, but the audio will not be what the disc says.
+     *
+     * Surfaced rather than swallowed: a 7.1 track quietly arriving as 5.1 looks like a bug in the
+     * app, and the reason - the output sink refused eight channels - is worth one line of text.
+     */
+    override fun onEngineAudioDownmixed(from: Int, to: Int) {
+        audioDownmixNote = "${PlaybackReport.channelLayout(from)} → ${PlaybackReport.channelLayout(to)}"
+        showFeedback(getString(R.string.audio_downmixed, from, to))
+        updateStreamChips()
+    }
+
     override fun onEnginePlaybackParameters(speed: Float) {
         // The capsule no longer shows the speed; the overflow sheet reads it from the player when it
         // opens, so there is nothing to keep in sync here.
@@ -1105,6 +1279,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 DecoderPolicy.describeRoute(mime, engine.decoderProfile).uppercase(),
                 ChipStrip.Tone.NEUTRAL,
             )
+        }
+
+        // Only once it has actually happened, and it stays for the item: the layout on screen will
+        // read "5.1" either way, and without this there is nothing to say it was 7.1.
+        audioDownmixNote?.let { note ->
+            chips += ChipStrip.Chip(note, ChipStrip.Tone.ACTIVE)
         }
 
         binding.playerChips.setChips(chips)
@@ -1222,7 +1402,19 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             section = "Tracks",
         )
 
-        for (track in textTracks) {
+        // A remux can carry fifty or more subtitle tracks and building a row for each one makes the
+        // panel slow to open and impossible to scan. The cap keeps the common case instant; whatever
+        // is selected is always listed, wherever it falls, and the rest are one tap away.
+        val limit = settings.subtitleTrackLimit
+        val selectedTracks = textTracks.filter { it.selected }
+        val listed = if (textTracks.size <= limit) {
+            textTracks
+        } else {
+            (selectedTracks + textTracks.take((limit - selectedTracks.size).coerceAtLeast(1)))
+                .distinctBy { it.id }
+        }
+
+        for (track in listed) {
             choices += InspectorSheet.Choice(
                 panel = InspectorSheet.Panel.SUBTITLES,
                 value = "$VALUE_TEXT_PREFIX${track.id}",
@@ -1230,6 +1422,21 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 subtitle = track.detail,
                 selected = track.selected,
                 enabled = track.supported,
+            )
+        }
+
+        if (listed.size < textTracks.size) {
+            choices += InspectorSheet.Choice(
+                panel = InspectorSheet.Panel.SUBTITLES,
+                value = VALUE_TEXT_SHOW_ALL,
+                title = getString(R.string.subtitle_tracks_show_all, textTracks.size),
+                subtitle = getString(
+                    R.string.subtitle_tracks_limited,
+                    listed.size,
+                    textTracks.size,
+                ),
+                selected = false,
+                enabled = true,
             )
         }
 
@@ -1250,7 +1457,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             panel = InspectorSheet.Panel.SUBTITLES,
             value = subtitleSizeSp.toString(),
             title = getString(R.string.subtitle_size),
-            range = MIN_SUBTITLE_SP..MAX_SUBTITLE_SP,
+            range = SettingsStore.MIN_SUBTITLE_SIZE..SettingsStore.MAX_SUBTITLE_SIZE,
             stepSize = 1f,
             section = "Styling",
         )
@@ -1376,6 +1583,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             InspectorSheet.Panel.AUDIO -> handleAudioChoice(choice)
             InspectorSheet.Panel.SUBTITLES -> handleSubtitleChoice(choice)
             InspectorSheet.Panel.SCALING -> handleScalingChoice(choice)
+            InspectorSheet.Panel.SPEED -> handleSpeedChoice(choice)
+            InspectorSheet.Panel.CHAPTERS -> handleChapterChoice(choice)
             else -> Unit
         }
     }
@@ -1408,15 +1617,26 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         if (choice.range != null) {
             val value = choice.value.toFloatOrNull() ?: return
             when (choice.title) {
-                getString(R.string.subtitle_size) -> subtitleSizeSp = value
-                getString(R.string.subtitle_bottom_padding) ->
+                getString(R.string.subtitle_size) -> {
+                    subtitleSizeSp = value
+                    settings.subtitleSizeSp = value
+                }
+                getString(R.string.subtitle_bottom_padding) -> {
                     subtitlePositionFraction = (value / 100f).coerceIn(0f, 0.45f)
+                    settings.subtitlePositionFraction = subtitlePositionFraction
+                }
             }
             applySubtitleStyle()
             return
         }
 
         when {
+            choice.value == VALUE_TEXT_SHOW_ALL -> {
+                settings.subtitleTrackLimit = mediaTracks.text.size
+                populateSubtitlePanel()
+                return
+            }
+
             choice.value == SUBTITLE_OFF -> {
                 val player = engine.player
                 if (player != null) {
@@ -1451,25 +1671,21 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         when {
             choice.value.startsWith("scale_") -> {
-                scaleMode = choice.value.removePrefix("scale_").toIntOrNull()
-                    ?: VideoRectCalculator.SCALE_FIT
-                userZoom = 1f
-                binding.playerView.resizeMode = when (scaleMode) {
-                    VideoRectCalculator.SCALE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    VideoRectCalculator.SCALE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    VideoRectCalculator.SCALE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    else -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                }
-                updateVideoRect()
+                applyScaleMode(
+                    choice.value.removePrefix("scale_").toIntOrNull()
+                        ?: VideoRectCalculator.SCALE_FIT,
+                )
             }
 
             choice.value == "ambient_off" -> {
                 ambientEnabled = false
+                settings.ambientEnabled = false
                 binding.ambientGlow.glowEnabled = false
             }
 
             choice.value == "ambient_on" -> {
                 ambientEnabled = true
+                settings.ambientEnabled = true
                 binding.ambientGlow.glowEnabled = true
             }
         }
@@ -1588,6 +1804,11 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         const val EXTRA_DISPLAY_NAME = "extra_display_name"
         const val EXTRA_MIME_TYPE = "extra_mime_type"
         const val EXTRA_SIZE_BYTES = "extra_size_bytes"
+        private const val VALUE_CHAPTER_PREFIX = "chapter_"
+
+        /** Raises the subtitle cap so every track in the file is listed. */
+        private const val VALUE_TEXT_SHOW_ALL = "show_all_subtitle_tracks"
+
         const val SUBTITLE_OFF = "subtitle_off"
 
         private const val VALUE_AUDIO_PREFIX = "audiotrack_"
@@ -1601,6 +1822,19 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val CONTROL_GLASS_RADIUS_DP = 30f
 
         /** Refracting bevel and bend distance for the control capsule, in dp. */
+        /**
+         * The two materials as straight-alpha tints.
+         *
+         * CLEAR carries a dark body and a little dim, so it darkens the picture instead of lightening
+         * it - the opposite of REGULAR, which is a white fill. Both are deliberately weak: the pane
+         * is a control surface, and anything heavier stops the picture reading through it.
+         */
+        private const val GLASS_REGULAR_TINT = 0x12FFFFFF
+        private const val GLASS_REGULAR_BODY = 0x00000000
+        private const val GLASS_CLEAR_TINT = 0x0AFFFFFF
+        private const val GLASS_CLEAR_BODY = 0x33000000
+        private const val GLASS_CLEAR_DIM = 0.22f
+
         private const val CONTROL_GLASS_BEVEL_DP = 16f
         private const val CONTROL_GLASS_REFRACT_DP = 12f
 
@@ -1613,14 +1847,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
          */
         private const val CHROME_VIDEO_INSET_DP = 16f
 
+        /** Playback rates offered in the speed picker. */
+        private val SPEED_OPTIONS = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f
 
         /** Double-tap seek range and default, in ms. */
-        private const val DEFAULT_DOUBLE_TAP_JUMP_MS = 10_000L
-        private const val MIN_DOUBLE_TAP_JUMP_MS = 1_000L
-        private const val MAX_DOUBLE_TAP_JUMP_MS = 30_000L
-        private const val KEY_DOUBLE_TAP_JUMP_MS = "double_tap_jump_ms"
 
         /** Below this the position is not worth restoring. */
         private const val RESUME_MIN_MS = 15_000L
@@ -1632,9 +1865,5 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val CONTROLS_TIMEOUT_MS = 6_000L
 
         /** Subtitle defaults and the range the sliders expose. */
-        private const val DEFAULT_SUBTITLE_SP = 18f
-        private const val MIN_SUBTITLE_SP = 10f
-        private const val MAX_SUBTITLE_SP = 40f
-        private const val DEFAULT_SUBTITLE_POSITION = 0.08f
     }
 }

@@ -72,6 +72,7 @@ class SmokeSpatialToggleProbeActivity : Activity(), PlayerEngine.Listener {
     }
     override fun onEngineFirstFrame() = Unit
     override fun onEnginePlaybackParameters(speed: Float) = Unit
+    override fun onEngineAudioDownmixed(from: Int, to: Int) = Unit
 
     companion object {
         const val TAG = "SpatialToggleProbe"

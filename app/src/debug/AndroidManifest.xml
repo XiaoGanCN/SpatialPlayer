@@ -84,5 +84,17 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".SmokeChaptersProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.SpatialPlayer">
+            <intent-filter>
+                <action android:name="com.gan.spatialplayer.SMOKE_CHAPTERS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>
