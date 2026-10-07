@@ -411,13 +411,61 @@ nothing else is.
 with the position advancing after HOME and across a screen-off, video not playing in either case, and
 the session published. **Written but not yet run** - see the blocker below.
 
-### Blocker at the end of this round
+### Round two of the quickfixes
 
-adb lost its authorisation (an `adb kill-server` after a stale-touch problem), and the phone also has
-the notification-permission dialog waiting. Both need a tap on the device; a notification was sent to
-this Mac. Until then: `verify-background.sh` is unrun, the notification/FGS state after granting the
-permission is unchecked, and the chips, header, cover and font changes have not been looked at on a
-screen.
+* **The media notification never appeared, and the reason was one missing call.** Media3's
+  `MediaNotificationManager.shouldShowNotification` requires `MediaSessionService.isSessionAdded`, and
+  a session that is only returned from `onGetSession` is not added. So `startForegroundCount` stayed
+  0, no notification was posted, and there were no lock-screen controls - while the session itself
+  worked, which is why the media centre listed it and this looked like a notification-permission
+  problem. Granting the permission changed nothing. With `addSession(session)`:
+  `startForegroundCount=1`, `isForeground=true`, and a `category=transport` notification with two
+  actions.
+* **Background playback is now a setting**, two of them: music (on) and anything with a picture
+  (off). One predicate reads the selected tracks and picks the right flag.
+* **The chip strip was unscrollable**, which is what made the fade look like a broken chip rather
+  than a "scroll for more" cue: `dispatchTouchEvent` handed every drag outside the capsule to the
+  gesture layer, so a horizontal drag across the chips adjusted the volume instead of scrolling
+  them. A fade that can never be scrolled off a chip is just a chip rendered through a gradient.
+  Chips now keep their own touches, the fading edge is unchanged, and the scroller has end padding
+  equal to the fade length so the last chip can always be scrolled clear of it. **The wrap is
+  reverted** - it was a valid fix and the wrong one, as you said.
+* **Bluetooth was being reported as stereo when it is not.** `AudioOutputCapability.maxChannels`
+  skipped Bluetooth devices on the theory that A2DP is stereo once encoded. That is true of the
+  *link* and false of the *sink*: measured with the headset connected, the output is
+  `channelMask=0x3f` and `isSpatialized=true`. The app was therefore labelling every 5.1 and 6-channel
+  item "decoder 6 channels, output takes 2" - a downmix that was not happening - and capping the
+  track selector at stereo. Bluetooth now advertises 5.1 (what it actually takes; 7.1 is what failed
+  before) and the probe decides between that and stereo.
+* That wrong note was also **logged on every chip rebuild**, several times a second, which is how it
+  was found: it had buried everything else in the log buffer. Logged on change only now.
+* `ic_audio` was optically off-centre - its box spanned x 7..22 of a 24-wide viewport - and is now
+  centred.
+* **Still open: video on HOME.** `verify-background.sh` is 6 of 7. Background audio, screen-off
+  audio, the media session and **screen-off video (PAUSED(2))** all pass; "video paused when the app
+  was backgrounded" still reports PLAYING. Two leads, in order:
+  1. **Picture-in-picture may be engaging on HOME.** `onUserLeaveHint` calls `enterPipIfPossible`,
+     and `shouldPauseForBackground` deliberately returns false in PiP because the picture is still
+     visible. Nothing in the manifest declares `supportsPictureInPicture`, so it should be throwing,
+     but that is the one difference between the HOME path and the screen-off path - and screen-off
+     passes. Instrument `isInPictureInPictureMode` at the decision to settle it.
+  2. **The engine could not identify a video-only file as video.** For `grid_720p.mp4` (one h264
+     stream, no audio) `player.currentTracks.groups` was measured **empty** and `videoFormat` null
+     while it was visibly playing, so `hasVideoTrack` and the `hasVideoFormat` fallback both said no.
+     `hasVideo` now falls back through tracks, then the video format, and only then defers - but a
+     device that reports neither leaves the question unanswerable at that moment.
+  The harness was also wrong twice on the way: it read whichever session `dumpsys media_session`
+  listed first (a stale Bluetooth one carrying ERROR(7)), and `KEYCODE_HOME` only closes the
+  notification shade when it is open, so the app never left. Both are fixed, and the checks that
+  used to pass vacuously now require the player to be playing first.
+* **Q3 advanced mode**: `UpmixMatrix` gives every output channel its own source (L, R, L+R, L-R, R-L,
+  muted), with the subwoofer low-pass as a switch and no delay, because the presets add one to make
+  the rears read as space and a hidden delay would make a manual mapping not match what was asked
+  for. `DIFFERENCE_INVERTED` exists because a surround pair carrying the *same* difference signal is
+  in phase and collapses behind the listener - the presets fill the rears with opposite polarity, so
+  a matrix that cannot say that cannot reproduce them. A Simple/Advanced toggle chooses between the
+  editors and rebuilds the page rather than hiding rows in place. Verified: selecting Advanced logs
+  `upmixing 48000 Hz stereo to 5.1 using ADVANCED`.
 
 ## 7. Task state
 

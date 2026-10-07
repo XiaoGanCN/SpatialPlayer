@@ -33,6 +33,9 @@ object AudioOutputCapability {
     /** Highest channel count Android will decode to. 8 admits 7.1. */
     const val MAX_CHANNELS = 8
 
+    /** 5.1: what the spatialiser path accepts over Bluetooth. See [maxChannels]. */
+    private const val BLUETOOTH_MAX_CHANNELS = 6
+
     /**
      * Channel count to allow for the output in use right now.
      *
@@ -59,7 +62,17 @@ object AudioOutputCapability {
         for (device in candidates) {
             if (isBluetooth(device.type)) {
                 sawBluetooth = true
-                // A2DP cannot carry more than stereo once it is encoded, whatever it reports.
+                // A2DP carries stereo once it is *encoded*, but that is the link, not the sink: the
+                // app opens a multichannel AudioTrack and the platform's spatialiser renders it
+                // binaural for the headset. Measured on the reference device with the headset
+                // connected: the sink is configured channelMask=0x3f and isSpatialized=true.
+                //
+                // What A2DP will *not* take is 7.1 - opening an eight-channel track over Bluetooth is
+                // what failed outright before - so Bluetooth advertises 5.1 and lets the probe below
+                // decide between that and stereo. Advertising 2, as this did, meant every surround
+                // item was reported as downmixed to stereo while the platform was in fact playing it
+                // as 5.1.
+                best = maxOf(best, BLUETOOTH_MAX_CHANNELS)
                 continue
             }
             val counts: IntArray = runCatching { device.channelCounts }.getOrNull() ?: IntArray(0)
@@ -70,7 +83,7 @@ object AudioOutputCapability {
 
         if (best > 0) return best
         // Only Bluetooth is attached, or nothing usable was reported.
-        return if (sawBluetooth) SAFE_CHANNELS else SAFE_CHANNELS
+        return if (sawBluetooth) BLUETOOTH_MAX_CHANNELS else SAFE_CHANNELS
     }
 
     /**

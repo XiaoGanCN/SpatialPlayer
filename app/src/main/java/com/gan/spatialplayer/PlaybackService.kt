@@ -2,6 +2,7 @@ package com.gan.spatialplayer
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.util.Log
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.gan.spatialplayer.media.PlaybackEngine
@@ -45,10 +46,21 @@ class PlaybackService : MediaSessionService() {
     private fun attach() {
         val engine = PlaybackEngine.acquire(this)
         val player = engine.player ?: return
-        session?.release()
-        session = MediaSession.Builder(this, player)
+        session?.let { old ->
+            runCatching { removeSession(old) }
+            old.release()
+        }
+        val built = MediaSession.Builder(this, player)
             .setSessionActivity(openPlayer())
             .build()
+        // A session that is only returned from onGetSession is not necessarily *added* to the
+        // service, and `MediaNotificationManager.shouldShowNotification` asks `isSessionAdded` before
+        // it will post anything - as well as requiring a connected controller whose timeline is not
+        // empty. Without this the session worked (the media centre listed it) while no notification
+        // was ever created.
+        runCatching { addSession(built) }
+            .onFailure { Log.w(TAG, "could not add the session", it) }
+        session = built
         engine.onPlayerChanged = { attach() }
     }
 
@@ -82,6 +94,10 @@ class PlaybackService : MediaSessionService() {
             stopSelf()
         }
         super.onTaskRemoved(rootIntent)
+    }
+
+    private companion object {
+        const val TAG = "PlaybackService"
     }
 
     override fun onDestroy() {

@@ -18,6 +18,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.gan.spatialplayer.media.DecoderPolicy
+import com.gan.spatialplayer.media.Source
+import com.gan.spatialplayer.media.UpmixMatrix
 import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.DeviceCapabilities
 import com.gan.spatialplayer.media.DecoderProfile
@@ -132,28 +134,65 @@ class SettingsActivity : AppCompatActivity() {
         )
 
         column.addView(
-            segmentedRow(
-                title = getString(R.string.settings_upmix),
-                options = listOf(
-                    getString(R.string.upmix_surround) to UpmixMode.SURROUND.name,
-                    getString(R.string.upmix_wide) to UpmixMode.WIDE.name,
-                    getString(R.string.upmix_front) to UpmixMode.FRONT.name,
-                ),
-                selected = settings.upmixMode,
-            ) { settings.upmixMode = it },
+            toggleRow(
+                title = getString(R.string.settings_background_audio),
+                subtitle = getString(R.string.settings_background_audio_hint),
+                value = settings.backgroundAudio,
+            ) { settings.backgroundAudio = it },
         )
 
         column.addView(
-            infoRow(
-                getString(R.string.settings_upmix),
-                when (runCatching { UpmixMode.valueOf(settings.upmixMode) }
-                    .getOrDefault(UpmixMode.SURROUND)) {
-                    UpmixMode.SURROUND -> getString(R.string.upmix_surround_hint)
-                    UpmixMode.WIDE -> getString(R.string.upmix_wide_hint)
-                    UpmixMode.FRONT -> getString(R.string.upmix_front_hint)
-                },
-            ),
+            toggleRow(
+                title = getString(R.string.settings_background_video),
+                subtitle = getString(R.string.settings_background_video_hint),
+                value = settings.backgroundVideo,
+            ) { settings.backgroundVideo = it },
         )
+
+        // Simple or advanced. Switching rebuilds the page rather than showing and hiding rows in
+        // place: the two editors share nothing, and a page that is rebuilt cannot end up with a row
+        // left over from the other one.
+        column.addView(
+            segmentedRow(
+                title = getString(R.string.settings_upmix_mode),
+                options = listOf(
+                    getString(R.string.settings_upmix_simple) to "simple",
+                    getString(R.string.settings_upmix_advanced) to "advanced",
+                ),
+                selected = if (settings.upmixAdvanced) "advanced" else "simple",
+            ) {
+                settings.upmixAdvanced = it == "advanced"
+                recreate()
+            },
+        )
+
+        if (settings.upmixAdvanced) {
+            buildAdvancedUpmix(column)
+        } else {
+            column.addView(
+                segmentedRow(
+                    title = getString(R.string.settings_upmix),
+                    options = listOf(
+                        getString(R.string.upmix_surround) to UpmixMode.SURROUND.name,
+                        getString(R.string.upmix_wide) to UpmixMode.WIDE.name,
+                        getString(R.string.upmix_front) to UpmixMode.FRONT.name,
+                    ),
+                    selected = settings.upmixMode,
+                ) { settings.upmixMode = it },
+            )
+
+            column.addView(
+                infoRow(
+                    getString(R.string.settings_upmix),
+                    when (runCatching { UpmixMode.valueOf(settings.upmixMode) }
+                        .getOrDefault(UpmixMode.SURROUND)) {
+                        UpmixMode.WIDE -> getString(R.string.upmix_wide_hint)
+                        UpmixMode.FRONT -> getString(R.string.upmix_front_hint)
+                        else -> getString(R.string.upmix_surround_hint)
+                    },
+                ),
+            )
+        }
 
         column.addView(
             sliderRow(
@@ -175,6 +214,61 @@ class SettingsActivity : AppCompatActivity() {
                 value = settings.subtitleTrackLimit.toFloat(),
                 reading = { getString(R.string.settings_tracks, it.toInt()) },
             ) { settings.subtitleTrackLimit = it.toInt() },
+        )
+    }
+
+    /**
+     * The manual matrix: one row per output channel, each naming its own source.
+     *
+     * Laid out as six rows of five short labels rather than as a grid of coefficients, because the
+     * question a person actually has is "what should be in the surround left", and the answer is one
+     * of five things. Coefficients would be a spreadsheet.
+     */
+    private fun buildAdvancedUpmix(column: LinearLayout) {
+        val sourceOptions = listOf(
+            getString(R.string.upmix_source_l) to Source.LEFT.name,
+            getString(R.string.upmix_source_r) to Source.RIGHT.name,
+            getString(R.string.upmix_source_sum) to Source.SUM.name,
+            getString(R.string.upmix_source_diff) to Source.DIFFERENCE.name,
+            getString(R.string.upmix_source_diff_inv) to Source.DIFFERENCE_INVERTED.name,
+            getString(R.string.upmix_source_mute) to Source.MUTE.name,
+        )
+        val titles = listOf(
+            R.string.upmix_channel_fl,
+            R.string.upmix_channel_fr,
+            R.string.upmix_channel_c,
+            R.string.upmix_channel_lfe,
+            R.string.upmix_channel_bl,
+            R.string.upmix_channel_br,
+        )
+
+        var matrix = UpmixMatrix.decode(settings.upmixMatrix)
+        for ((index, titleRes) in titles.withIndex()) {
+            column.addView(
+                segmentedRow(
+                    title = getString(titleRes),
+                    options = sourceOptions,
+                    selected = matrix.channels[index].name,
+                ) { chosen ->
+                    matrix = UpmixMatrix.withChannel(matrix, index, Source.parse(chosen))
+                    settings.upmixMatrix = matrix.encode()
+                },
+            )
+        }
+
+        column.addView(
+            toggleRow(
+                title = getString(R.string.settings_sub_lowpass),
+                subtitle = getString(R.string.settings_sub_lowpass_hint),
+                value = matrix.subwooferLowPass,
+            ) {
+                matrix = matrix.copy(subwooferLowPass = it)
+                settings.upmixMatrix = matrix.encode()
+            },
+        )
+
+        column.addView(
+            infoRow(getString(R.string.settings_upmix), getString(R.string.upmix_advanced_hint)),
         )
     }
 

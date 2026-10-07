@@ -1,6 +1,7 @@
 package com.gan.spatialplayer
 
 import android.content.Context
+import com.gan.spatialplayer.media.UpmixMatrix
 import com.gan.spatialplayer.media.UpmixMode
 import android.content.SharedPreferences
 import com.gan.spatialplayer.media.DecoderProfile
@@ -125,6 +126,27 @@ class SettingsStore(context: Context) {
      * over dark video; REGULAR is the brighter, more opaque one.
      */
     /**
+     * Whether music keeps playing with the app in the background or the screen off.
+     *
+     * On by default, which is what a music player is expected to do - and the media notification is
+     * how it is controlled once the screen is gone.
+     */
+    var backgroundAudio: Boolean
+        get() = prefs.getBoolean(KEY_BACKGROUND_AUDIO, true)
+        set(value) = prefs.edit().putBoolean(KEY_BACKGROUND_AUDIO, value).apply()
+
+    /**
+     * The same question for anything with a picture.
+     *
+     * Off by default: leaving a hardware video decoder running behind a black screen is not what
+     * anyone wants from a video player, and the picture cannot be seen anyway. Offered because some
+     * people listen to concert films or commentary tracks with the screen off.
+     */
+    var backgroundVideo: Boolean
+        get() = prefs.getBoolean(KEY_BACKGROUND_VIDEO, false)
+        set(value) = prefs.edit().putBoolean(KEY_BACKGROUND_VIDEO, value).apply()
+
+    /**
      * How the stereo upmix spreads two channels across six; see `UpmixMode`.
      *
      * Stored by name rather than by ordinal so reordering the enum cannot silently change what a
@@ -133,6 +155,22 @@ class SettingsStore(context: Context) {
     var upmixMode: String
         get() = prefs.getString(KEY_UPMIX_MODE, UpmixMode.SURROUND.name) ?: UpmixMode.SURROUND.name
         set(value) = prefs.edit().putString(KEY_UPMIX_MODE, value).apply()
+
+    /**
+     * Whether the manual matrix is in use instead of the presets.
+     *
+     * Kept apart from [upmixMode] rather than folded into it, so switching to the advanced editor and
+     * back does not lose either choice.
+     */
+    var upmixAdvanced: Boolean
+        get() = prefs.getBoolean(KEY_UPMIX_ADVANCED, false)
+        set(value) = prefs.edit().putBoolean(KEY_UPMIX_ADVANCED, value).apply()
+
+    /** The manual mapping; see `UpmixMatrix`. */
+    var upmixMatrix: String
+        get() = prefs.getString(KEY_UPMIX_MATRIX, UpmixMatrix.DEFAULT.encode())
+            ?: UpmixMatrix.DEFAULT.encode()
+        set(value) = prefs.edit().putString(KEY_UPMIX_MATRIX, value).apply()
 
     var glassMaterial: String
         get() = prefs.getString(KEY_GLASS_MATERIAL, null) ?: GLASS_REGULAR
@@ -152,6 +190,14 @@ class SettingsStore(context: Context) {
         const val KEY_SUBTITLE_POSITION = "subtitle_position"
         const val KEY_SUBTITLE_TRACK_LIMIT = "subtitle_track_limit"
         const val KEY_UPMIX_MODE = "upmix_mode"
+
+        const val KEY_UPMIX_ADVANCED = "upmix_advanced"
+
+        const val KEY_UPMIX_MATRIX = "upmix_matrix"
+
+        const val KEY_BACKGROUND_AUDIO = "background_audio"
+
+        const val KEY_BACKGROUND_VIDEO = "background_video"
 
         const val KEY_GLASS_MATERIAL = "glass_material"
 

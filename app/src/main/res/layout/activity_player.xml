@@ -120,16 +120,31 @@
                     android:textSize="15sp" />
 
                 <!--
-                  Wraps onto as many lines as the chips need. It used to be a horizontal scroller
-                  with a fading edge, which rendered whichever chip sat at the right edge - usually
-                  the decoder - through a gradient, and that read as a broken pill rather than as
-                  "scroll for more". See ChipStrip.
+                  Scrollable so a long chip set never has to compress: inside a weighted parent a
+                  plain ChipStrip gets squeezed and single-line labels such as "5.1" end up
+                  truncated to "5.".
+
+                  The end padding is what keeps the fading edge off the chips: the fade is drawn over
+                  the last fadingEdgeLength of the view, so without room after the last chip the
+                  decoder pill is rendered *through* the gradient - which reads as a broken chip
+                  rather than as "there is more here, scroll".
                 -->
-                <com.gan.spatialplayer.ui.ChipStrip
-                    android:id="@+id/playerChips"
+                <HorizontalScrollView
+                    android:id="@+id/playerChipScroll"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp" />
+                    android:layout_marginTop="5dp"
+                    android:clipToPadding="false"
+                    android:fadingEdgeLength="@dimen/chip_fade_length"
+                    android:paddingEnd="@dimen/chip_fade_length"
+                    android:requiresFadingEdge="horizontal"
+                    android:scrollbars="none">
+
+                    <com.gan.spatialplayer.ui.ChipStrip
+                        android:id="@+id/playerChips"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </HorizontalScrollView>
             </LinearLayout>
 
             <ImageButton

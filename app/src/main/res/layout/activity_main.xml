@@ -94,13 +94,23 @@
           pill: it dissolves the last one into the background, which is the only cue that the strip
           scrolls. Without it the strip simply ends mid-label with no affordance at all.
         -->
-        <com.gan.spatialplayer.ui.ChipStrip
-            android:id="@+id/chipStrip"
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="10dp" />
+            android:paddingEnd="@dimen/chip_fade_length"
+            android:paddingBottom="10dp"
+            android:clipToPadding="false"
+            android:fadingEdgeLength="@dimen/chip_fade_length"
+            android:requiresFadingEdge="horizontal"
+            android:scrollbars="none"
+            android:fillViewport="false">
+
+            <com.gan.spatialplayer.ui.ChipStrip
+                android:id="@+id/chipStrip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </HorizontalScrollView>
 
         <!--
           The list itself.

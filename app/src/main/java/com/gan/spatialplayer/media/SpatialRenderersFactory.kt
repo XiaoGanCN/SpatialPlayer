@@ -41,6 +41,8 @@ class SpatialRenderersFactory(
     private val spatialEnabled: Boolean = false,
     /** Which mapping the upmix uses; see [UpmixMode]. */
     private val upmixMode: UpmixMode = UpmixMode.SURROUND,
+    /** The manual mapping, used when [upmixMode] is `ADVANCED`. */
+    private val upmixMatrix: UpmixMatrix = UpmixMatrix.DEFAULT,
 ) : NextRenderersFactory(context) {
 
     init {
@@ -106,6 +108,7 @@ class SpatialRenderersFactory(
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(
                     StereoUpmixProcessor(
+                        matrix = upmixMatrix,
                         mode = upmixMode,
                         canRenderSixChannels = { sampleRate ->
                             AudioOutputCapability.canOpenTrack(6, sampleRate)

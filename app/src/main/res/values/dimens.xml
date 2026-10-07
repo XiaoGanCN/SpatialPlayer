@@ -8,4 +8,10 @@
       different baselines inside what is meant to read as a single control.
     -->
     <dimen name="chip_segment_height">44dp</dimen>
+    <!--
+      Length of the chip strips' fading edge, and the end padding that matches it, so the last chip
+      can always be scrolled clear of the gradient instead of being drawn through it.
+    -->
+    <dimen name="chip_fade_length">40dp</dimen>
+
 </resources>

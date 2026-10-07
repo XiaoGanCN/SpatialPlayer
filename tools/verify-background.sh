@@ -14,7 +14,7 @@ PKG_DEBUG="com.gan.spatialplayer.debug"
 ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
 DIR="/sdcard/Movies/SpatialPlayerTest"
 AUDIO_CLIP="$DIR/stems_51.mkv"       # audio only: six channels, no video track
-VIDEO_CLIP="$DIR/grid_720p.mp4"      # has a video track
+VIDEO_CLIP="$DIR/yt_1080p_ac3_51.mkv" # a minute of video and audio; the short grid clip ended mid-test
 
 PASS=0; FAIL=0; SKIP=0
 say()  { printf '\n\033[1m=== %s ===\033[0m\n' "$1"; }
@@ -26,19 +26,56 @@ sh_()  { "$ADB" shell "$@" 2>/dev/null | tr -d '\r'; }
 
 # The player's own published state. `position` is what proves progress: a paused session keeps its
 # position, so a state string alone would pass even if playback had stopped.
+# Our session's state, not whichever session `dumpsys media_session` happens to list first - other
+# players on the device publish sessions too, and reading theirs produced a "video kept playing"
+# failure against a player that had correctly paused. `PLAYING(3)` keeps the numeric state, because
+# stripping it made the audio checks fail on a correct player rather than the reverse.
 session_state() {
-  sh_ dumpsys media_session | grep -oE "state=PlaybackState \{state=[A-Z]+" | head -1 | sed 's/.*state=//'
+  sh_ dumpsys media_session | awk '
+    # Anchored on the session package line itself. Matching the package name anywhere caught an
+    # earlier mention of it and then reported the next state in the dump - which belonged to a stale
+    # Bluetooth session carrying "Bluetooth audio disconnected", i.e. ERROR(7).
+    /^[[:space:]]*package=com\.gan\.spatialplayer\.debug[[:space:]]*$/ { ours = 1; n = 0; next }
+    ours { n++ }
+    ours && n < 12 && /state=PlaybackState/ {
+      line = $0
+      if (match(line, /state=[A-Z]+\([0-9]+\)/)) {
+        print substr(line, RSTART + 6, RLENGTH - 6)
+        exit
+      }
+    }
+  '
 }
+
 session_position() {
-  sh_ dumpsys media_session | grep -oE "state=PlaybackState \{state=[A-Z]+\([0-9]\), position=[0-9]+" \
-    | head -1 | sed 's/.*position=//'
+  sh_ dumpsys media_session | awk '
+    /^[[:space:]]*package=com\.gan\.spatialplayer\.debug[[:space:]]*$/ { ours = 1; n = 0; next }
+    ours { n++ }
+    ours && n < 12 && /state=PlaybackState/ {
+      line = $0
+      if (match(line, /position=[0-9]+/)) {
+        print substr(line, RSTART + 9, RLENGTH - 9)
+        exit
+      }
+    }
+  '
 }
+
 music_volume() {
   sh_ dumpsys audio | awk '
     /STREAM_MUSIC:/ { f = 1; next }
     f && /streamVolume:/ { v = $0; sub(/.*streamVolume:/, "", v); sub(/[^0-9].*/, "", v); print v; exit }
   '
 }
+# Leaves the app. `KEYCODE_HOME` alone is not enough: if the notification shade happens to be open it
+# only closes the shade, the activity is never stopped, and the suite reports a player that "kept
+# playing in the background" when it was on screen the whole time. Measured exactly that.
+go_home() {
+  sh_ cmd statusbar collapse > /dev/null 2>&1
+  sh_ am start -a android.intent.action.MAIN -c android.intent.category.HOME > /dev/null 2>&1
+  sleep 1
+}
+
 play() {
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
@@ -53,6 +90,8 @@ if [ "$(sh_ get-state 2>/dev/null || "$ADB" get-state 2>/dev/null)" != "device" 
 fi
 pass "device authorised"
 sh_ input keyevent KEYCODE_WAKEUP > /dev/null
+sh_ am force-stop "$PKG_DEBUG"
+sleep 2
 ORIGINAL_VOLUME=$(music_volume)
 info "music volume starts at ${ORIGINAL_VOLUME:-unknown}"
 
@@ -62,7 +101,7 @@ if [ "$(sh_ "[ -f $AUDIO_CLIP ] && echo yes || echo no")" != "yes" ]; then
 else
   play "$AUDIO_CLIP" video/x-matroska
   BEFORE=$(session_position)
-  sh_ input keyevent KEYCODE_HOME
+  go_home
   sleep 8
   STATE=$(session_state)
   AFTER=$(session_position)
@@ -111,15 +150,23 @@ if [ "$(sh_ "[ -f $VIDEO_CLIP ] && echo yes || echo no")" != "yes" ]; then
   skip "no video clip at $VIDEO_CLIP"
 else
   play "$VIDEO_CLIP" video/mp4
+  sh_ input keyevent KEYCODE_WAKEUP > /dev/null
+  sleep 3
   BEFORE_STATE=$(session_state)
-  sh_ input keyevent KEYCODE_HOME
-  sleep 5
-  STATE=$(session_state)
-  info "playing before: ${BEFORE_STATE:-none}; after HOME: ${STATE:-none}"
-  if [ "$STATE" != "PLAYING(3)" ]; then
-    pass "video paused when the app was backgrounded"
+  # Without this the check is vacuous: a video that was already paused "passes" having proved
+  # nothing. It has to be playing first for the pause to mean anything.
+  if [ "$BEFORE_STATE" != "PLAYING(3)" ]; then
+    fail "video was not playing while visible (state ${BEFORE_STATE:-none}), so the pause is unproven"
   else
-    fail "video kept playing in the background"
+    go_home
+    sleep 5
+    STATE=$(session_state)
+    info "playing before: ${BEFORE_STATE}; after HOME: ${STATE:-none}"
+    if [ "$STATE" != "PLAYING(3)" ]; then
+      pass "video paused when the app was backgrounded"
+    else
+      fail "video kept playing in the background"
+    fi
   fi
 
   # And the screen going off must stop it too, which is the same requirement by another route.

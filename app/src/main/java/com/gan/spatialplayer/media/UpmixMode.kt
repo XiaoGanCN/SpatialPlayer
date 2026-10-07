@@ -38,4 +38,12 @@ enum class UpmixMode {
      * that is already mixed the way the listener wants it.
      */
     FRONT,
+
+    /**
+     * A manual mapping rather than a preset; see [UpmixMatrix].
+     *
+     * Kept in this enum because the processor needs one value to branch on, but it is a different
+     * kind of thing from the three above: the others are opinions, this one is the user's.
+     */
+    ADVANCED,
 }

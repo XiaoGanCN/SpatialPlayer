@@ -81,11 +81,23 @@ class PlayerEngine(
     var spatialAudioEnabled: Boolean = settings.spatialEnabled
         private set
 
-    /** Which mapping the stereo upmix uses when it engages. */
+    /** Whether the manual matrix is in use instead of the presets. */
+    var upmixAdvanced: Boolean = settings.upmixAdvanced
+        private set
+
+    /** The manual mapping; only consulted when [upmixAdvanced] is set. */
+    var upmixMatrix: UpmixMatrix = UpmixMatrix.decode(settings.upmixMatrix)
+        private set
+
+    /** Which preset the stereo upmix uses when the manual matrix is not in use. */
     var upmixMode: UpmixMode = runCatching {
         UpmixMode.valueOf(settings.upmixMode)
     }.getOrDefault(UpmixMode.SURROUND)
         private set
+
+    /** What the sink is actually built with. */
+    private val effectiveUpmixMode: UpmixMode
+        get() = if (upmixAdvanced) UpmixMode.ADVANCED else upmixMode
 
     private var currentMedia: MediaItem? = null
 
@@ -171,7 +183,13 @@ class PlayerEngine(
         maxAudioChannelCount = forcedChannelCap
             ?: AudioOutputCapability.verifiedMaxChannels(context)
 
-        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile, spatialAudioEnabled, upmixMode)
+        val renderersFactory = DecoderPolicy.renderersFactory(
+            context,
+            decoderProfile,
+            spatialAudioEnabled,
+            effectiveUpmixMode,
+            upmixMatrix,
+        )
         configureRenderers(renderersFactory)
 
         val audioAttributes = buildAudioAttributes()
@@ -197,14 +215,38 @@ class PlayerEngine(
     }
 
     /**
-     * Whether the current item actually carries a picture.
+     * Whether the current item carries a picture, or `null` while that is not yet known.
      *
-     * Read from the selected tracks rather than from the mime type, because a Matroska file may hold
-     * either and the container tells you nothing. This is what decides whether playback survives the
-     * app going to the background: audio is meant to keep going, a film is not.
+     * Read from the tracks rather than from the mime type, because a Matroska file may hold either and
+     * the container tells you nothing.
+     */
+    val hasVideoTrack: Boolean?
+        get() {
+            val tracks = player?.currentTracks ?: return null
+            if (tracks.groups.isEmpty()) return null
+            return tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+        }
+
+    /**
+     * Whether the tracks say there is a picture. Unknown is `false`, not "assume video": a caller that
+     * needs to be sure must look at [hasVideoTrack] and decide for itself, because the two ways of
+     * being wrong are not equally bad. Assuming video pauses music; assuming audio lets a film run
+     * behind a blank screen for the fraction of a second before the tracks arrive - and the caller can
+     * simply look again when they do.
      */
     val hasVideo: Boolean
-        get() = player?.currentTracks?.groups?.any { it.type == C.TRACK_TYPE_VIDEO } == true
+        get() = hasVideoTrack ?: hasVideoFormat
+
+    /**
+     * Whether the video renderer is presenting a picture.
+     *
+     * The fallback for [hasVideoTrack], and the more reliable of the two on the reference device:
+     * `currentTracks` was measured **empty** for a plain MP4 that was visibly playing, while the video
+     * format was populated - which is why the chips showed a resolution for a file whose tracks
+     * appeared to be unknown.
+     */
+    val hasVideoFormat: Boolean
+        get() = player?.videoFormat != null
 
     private fun configureRenderers(factory: DefaultRenderersFactory) {
         // FFmpeg's audio decoders emit float PCM and can exceed the default 2-channel assumption.
@@ -361,9 +403,31 @@ class PlayerEngine(
      * toggle, and for the same reason.
      */
     fun switchUpmixMode(mode: UpmixMode) {
-        if (mode == upmixMode && player != null) return
+        if (mode == upmixMode && !upmixAdvanced && player != null) return
         upmixMode = mode
+        upmixAdvanced = false
         settings.upmixMode = mode.name
+        settings.upmixAdvanced = false
+        rebuildPreservingState()
+    }
+
+    /**
+     * Switches between the presets and the manual matrix.
+     *
+     * One entry point for both, because they are one choice: the mapping the sink is built with is
+     * either a preset or the matrix, never a mixture, and two setters would let a caller produce a
+     * state that neither screen can represent.
+     */
+    fun switchUpmix(advanced: Boolean, mode: UpmixMode, matrix: UpmixMatrix) {
+        if (advanced == upmixAdvanced && mode == upmixMode && matrix == upmixMatrix && player != null) {
+            return
+        }
+        upmixAdvanced = advanced
+        upmixMode = mode
+        upmixMatrix = matrix
+        settings.upmixAdvanced = advanced
+        settings.upmixMode = mode.name
+        settings.upmixMatrix = matrix.encode()
         rebuildPreservingState()
     }
 

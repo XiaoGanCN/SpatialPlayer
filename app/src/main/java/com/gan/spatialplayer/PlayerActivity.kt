@@ -1,5 +1,6 @@
 package com.gan.spatialplayer
 
+import android.app.ActivityManager
 import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -43,6 +44,7 @@ import com.gan.spatialplayer.media.MatroskaChapters
 import java.io.File
 import com.gan.spatialplayer.media.PlaybackReport
 import com.gan.spatialplayer.media.PlaybackEngine
+import com.gan.spatialplayer.media.UpmixMatrix
 import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
@@ -120,6 +122,30 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * of its tracks too.
      */
     private var subtitleLimitOverridden = false
+
+    /** Last downmix note written to the log, so the per-tick chip rebuild does not repeat it. */
+    private var lastDownmixNote: String? = null
+
+    /** Whether the current item has a picture, once its tracks have been seen. See [hasVideo]. */
+    private var itemHasVideo: Boolean? = null
+
+    /**
+     * Whether the whole app is out of sight.
+     *
+     * Read from the process importance rather than from this activity's own started/stopped state,
+     * because those race the tracks: during the launch transition the screen is briefly stopped, the
+     * tracks arrive in that window, and a check keyed on the activity then paused the film the moment
+     * it was opened - while it was on screen. Importance is a single global answer and has no such
+     * window.
+     */
+    private fun appInBackground(): Boolean {
+        val state = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(state)
+        // VISIBLE counts as visible. It is what the process reports while the screen is being
+        // interacted with but has not taken focus - during a launch, for instance - and treating that
+        // as "backgrounded" paused the film as it opened.
+        return state.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+    }
 
     private var chapters: List<Chapter> = emptyList()
     private var chapterJob: Job? = null
@@ -436,6 +462,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private fun updateTitle() {
         audioDownmixNote = null
+        lastDownmixNote = null
+        itemHasVideo = null
         subtitleLimitOverridden = false
         loadChapters()
         binding.mediaTitle.text = displayName
@@ -776,7 +804,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // A sheet is a separate window, so anything arriving here while one is open belongs to it.
         if (inspectorSheet.isOpen || overflowSheet.isOpen) return super.dispatchTouchEvent(ev)
 
-        val inside = isInsideControls(ev.rawX, ev.rawY)
+        // The chip strip keeps its own touches when it is on screen. Without this the gesture layer
+        // claims every drag outside the capsule, so a horizontal drag across the chips adjusted the
+        // volume or scrubbed instead of scrolling them - which left the last chips unreachable and
+        // permanently half under the fading edge, since a fade that never moves off a chip reads as
+        // a broken pill rather than as "scroll for more".
+        val inside = isInsideControls(ev.rawX, ev.rawY) || isInsideChips(ev.rawX, ev.rawY)
         if (!inside) {
             if (gestures.onTouchEvent(ev)) return true
         }
@@ -795,6 +828,19 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * The glass between and around the buttons is not a control, so it behaves like the picture:
      * a tap there toggles the chrome and a drag adjusts whatever the drag is over.
      */
+    /** True when the point falls on the status chip strip, which scrolls. See [dispatchTouchEvent]. */
+    private fun isInsideChips(rawX: Float, rawY: Float): Boolean {
+        val scroll = binding.playerChipScroll
+        if (!PlayerAnimation.isShown(binding.controlsOverlay)) return false
+        if (!PlayerAnimation.isShown(scroll)) return false
+        val location = IntArray(2)
+        scroll.getLocationOnScreen(location)
+        return rawX >= location[0] &&
+            rawX <= location[0] + scroll.width &&
+            rawY >= location[1] &&
+            rawY <= location[1] + scroll.height
+    }
+
     private fun isInsideControls(rawX: Float, rawY: Float): Boolean {
         if (!PlayerAnimation.isShown(binding.controlsOverlay)) return false
         // A small bleed keeps the touch target comfortable at the edges of each control.
@@ -1095,8 +1141,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         val upmixWanted = runCatching { UpmixMode.valueOf(settings.upmixMode) }
             .getOrDefault(UpmixMode.SURROUND)
-        if (engine.upmixMode != upmixWanted) {
-            engine.switchUpmixMode(upmixWanted)
+        val matrixWanted = UpmixMatrix.decode(settings.upmixMatrix)
+        if (engine.upmixAdvanced != settings.upmixAdvanced ||
+            engine.upmixMode != upmixWanted ||
+            engine.upmixMatrix != matrixWanted
+        ) {
+            engine.switchUpmix(settings.upmixAdvanced, upmixWanted, matrixWanted)
             binding.playerView.player = engine.player
         }
 
@@ -1123,8 +1173,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * `hasVideo` is read from the selected tracks: a Matroska file can hold either, so the container
      * says nothing, and the answer is only known once the tracks are known.
      */
-    private fun shouldPauseForBackground(): Boolean =
-        engine.hasVideo && !isInPictureInPictureMode
+    private fun shouldPauseForBackground(): Boolean {
+        if (isInPictureInPictureMode) return false
+        // The tracks are empty between a rebuild and the first prepared frame, and that window is
+        // exactly when this is asked - the activity is being stopped as the user leaves. The two ways
+        // of guessing wrong are not equivalent, so nothing is guessed here: if the answer is not
+        // known yet, playback is left alone and `onEngineTracksChanged` finishes the job the moment
+        // the tracks arrive. Guessing "video" paused music, which is the worse error.
+        val hasVideo = itemHasVideo ?: engine.hasVideoTrack ?: engine.hasVideoFormat
+        val keepPlaying = if (hasVideo) settings.backgroundVideo else settings.backgroundAudio
+        return !keepPlaying
+    }
 
     override fun onPause() {
         super.onPause()
@@ -1223,6 +1282,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onEngineTracksChanged(tracks: Tracks) {
+        if (tracks.groups.isNotEmpty()) {
+            val hasVideo = tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+            itemHasVideo = hasVideo
+            // The deferred half of the background policy: when this started, the tracks were not
+            // known yet, so nothing was decided. Now it is, and if the app is already out of sight
+            // with a picture playing and the setting says not to, stop it.
+            if (hasVideo && !settings.backgroundVideo && appInBackground()) {
+                Log.i(TAG, "background: video tracks arrived while backgrounded; pausing")
+                engine.pause()
+            }
+        }
         mediaTracks = MediaTracks.from(tracks)
         // A track change can flip which selection is active, so refresh any open control panel.
         when (inspectorSheet.shownPanel) {
@@ -1388,9 +1458,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         note?.let {
             chips += ChipStrip.Chip(it, ChipStrip.Tone.ACTIVE)
-            // Only when there is something to say, so this stays one line per item rather than one
-            // per chip rebuild. The harness greps it; the user reads the chip.
-            Log.i(TAG, "audio downmix: decoder $decoded channels, output takes $delivered")
+            // Logged on change only. The chip strip is rebuilt on a timer, so logging whenever a note
+            // exists produced this line several times a second and buried everything else in the
+            // buffer - which is how it was found.
+            if (it != lastDownmixNote) {
+                Log.i(TAG, "audio downmix: decoder $decoded channels, output takes $delivered")
+                lastDownmixNote = it
+            }
         }
 
         binding.playerChips.setChips(chips)
