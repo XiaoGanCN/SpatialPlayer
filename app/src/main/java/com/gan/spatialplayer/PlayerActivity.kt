@@ -1,10 +1,11 @@
 package com.gan.spatialplayer
 
-import android.app.ActivityManager
 import android.app.PictureInPictureParams
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.media.AudioManager
@@ -132,28 +133,21 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     /** Whether the current item has a picture, once its tracks have been seen. See [hasVideo]. */
     private var itemHasVideo: Boolean? = null
 
-    /**
-     * Whether the whole app is out of sight.
-     *
-     * Read from the process importance rather than from this activity's own started/stopped state,
-     * because those race the tracks: during the launch transition the screen is briefly stopped, the
-     * tracks arrive in that window, and a check keyed on the activity then paused the film the moment
-     * it was opened - while it was on screen. Importance is a single global answer and has no such
-     * window.
-     */
-    private fun appInBackground(): Boolean {
-        val state = ActivityManager.RunningAppProcessInfo()
-        ActivityManager.getMyMemoryState(state)
-        // VISIBLE counts as visible. It is what the process reports while the screen is being
-        // interacted with but has not taken focus - during a launch, for instance - and treating that
-        // as "backgrounded" paused the film as it opened.
-        return state.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
-    }
-
     private var chapters: List<Chapter> = emptyList()
     private var chapterJob: Job? = null
     private var refreshJob: Job? = null
     private var isScrubbing = false
+
+    /** The debug-only panel probe's receiver, so it can be unregistered with the activity. */
+    private var panelProbeReceiver: BroadcastReceiver? = null
+
+    /**
+     * Whether `onStop` had to leave the background decision open because the tracks were not in yet.
+     *
+     * Answered by `onEngineTracksChanged`, and cleared on resume: an activity that is stopped with
+     * this set is one whose item's background policy has not been applied.
+     */
+    private var deferredBackgroundDecision = false
 
     /** Playback position when a horizontal scrub began, and the position it currently points at. */
     /** Fractional volume position while dragging; Int.MIN_VALUE means "resync from the system". */
@@ -399,14 +393,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         // Long-press the inspect button jumps straight to the decoder panel.
         binding.buttonInspect.setOnLongClickListener {
-            populateDecoderPanel()
             showInspector(InspectorSheet.Panel.DECODER)
             true
         }
 
         // Long-press the play button opens the decoder sheet: discoverable but not in the way.
         binding.buttonPlayPause.setOnLongClickListener {
-            populateDecoderPanel()
             showInspector(InspectorSheet.Panel.DECODER)
             true
         }
@@ -590,52 +582,39 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         Log.d(TAG, "overflow sheet requested")
         hideControls()
         val speed = engine.player?.playbackParameters?.speed ?: 1f
+        // The rows are not populated here: `InspectorSheet.show` pulls them through
+        // `onPanelShown`, so a panel opens the same way from an overflow row and from a tab.
         overflowSheet.show(
             listOf(
                 OverflowSheet.Action(
                     label = getString(R.string.speed),
                     detail = String.format(Locale.US, "%.2f×", speed),
                     iconRes = R.drawable.ic_speed,
-                    run = {
-                        populateSpeedPanel()
-                        showInspector(InspectorSheet.Panel.SPEED)
-                    },
+                    run = { showInspector(InspectorSheet.Panel.SPEED) },
                 ),
                 OverflowSheet.Action(
                     label = getString(R.string.aspect_settings),
                     detail = scaleModeLabel(),
                     iconRes = R.drawable.ic_aspect,
-                    run = {
-                        populateScalingPanel()
-                        showInspector(InspectorSheet.Panel.SCALING)
-                    },
+                    run = { showInspector(InspectorSheet.Panel.SCALING) },
                 ),
                 OverflowSheet.Action(
                     label = getString(R.string.subtitle_settings),
                     detail = subtitleSummary(),
                     iconRes = R.drawable.ic_cc,
-                    run = {
-                        populateSubtitlePanel()
-                        showInspector(InspectorSheet.Panel.SUBTITLES)
-                    },
+                    run = { showInspector(InspectorSheet.Panel.SUBTITLES) },
                 ),
                 OverflowSheet.Action(
                     label = getString(R.string.chapters),
                     detail = chapterSummary(),
                     iconRes = R.drawable.ic_chapters,
-                    run = {
-                        populateChaptersPanel()
-                        showInspector(InspectorSheet.Panel.CHAPTERS)
-                    },
+                    run = { showInspector(InspectorSheet.Panel.CHAPTERS) },
                 ),
                 OverflowSheet.Action(
                     label = getString(R.string.audio_settings),
                     detail = audioSummary(),
                     iconRes = R.drawable.ic_audio,
-                    run = {
-                        populateAudioPanel()
-                        showInspector(InspectorSheet.Panel.AUDIO)
-                    },
+                    run = { showInspector(InspectorSheet.Panel.AUDIO) },
                 ),
             ),
             // The sheet covers the capsule; leaving the chrome drawn underneath shows it through the
@@ -750,7 +729,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         if (PlayerAnimation.isShown(binding.controlsOverlay)) hideControls() else showControls()
     }
 
-    private fun showControls() {
+    /**
+     * Reveals the chrome.
+     *
+     * `internal` rather than private so the debug panel probe can put the controls on screen
+     * without injecting a tap: the chrome hides itself on an idle timer, and a probe that raced that
+     * timer would fail for reasons that have nothing to do with what it is measuring.
+     */
+    internal fun showControls() {
         PlayerAnimation.show(binding.controlsOverlay)
     }
 
@@ -1123,9 +1109,23 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onResume() {
         super.onResume()
+        // The user is looking at the item again, so a background decision `onStop` left open is moot.
+        deferredBackgroundDecision = false
         applySettings()
         engine.play()
         startAmbientSampling()
+        // Debug builds only: lets `tools/verify-panels.sh` open an inspector panel on this instance
+        // and read back what it rendered, because neither a screenshot nor `uiautomator dump` can.
+        if (BuildConfig.DEBUG && panelProbeReceiver == null) {
+            panelProbeReceiver = PanelProbeReceiver().also {
+                // EXPORTED because the sender is `adb shell am broadcast`, a different uid from the
+                // app. One of the two flags is mandatory from API 34 - without either the
+                // registration throws and takes the activity down with it, which is how this was
+                // found. The action exists only in debug builds.
+                registerReceiver(it, IntentFilter(PanelProbeReceiver.ACTION), RECEIVER_EXPORTED)
+            }
+        }
+        instance = this
     }
 
     /**
@@ -1187,14 +1187,35 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * says nothing, and the answer is only known once the tracks are known.
      */
     private fun shouldPauseForBackground(): Boolean {
-        if (isInPictureInPictureMode) return false
+        if (isInPictureInPictureMode) {
+            Log.i(TAG, "background: in PiP, so playback is left alone")
+            return false
+        }
         // The tracks are empty between a rebuild and the first prepared frame, and that window is
         // exactly when this is asked - the activity is being stopped as the user leaves. The two ways
         // of guessing wrong are not equivalent, so nothing is guessed here: if the answer is not
-        // known yet, playback is left alone and `onEngineTracksChanged` finishes the job the moment
-        // the tracks arrive. Guessing "video" paused music, which is the worse error.
+        // known yet, playback is left alone and a second chance finishes the job the moment the
+        // tracks arrive. Guessing "video" paused music, which is the worse error.
         val hasVideo = itemHasVideo ?: engine.hasVideoTrack ?: engine.hasVideoFormat
+        val unknown = itemHasVideo == null && engine.hasVideoTrack == null &&
+            !engine.hasVideoFormat
         val keepPlaying = if (hasVideo) settings.backgroundVideo else settings.backgroundAudio
+        // One line per decision, because this predicate is read from two lifecycle paths and the
+        // interesting part - which of the three sources answered, or whether none did - is invisible
+        // from the outside. A "false" here with `unknown=true` is the deferred case, not a decision
+        // that the item is audio.
+        Log.i(
+            TAG,
+            "background: pause=${!keepPlaying} tracks=${itemHasVideo} " +
+                "selected=${engine.hasVideoTrack} format=${engine.hasVideoFormat} " +
+                "video=$hasVideo unknown=$unknown " +
+                "setting=${if (hasVideo) "video" else "audio"}",
+        )
+        if (unknown) {
+            // Nothing is guessed here, and nothing is retried either: `onStop` records that the
+            // question is open and `onEngineTracksChanged` answers it. See those two.
+            Log.i(TAG, "background: video unknown, so the decision waits for the tracks")
+        }
         return !keepPlaying
     }
 
@@ -1236,6 +1257,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         ambientSampler?.release()
         ambientSampler = null
         hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
+        deferredBackgroundDecision = false
+        // Both are references to this activity; leaving either set would keep a destroyed view tree
+        // reachable, which is exactly what the engine detach below is here to avoid.
+        if (instance === this) instance = null
+        panelProbeReceiver?.let { runCatching { unregisterReceiver(it) } }
+        panelProbeReceiver = null
         // Detach before letting go: background audio keeps the engine alive, and it must not keep a
         // destroyed activity (and its whole view tree) alive with it.
         engine.listener = null
@@ -1253,6 +1280,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         super.onStop()
         if (shouldPauseForBackground()) {
             engine.pause()
+        }
+        // The deferred case: when this runs the tracks may still be unknown, in which case nothing
+        // above paused anything and the decision has to be finished when the tracks arrive. See
+        // `resolveDeferredBackgroundDecision`.
+        if (itemHasVideo == null && engine.hasVideoTrack == null && !engine.hasVideoFormat) {
+            deferredBackgroundDecision = true
         }
     }
 
@@ -1298,13 +1331,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         if (tracks.groups.isNotEmpty()) {
             val hasVideo = tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
             itemHasVideo = hasVideo
-            // The deferred half of the background policy: when this started, the tracks were not
-            // known yet, so nothing was decided. Now it is, and if the app is already out of sight
-            // with a picture playing and the setting says not to, stop it.
-            if (hasVideo && !settings.backgroundVideo && appInBackground()) {
-                Log.i(TAG, "background: video tracks arrived while backgrounded; pausing")
-                engine.pause()
-            }
+            if (deferredBackgroundDecision) resolveDeferredBackgroundDecision(hasVideo)
         }
         mediaTracks = MediaTracks.from(tracks)
         // A track change can flip which selection is active, so refresh any open control panel.
@@ -1314,6 +1341,31 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             else -> Unit
         }
         refreshOpenReadoutPanel()
+    }
+
+    /**
+     * Finishes a background decision that `onStop` had to leave open because the tracks were not in
+     * yet, now that they are.
+     *
+     * ## Why this is not `appInBackground()`
+     *
+     * The deferred case was already handled, but gated on `appInBackground()`, and that answered
+     * **false** for the best part of a second after HOME - the process still counts as `VISIBLE`
+     * while it is being stopped. Measured: HOME at T, tracks at T+148 ms, and `appInBackground()`
+     * still false at T+400 ms, so the flag said "still on screen" and the film kept decoding behind
+     * a blank screen. That is the whole of the reported bug.
+     *
+     * The gate is `deferredBackgroundDecision` instead, which is set in `onStop` - so it means the
+     * activity was already stopped when this item's background decision was left open. The tracks
+     * arriving later says nothing about whether the app came back, so `onResume` clears it. An
+     * activity that is stopped with a pending question is one the user cannot see.
+     */
+    private fun resolveDeferredBackgroundDecision(hasVideo: Boolean) {
+        deferredBackgroundDecision = false
+        if (!hasVideo || settings.backgroundVideo) return
+        if (isInPictureInPictureMode) return
+        Log.i(TAG, "background: deferred decision resolved to video; pausing")
+        engine.pause()
     }
 
     override fun onEngineVideoSize(size: VideoSize) {
@@ -1787,8 +1839,59 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         inspectorSheet.show(panel)
     }
 
+    // ------------------------------------------------------------------ debug panel probe
+    //
+    // The player animates continuously, so its UI cannot be dumped, and the inspector sheet is a
+    // dialog whose rows are built in code. `PanelProbeReceiver` (debug variant only) drives these to
+    // verify each panel actually renders, over adb. They are deliberately thin: the first goes
+    // through the same path the overflow sheet and the long-presses use, the second is `show(panel)`
+    // and nothing else, which is what a tab click does.
+
+    /** Opens a panel the way an in-app entry point does. */
+    internal fun showInspectorForTest(panel: InspectorSheet.Panel) = showInspector(panel)
+
+    /** Opens a panel the way tapping its tab does. */
+    internal fun showPanelForTest(panel: InspectorSheet.Panel) = inspectorSheet.show(panel)
+
+    /** Dismisses the panel without the closing animation, so a probe leaves no window behind. */
+    internal fun hidePanelForTest() = inspectorSheet.dismissNow()
+
+    /** The sheet itself, for a probe that has to read what it rendered. */
+    internal fun sheetForTest() = inspectorSheet
+
     override fun onSheetClosed() {
         showControlsTemporarily()
+    }
+
+    /**
+     * Supplies a panel's rows at the moment it is about to be shown.
+     *
+     * The sheet's tab strip changes panels on its own, so anything opened by tapping a tab used to
+     * find no rows at all - only the panel reached through its own overflow row, or one that had been
+     * opened at some earlier point and still held its stale list, rendered. That is exactly the
+     * reported symptom: Decoder, Subtitles, Audio, Scaling, Speed and Chapters were blank when
+     * switched to from another page, while a page visited before looked fine, and the stale list
+     * survived into the next video as well.
+     */
+    override fun onPanelShown(panel: InspectorSheet.Panel) {
+        refreshPanel(panel)
+    }
+
+    /** Fills in whichever panel is on screen now. Read-only panels pull their text when rendered. */
+    private fun refreshPanel(panel: InspectorSheet.Panel) {
+        when (panel) {
+            InspectorSheet.Panel.DECODER -> populateDecoderPanel()
+            InspectorSheet.Panel.SUBTITLES -> populateSubtitlePanel()
+            InspectorSheet.Panel.AUDIO -> populateAudioPanel()
+            InspectorSheet.Panel.SCALING -> populateScalingPanel()
+            InspectorSheet.Panel.SPEED -> populateSpeedPanel()
+            InspectorSheet.Panel.CHAPTERS -> populateChaptersPanel()
+            // Inspection and Metadata render from `onReadoutRequested`, so there is nothing to push.
+            InspectorSheet.Panel.INSPECTION, InspectorSheet.Panel.METADATA -> Unit
+        }
+        // Logged as well as rendered: the sheet is a dialog whose contents the UI cannot settle on,
+        // so the suite reads this line to tell "the panel was populated" from "the panel was blank".
+        Log.d(TAG, "panel shown $panel")
     }
 
     override fun onReadoutRequested(panel: InspectorSheet.Panel): String {
@@ -2078,6 +2181,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         const val EXTRA_ARTIST = "extra_artist"
         const val EXTRA_ALBUM = "extra_album"
         const val EXTRA_SIZE_BYTES = "extra_size_bytes"
+
+        /**
+         * The player on screen, for the debug panel probe.
+         *
+         * A probe needs the activity that is actually showing a sheet. A probe *activity* that built
+         * its own sheet would test a copy of the wiring, and the wiring is what was broken - so the
+         * probe reaches this one instead. Only set while an instance is resumed.
+         */
+        @JvmStatic
+        internal var instance: PlayerActivity? = null
+            private set
         private const val VALUE_CHAPTER_PREFIX = "chapter_"
 
         /** Raises the subtitle cap so every track in the file is listed. */

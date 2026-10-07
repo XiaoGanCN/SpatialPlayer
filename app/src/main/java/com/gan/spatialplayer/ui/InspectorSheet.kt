@@ -59,6 +59,16 @@ class InspectorSheet @JvmOverloads constructor(
     interface Callback {
         fun onSheetClosed()
 
+        /**
+         * The sheet is about to display [panel], so its rows should be supplied now.
+         *
+         * The tab strip lives in here and switches panels without the host ever hearing about it,
+         * so a panel whose rows were only ever pushed by the host at the moment one of *its own*
+         * entry points opened it had no rows to show when it was reached by tab instead - the sheet
+         * rendered its empty marker. Pulling the rows on every show is what makes the tabs work.
+         */
+        fun onPanelShown(panel: Panel)
+
         /** Read-only panels are rendered by pulling the current report text. */
         fun onReadoutRequested(panel: Panel): String
 
@@ -115,6 +125,9 @@ class InspectorSheet @JvmOverloads constructor(
 
     fun show(panel: Panel) {
         currentPanel = panel
+        // Before anything is drawn, and whatever route reached here - a tab, an overflow row, a
+        // long-press - so the rows always describe the panel that is about to appear.
+        callback?.onPanelShown(panel)
         val existing = dialog
         if (existing != null && existing.isShowing) {
             render()
@@ -179,6 +192,7 @@ class InspectorSheet @JvmOverloads constructor(
 
         val panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
+            id = R.id.sheet_panel
             setBackgroundResource(R.drawable.bg_glass_sheet_window)
         }
         sheet = panel
@@ -222,7 +236,10 @@ class InspectorSheet @JvmOverloads constructor(
         )
         header.addView(titleRow)
 
-        val tabStrip = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val tabStrip = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            id = R.id.sheet_tab_strip
+        }
         header.addView(
             HorizontalScrollViewCompat.wrap(ctx, tabStrip),
             LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
@@ -232,6 +249,7 @@ class InspectorSheet @JvmOverloads constructor(
 
         contentContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
+            id = R.id.sheet_content
             setPadding(dp(20), dp(4), dp(20), dp(24))
         }
         scrollView = ScrollView(ctx).apply {
@@ -376,6 +394,7 @@ class InspectorSheet @JvmOverloads constructor(
                 if (list.isEmpty()) {
                     container.addView(
                         TextView(context).apply {
+                            id = R.id.sheet_empty
                             text = "—"
                             typeface = Typeface.MONOSPACE
                             setTextColor(ContextCompat.getColor(context, R.color.text_tertiary))
@@ -404,6 +423,7 @@ class InspectorSheet @JvmOverloads constructor(
     private fun sectionHeader(text: String): View {
         val wrapper = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            id = R.id.sheet_section
             setPadding(0, dp(14), 0, dp(2))
         }
         wrapper.addView(
@@ -571,9 +591,33 @@ class InspectorSheet @JvmOverloads constructor(
         if (value == value.toInt().toFloat()) value.toInt().toString()
         else String.format(java.util.Locale.US, "%.1f", value)
 
+    /**
+     * Ids of what the content container is currently showing, for the debug panel probe.
+     *
+     * The rows are built in code in a separate dialog window, so this is the only description of them
+     * that exists: `uiautomator dump` cannot settle on the animating player, and a screenshot cannot
+     * tell one row from another. Each entry is `View.NO_ID` for an option row (they carry no id,
+     * because nothing looks one up), otherwise the child's own id.
+     *
+     * Returning the ids rather than a count is what lets the caller say *why* a panel looks empty -
+     * the `"no rows"` marker is one of these ids, and a section heading is another - instead of
+     * inferring it from a number that a heading can inflate.
+     */
+    internal fun visibleRowIds(): List<Int> {
+        val container = contentContainer ?: return emptyList()
+        return (0 until container.childCount).map { container.getChildAt(it).id }
+    }
+
+    /** The `"no rows"` marker's id, so a caller does not have to know which id means "empty". */
+    internal val emptyMarkerId: Int get() = R.id.sheet_empty
+
+    /** A section heading's id, which is chrome rather than a row. */
+    internal val sectionHeadingId: Int get() = R.id.sheet_section
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
+
         /** Blur strength for the frosted backdrop, in dp. Raises with the display density. */
         const val BLUR_RADIUS_DP = 40
     }

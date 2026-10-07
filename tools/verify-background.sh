@@ -76,6 +76,36 @@ go_home() {
   sleep 1
 }
 
+# The window that currently has focus, or empty when the dump could not be read.
+focused_window() {
+  sh_ dumpsys window | grep -oE "mCurrentFocus=Window\{[^}]*\}" | head -1
+}
+
+# Wakes the screen and waits until something other than the notification shade has focus.
+#
+# `KEYCODE_WAKEUP` on its own is not enough on this device. Measured: after the screen-off check the
+# phone wakes onto its lock screen, the shade holds `mCurrentFocus`, and an app started underneath it
+# never becomes visible - so the video is launched, `onStop` runs, and the check reports "video was
+# not playing while visible". That was read as an app bug twice before the window dump showed what
+# was actually in front. `cmd statusbar collapse` and a swipe-up are both attempted because neither
+# works on its own in every state, and the loop fails loudly rather than silently testing nothing.
+wake_visible() {
+  local focus i
+  for ((i = 0; i < 8; i++)); do
+    sh_ input keyevent KEYCODE_WAKEUP > /dev/null 2>&1
+    sh_ cmd statusbar collapse > /dev/null 2>&1
+    sh_ input swipe 548 2200 548 600 300 > /dev/null 2>&1
+    sleep 1
+    focus=$(focused_window)
+    case "$focus" in
+      *NotificationShade*|"") continue ;;
+      *) info "woke onto: ${focus}"; return 0 ;;
+    esac
+  done
+  info "the notification shade still holds focus (${focus:-unknown}); a background assertion now would be meaningless"
+  return 1
+}
+
 play() {
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
@@ -127,7 +157,9 @@ else
 fi
 
 say "music survives the screen going off"
-if [ "$(sh_ "[ -f $AUDIO_CLIP ] && echo yes || echo no")" != "yes" ]; then
+if [ "${SKIP_SCREEN_OFF:-0}" = "1" ]; then
+  skip "screen-off checks skipped (SKIP_SCREEN_OFF=1)"
+elif [ "$(sh_ "[ -f $AUDIO_CLIP ] && echo yes || echo no")" != "yes" ]; then
   skip "no audio-only clip"
 else
   BEFORE=$(session_position)
@@ -149,8 +181,10 @@ say "video does not play in the background"
 if [ "$(sh_ "[ -f $VIDEO_CLIP ] && echo yes || echo no")" != "yes" ]; then
   skip "no video clip at $VIDEO_CLIP"
 else
+  # The screen has to be genuinely usable first, or the video is launched behind a lock screen and
+  # pauses for a reason that has nothing to do with the policy being tested. See `wake_visible`.
+  wake_visible || fail "the phone is not showing anything but its lock screen"
   play "$VIDEO_CLIP" video/mp4
-  sh_ input keyevent KEYCODE_WAKEUP > /dev/null
   sleep 3
   BEFORE_STATE=$(session_state)
   # Without this the check is vacuous: a video that was already paused "passes" having proved
@@ -170,6 +204,14 @@ else
   fi
 
   # And the screen going off must stop it too, which is the same requirement by another route.
+  #
+  # Skippable with `SKIP_SCREEN_OFF=1`, because the screen-off half is what leaves this phone on its
+  # lock screen (see `wake_visible`), and on a bad run that costs the HOME check above an honest
+  # reading. When the device is behaving, run the whole suite.
+  if [ "${SKIP_SCREEN_OFF:-0}" = "1" ]; then
+    skip "screen-off video check skipped (SKIP_SCREEN_OFF=1)"
+  else
+  wake_visible || true
   sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$VIDEO_CLIP" --es smoke_mime video/mp4 > /dev/null
   sleep 6
@@ -182,6 +224,7 @@ else
     pass "video paused when the screen went off"
   else
     fail "video kept playing with the screen off"
+  fi
   fi
 fi
 

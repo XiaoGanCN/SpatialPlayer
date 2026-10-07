@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ids for views the code builds rather than inflates.
+
+  The inspector sheet is constructed in `InspectorSheet.buildDialog`, so it had no ids to query and
+  no way to be introspected: `uiautomator dump` could see the tab labels but nothing that said which
+  panel was actually rendered or whether it had any rows. A suite that has to assert on a panel needs
+  those two handles, and this is cheaper than a probe activity that reimplements the sheet.
+-->
+<resources>
+    <!-- The vertical list a panel's rows are added to. Empty it and the panel shows nothing. -->
+    <item name="sheet_content" type="id" />
+
+    <!-- The stand-in row a panel renders instead of rows when it has none. -->
+    <item name="sheet_empty" type="id" />
+
+    <!-- The scrollable strip of panel tabs. -->
+    <item name="sheet_tab_strip" type="id" />
+
+    <!-- The sheet's own panel, so a test can scope a matcher to this dialog's window. -->
+    <item name="sheet_panel" type="id" />
+
+    <!--
+      A section heading ("Playback speed", "Spatial", ...).
+
+      Tagged rather than identified by shape: a heading and an option row with a subtitle are both
+      two-child LinearLayouts, so nothing about the tree tells them apart. A probe that had to guess
+      counted a subtitle row as a heading and reported a populated panel as empty.
+    -->
+    <item name="sheet_section" type="id" />
+</resources>

@@ -140,6 +140,19 @@ in the test folder are only 5 s long and end on a black frame, and the champagne
 at most positions, which makes the comparison meaningless. Generate a static pattern instead:
 `ffmpeg -f lavfi -i smptebars=size=1280x720:rate=30 -t 30 -c:v libx264 -pix_fmt yuv420p bars_720p.mp4`.
 
+### 3.13 `KEYCODE_SLEEP` then `KEYCODE_WAKEUP` leaves the phone on its lock screen
+`mWakefulness=Awake` and `Display State=ON`, but `mCurrentFocus=Window{… NotificationShade}` — and
+`cmd statusbar collapse`, `KEYCODE_HOME`, `KEYCODE_BACK`, `KEYCODE_MENU` (82) and swipe injection all
+leave it there, while `screencap` returns a black or zero-byte frame. An app started underneath never
+becomes visible: it is launched already backgrounded, so a "does it still play" assertion is measuring
+a locked phone rather than the app. This was read as an app bug twice.
+
+Two consequences: any suite that uses the screen-off path must confirm something other than the shade
+has focus before asserting (`verify-background.sh` now does, via `wake_visible`), and on this device
+the only reliable fix is a physical touch — `osascript display dialog` on the Mac is the way to ask.
+An earlier symptom of the same thing: `input tap`/`swipe` returning success while nothing moves is not
+always the §3.1 stale-injection trap. Check `mWakefulness` first; `Asleep` explains all of it.
+
 ## 4. Verified findings worth not re-deriving
 
 ### 4.1 Stereo cannot be spatialised; 5.1 can (answers Q1)
@@ -269,6 +282,50 @@ Two consequences that also had to be handled:
 a **zero-pixel offset** in both axes (0.93 at ±6 px, 0.90 at ±12 px), i.e. the mapping is exact.
 Over the pillarbox the same test gives r = 0.15 — no picture bleed.
 
+### 4.11 The inspector sheet's tabs must pull their panel, not be pushed to
+Every control panel in `InspectorSheet` is a list the *activity* supplies: `populateDecoderPanel`,
+`populateSubtitlePanel`, `populateAudioPanel`, `populateScalingPanel`, `populateSpeedPanel`,
+`populateChaptersPanel`. The sheet's tab strip lives **inside** the sheet, and its click listener is
+just `show(panel)` — so choosing a tab never went through any of those. Only the entry points that
+happened to call a `populateX` first had rows, which produces exactly the reported symptom: a panel is
+blank when switched to from another page, and a panel visited earlier still looks fine because it is
+still holding the list it was given the first time (and keeps it into the next video).
+
+The fix is `InspectorSheet.Callback.onPanelShown`, called at the top of `show()` for every route, and
+the activity supplies the rows there. Rows are therefore current whenever a panel appears, which also
+removes the stale-list-after-a-video-change half of the bug. Both the overflow rows and the two
+long-presses now just call `showInspector(panel)`; the `populateX` calls that used to sit in front of
+them were redundant and are gone — if you add a new entry point, do not add one back.
+
+**How it is verified.** `tools/verify-panels.sh` drives `PanelProbeReceiver`, which opens each panel on
+the running player and logs `rows=… headings=… empty=…`. Two things about that probe are worth keeping:
+the option rows carry no view id at all, so "how many rows" can only be answered by counting
+`View.NO_ID` children — and a section heading is a two-child `LinearLayout` exactly like a row with a
+subtitle, so it needed an id of its own (`R.id.sheet_section`). A shape-based guess counted subtitle
+rows as headings and reported a populated panel as empty; measured, and it cost a build cycle.
+
+### 4.12 The background policy has one unanswerable window, and it is at HOME
+`PlayerActivity.shouldPauseForBackground` reads three sources in order: the tracks it has already seen,
+then `PlayerEngine.hasVideoTrack`, then `hasVideoFormat`. All three can answer "not yet known", and
+that is not the same as "audio" — guessing *video* there pauses music, which is the worse error, so it
+defers. Measured capture of the window, with a 1080p AC3 MKV on the reference device:
+
+```
+T+0.000  HOME pressed
+T+0.000  background: pause=false tracks=null selected=null format=false video=false unknown=true
+T+0.148  the tracks arrive
+T+0.400  appInBackground() still false   <- the process counts as VISIBLE while being stopped
+```
+
+Those two middle lines are the whole bug: the deferred answer was gated on `appInBackground()`, which
+said "still on screen" for long enough that the tracks arrived, were seen, and were then ignored — and
+nothing asked again, so the film kept decoding behind a black screen. The answer is not a better
+visibility test but not needing one: `onStop` records that the question is open
+(`deferredBackgroundDecision`) and `onEngineTracksChanged` answers it, because an activity that was
+already stopped when the question was left open is one whose picture the user cannot see.
+`onResume` clears the flag, and `onPause` deliberately does **not** set it — that is where a retry
+timer went wrong once already, pausing the film during a transient `onPause` at launch.
+
 ## 5. Reference UI geometry (measured from the user's screenshot)
 
 User's screenshot: 2016 px wide → device 1096 px ⇒ **×0.5437**; then ÷2.625 for dp.
@@ -299,16 +356,27 @@ the full native text that no log line produced.
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
 | `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
-| `tools/verify-background.sh` | 7 | audio survives HOME and screen-off, video does not (§8 has the one open check) |
+| `tools/verify-background.sh` | 7 | audio survives HOME and screen-off, video does not. `SKIP_SCREEN_OFF=1` skips the two screen-off checks (§3.13) |
+| `tools/verify-panels.sh` | 11 | every inspector panel renders its rows however it was reached |
 
-**101 checks total, 100 passing.** `verify-background.sh` is 6 of 7: video paused on HOME is the
-open failure, with the leads written up in §8. `tools/png_reader.py` is a dependency-free PNG reader shared by the image
-harnesses; `tools/chrome_presence.py` reports how much structure is in the **top bar** as the
+**112 checks total.** `verify-panels.sh` is 11 of 11. `verify-background.sh` passes the check that was
+open for the whole life of this document — video pauses on HOME — when run with `SKIP_SCREEN_OFF=1`;
+without it, this phone's lock screen takes window focus during the screen-off phase and the following
+checks cannot see the app at all (§3.13). `tools/png_reader.py` is a dependency-free PNG reader shared
+by the image harnesses; `tools/chrome_presence.py` reports how much structure is in the **top bar** as the
 "chrome is visible" proxy, and `tools/glass_tracking.py` adds the freeze/tracking maths.
 Probes: `SmokeChaptersProbeActivity` (`SMOKE_CHAPTERS`, `--es chapters_probe_path`) logs one flat
 line per chapter. It exists because the player animates continuously, so `uiautomator dump` will not
 settle on it - the UI cannot be introspected, and the alternative would be OCR of a screenshot. The
 same trick is worth reaching for whenever a suite needs to assert on something the UI renders.
+
+`PanelProbeReceiver` and `PanelProbeActivity` (debug variant only) are the same trick in a second
+shape: a broadcast aimed at the **running** player opens each inspector panel through the same
+`show(panel)` a tab click makes, and logs what that panel rendered. It has to be the running activity -
+the bug it guards was in the wiring between the sheet and the activity, so a probe with its own sheet
+would test a copy of the code that was wrong. `verify-panels.sh` starts it and parses the log line.
+The sheet cannot be dumped from the shell at all: `uiautomator dump` answers "could not get idle state"
+on the animating player, and the rows are built in code inside a dialog window.
 
 **Chrome visibility had to be re-thought** when the capsule moved over the picture: the old probe
 averaged a fixed band in the bottom eighth, and the capsule now floats just inside the *picture's*
@@ -460,7 +528,9 @@ below is kept because the two dead ends it records are worth not re-walking.)*
   was found: it had buried everything else in the log buffer. Logged on change only now.
 * `ic_audio` was optically off-centre - its box spanned x 7..22 of a 24-wide viewport - and is now
   centred.
-* **Still open: video on HOME.** `verify-background.sh` is 6 of 7. Background audio, screen-off
+* **Still open: video on HOME.** *(Superseded - the root cause was found and fixed; the current state
+  is in §8. Kept because the two leads it records were both dead ends, and the second one is still the
+  reason `PlayerEngine.hasVideo` has three sources.)* `verify-background.sh` is 6 of 7. Background audio, screen-off
   audio, the media session and **screen-off video (PAUSED(2))** all pass; "video paused when the app
   was backgrounded" still reports PLAYING. Two leads, in order:
   1. **Picture-in-picture may be engaging on HOME.** `onUserLeaveHint` calls `enterPipIfPossible`,
@@ -557,12 +627,22 @@ glass revamp). This is the short version, so the state of the project can be rea
   gives them no titles.
 - Liquid glass: a frosted, refracting material on chips, buttons, cards, the action bar and the
   capsule, from one shader and one style table (§6c).
+- **Inspector panels render however they are reached.** Decoder, Subtitles, Audio & spatial, Scaling,
+  Speed and Chapters all show their rows when switched to by tab, not only when opened from their own
+  row - `tools/verify-panels.sh` is 11 of 11, and removing the one-line fix makes it report
+  `empty=yes` on all six panels, which is the reported symptom exactly.
+- Head tracking is live at 5.1 with the upmix in the chain, and the background policy is settings-
+  driven for both music and anything with a picture.
 
 ### The harnesses
 
-Eight suites, 101 checks, all passing except the one listed in §8. They are the reason to trust any
-of the above: every claim in this document that says "verified" was produced by one of them, and the
-ones that read oddly (a `dumpsys` field, a pixel correlation) are all explained where they are used.
+Nine suites, 112 checks. `verify-panels.sh` is 11 of 11. `verify-background.sh` passes the check it
+was failing — video pauses on HOME — with `SKIP_SCREEN_OFF=1`, which is needed only because this
+phone's lock screen keeps window focus after the screen-off phase (§3.13, §8). Its two screen-off
+checks passed for the whole life of this document and are skipped, not failed, in that mode. They are
+the reason to trust any of the above: every claim in this document that says "verified" was produced by
+one of them, and the ones that read oddly (a `dumpsys` field, a pixel correlation) are all explained
+where they are used.
 
 ### Standing constraints from the user
 
@@ -572,6 +652,7 @@ ones that read oddly (a `dumpsys` field, a pixel correlation) are all explained 
 - **Do not copy the 70 GB film to the phone.** Make a shortened version for testing.
 - If adb needs re-authorising or the phone needs a tap, **say so on this Mac** - a modal `osascript
   display dialog` with a sound works; a plain `display notification` was missed more than once.
+- User is context-budget conscious and said "if you need anything about context budget, you are the boss, do whatever you need to"
 - `README.md` stays terse.
 
 ## 8. Open work
@@ -582,16 +663,24 @@ reordered and struck out without reflowing prose.
 
 Format: `- [ ] **What** — where it lives / how to tell it is done.`
 
+Struck-out items stay in place with the measurement that closed them, because the next person needs to
+know what was already tried and what the device actually did.
+
 ### Known-broken or unfinished
 
-- [ ] **Video does not pause when the app is backgrounded (HOME), though it does with the screen off.**
-      `tools/verify-background.sh` is 6 of 7 on this one check. Two leads, in order: (1) instrument
-      `isInPictureInPictureMode` at the decision in `PlayerActivity.shouldPauseForBackground` -
-      `onUserLeaveHint` calls `enterPipIfPossible`, and PiP deliberately does not pause, and nothing in
-      the manifest declares `supportsPictureInPicture`; (2) the engine could not identify
-      `grid_720p.mp4` as video at all - `currentTracks` came back empty and `videoFormat` null for a
-      file that was visibly playing, which is why `PlayerEngine` falls back through tracks, then the
-      video format, then defers.
+- [x] **Video does not pause when the app is backgrounded (HOME)** — fixed in `PlayerActivity`
+      (`onStop` records the open question, `onEngineTracksChanged` answers it). Measured passing:
+      `playing before: PLAYING(3); after HOME: PAUSED(2)`. Details in §4.12; do not add a retry timer.
+
+- [ ] **This phone's lock screen keeps window focus after `KEYCODE_SLEEP`/`WAKEUP`, which stops
+      `verify-background.sh` measuring its screen-off checks.**
+      Measured: wakefulness `Awake`, display `ON`, but `mCurrentFocus=Window{... NotificationShade}`,
+      and `cmd statusbar collapse`, `KEYCODE_HOME`, `KEYCODE_BACK`, `input keyevent 82` and swipes all
+      leave it there. An app started underneath never becomes visible, so the video is launched already
+      backgrounded and the suite reports "video was not playing while visible". `wake_visible()` in the
+      harness now detects this and fails loudly instead of asserting vacuously; what it needs is a
+      reliable way to dismiss it - try `input keyevent 82` on a device with no secure lock, or leave
+      the screen on for the whole run.
 
 - [ ] **Head tracking recenters after a few seconds and cannot be anchored from the app.**
       Not an app-level fix: Android's `Spatializer` API is read-only, and this device's spatializer is
@@ -625,8 +714,6 @@ Format: `- [ ] **What** — where it lives / how to tell it is done.`
 - [ ] **Poweramp playlist shows empty after refresh** Correctly show `140·1 folders Poweramp` when first launch, shows empty after refresh, root cause not find yet.
 
 - [ ] **Add double click reset and editable values for sliders** This should be self-explanatory.
-
-- [ ] **Decoder, Subtitles, Audio&spatial, Scaling, Speed and chapters page shows nothing if switched from other pages** Only opened from dedicated enteries will display corresponding page content. If opened from Scaling, Speed page will be empty, but change from other pages to Scaling will display Scaling settings correctly because opened from Scaling before. Switch to other video, the opened status reset.
 
 - [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
 

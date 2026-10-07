@@ -96,5 +96,17 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Fires the inspector-panel probe at the player that is already on screen, for
+          `tools/verify-panels.sh`. Not an intent-filter: the suite starts it explicitly by name, and
+          a filter would add an entry to the launcher's share targets for a diagnostic.
+        -->
+        <activity
+            android:name=".PanelProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.SpatialPlayer" />
+
     </application>
 </manifest>
