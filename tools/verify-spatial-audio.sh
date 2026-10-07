@@ -182,6 +182,48 @@ else
   fi
 fi
 
+say "stereo music is upmixed and spatialised"
+# Head tracking cannot engage for stereo (the platform refuses to spatialise 2 channels), which is
+# the whole reason the upmix exists. This asserts the feature end to end: stereo in, 5.1 out, and the
+# platform actually spatialising the result.
+CLIP_STEREO="/sdcard/Movies/SpatialPlayerTest/stereo_48k.mp4"
+HOST_STEREO="${HOST_STEREO:-/tmp/stereo_48k.mp4}"
+if [ ! -f "$HOST_STEREO" ]; then
+  skip "no stereo test file at $HOST_STEREO (ffmpeg -f lavfi -i testsrc2=size=640x360:rate=30 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 30 -c:v libx264 -pix_fmt yuv420p -c:a aac -ac 2 -ar 48000 $HOST_STEREO)"
+else
+  if [ "$(sh_ "[ -f $CLIP_STEREO ] && echo yes || echo no")" != "yes" ]; then
+    "$ADB" push "$HOST_STEREO" "$CLIP_STEREO" >/dev/null 2>&1
+  fi
+  sh_ am force-stop "$PKG_DEBUG"
+  sleep 1
+  sh_ logcat -c
+  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+      --es smoke_path "$CLIP_STEREO" --es smoke_mime video/mp4 >/dev/null
+  sleep 8
+
+  UPMIX="$(sh_ "logcat -d -s StereoUpmix:V" | grep -m1 "upmixing")"
+  if [ -n "$UPMIX" ]; then
+    pass "the upmix engaged: $(printf '%s' "$UPMIX" | sed 's/.*StereoUpmix: //')"
+  else
+    fail "the upmix did not engage for a stereo source"
+  fi
+
+  # The chip strip reports the decoder's layout, so this is read from the platform instead.
+  MASK="$(sh_ dumpsys audio | grep -oE "channelMask=0x3f" | head -1)"
+  if [ -n "$MASK" ]; then
+    pass "the output was configured for 5.1 (channelMask=0x3f)"
+  else
+    fail "the output was not configured for 5.1: $(sh_ dumpsys audio | grep -oE 'channelMask=0x[0-9a-fA-F]+' | sort -u | tr '\n' ' ')"
+  fi
+
+  SPAT="$(sh_ dumpsys audio | grep -oE "isSpatialized=true" | head -1)"
+  if [ -n "$SPAT" ]; then
+    pass "the platform spatialised the upmixed stereo, so head tracking can engage"
+  else
+    fail "the upmixed stream was not spatialised"
+  fi
+fi
+
 say "summary"
 printf '  passed %d   failed %d   skipped %d\n' "$PASS" "$FAIL" "$SKIP"
 printf '  artifacts: %s\n' "$OUT_DIR"

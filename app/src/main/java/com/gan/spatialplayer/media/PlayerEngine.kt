@@ -145,7 +145,7 @@ class PlayerEngine(
         maxAudioChannelCount = forcedChannelCap
             ?: AudioOutputCapability.verifiedMaxChannels(context)
 
-        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile)
+        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile, spatialAudioEnabled)
         configureRenderers(renderersFactory)
 
         val audioAttributes = buildAudioAttributes()

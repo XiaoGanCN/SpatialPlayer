@@ -127,11 +127,17 @@ class StereoUpmixProcessor(
     /**
      * Accepts stereo 16-bit PCM at the rates the audio sink uses, and declares 5.1 PCM out.
      *
-     * Anything else **throws** [AudioProcessor.UnhandledAudioFormatException], which is how Media3
-     * is told to leave this processor out of the pipeline - the audio then passes through untouched
-     * rather than mangled. The return type is not nullable, so throwing is the only way to decline;
-     * returning the input instead would claim the format was accepted while emitting nothing, and
-     * the sink would then be fed silence.
+     * Anything else is **passed through**: this returns the input format unchanged and reports
+     * inactive, so the pipeline leaves the processor out and the audio is untouched.
+     *
+     * That is deliberately *not* done by throwing [AudioProcessor.UnhandledAudioFormatException],
+     * which is the other documented way to decline. Media3's `DefaultAudioSink.configure` converts
+     * that exception into `AudioSink.ConfigurationException`, which is **fatal to playback** -
+     * measured here: with the throw, an 8-channel file failed outright with
+     * `UnhandledAudioFormatException: Unhandled input format: AudioFormat[..., channelCount=8]`.
+     * Returning the format and reporting inactive makes the pipeline skip the processor cleanly
+     * (`AudioProcessingPipeline.configure` only advances the format and records the processor when
+     * `isActive()` is true), so multichannel audio still plays exactly as it did before.
      *
      * Coefficients and the delay rings are rebuilt here from the actual sample rate, never
      * hardcoded, so a 44.1 kHz file gets a 120 Hz corner at 44.1 kHz and not a scaled one.
@@ -140,12 +146,12 @@ class StereoUpmixProcessor(
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT || inputAudioFormat.channelCount != 2) {
             active = false
             Log.i(TAG, "passing through: not stereo 16-bit PCM ($inputAudioFormat)")
-            throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
+            return inputAudioFormat
         }
         if (inputAudioFormat.sampleRate != SR_44_1 && inputAudioFormat.sampleRate != SR_48) {
             active = false
             Log.i(TAG, "passing through: ${inputAudioFormat.sampleRate} Hz is not a rate we filter for")
-            throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
+            return inputAudioFormat
         }
         // One line each way. Whether this engaged is otherwise invisible: the chips report the
         // decoder's layout, not the sink's, so a stereo track that was upmixed and one that was left
@@ -158,7 +164,7 @@ class StereoUpmixProcessor(
             // and better than a track that refuses to play.
             active = false
             Log.i(TAG, "passing through: output cannot take 5.1 at ${inputAudioFormat.sampleRate} Hz")
-            throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
+            return inputAudioFormat
         }
 
         val upmixed = AudioProcessor.AudioFormat(

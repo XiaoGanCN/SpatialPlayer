@@ -1471,8 +1471,24 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         val listed = if (textTracks.size <= limit) {
             textTracks
         } else {
-            (selectedTracks + textTracks.take((limit - selectedTracks.size).coerceAtLeast(1)))
-                .distinctBy { it.id }
+            // Always keep whatever is selected, then fill up to the cap in file order. The selected
+            // tracks are collected first and the list is filtered back into its original order
+            // afterwards, so the panel still reads top-to-bottom like the container does rather than
+            // putting the current track first - and it is exactly `limit` rows when there are enough,
+            // which a "take(limit - selected)" formulation gets wrong whenever a selected track is
+            // already inside the first block.
+            val keep = LinkedHashSet(selectedTracks.map { it.id })
+            for (track in textTracks) {
+                if (keep.size >= limit) break
+                keep += track.id
+            }
+            textTracks.filter { it.id in keep }
+        }
+
+        // Logged as well as shown: the panel cannot be introspected (the player never settles for
+        // uiautomator), so this is how the cap is asserted on a file with more tracks than the cap.
+        if (textTracks.size > listed.size) {
+            Log.i(TAG, "subtitle list capped: showing ${listed.size} of ${textTracks.size} tracks")
         }
 
         for (track in listed) {

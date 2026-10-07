@@ -6,6 +6,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import java.util.HashMap
 
 /**
  * A playable track, decoupled from Media3's own structures.
@@ -88,6 +89,16 @@ data class MediaTracks(
         /** Flattens Media3's [Tracks] into a list addressable for selection. */
         fun from(tracks: Tracks): MediaTracks {
             val out = ArrayList<MediaTrack>()
+
+            // How many tracks of each type the file has, so an untitled track can still be numbered
+            // against the whole set. Numbering within a group is not enough: a remux with fifty
+            // subtitle tracks and no titles or languages puts each one in its own group of one, and
+            // every row then read "Track 1 [application/x-subrip]" - fifty identical rows, with no
+            // way to tell which was the thirty-seventh.
+            val totals = HashMap<Int, Int>()
+            for (group in tracks.groups) totals[group.type] = (totals[group.type] ?: 0) + group.mediaTrackGroup.length
+            val seen = HashMap<Int, Int>()
+
             for (group in tracks.groups) {
                 val typeLabel = when (group.type) {
                     C.TRACK_TYPE_VIDEO -> TYPE_VIDEO
@@ -102,9 +113,11 @@ data class MediaTracks(
                 val trackCount = mediaGroup.length
                 for (i in 0 until trackCount) {
                     val format = group.getTrackFormat(i)
+                    val ordinal = (seen[group.type] ?: 0) + 1
+                    seen[group.type] = ordinal
                     out += MediaTrack(
                         type = typeLabel,
-                        label = labelFor(format, i, mediaGroup.length),
+                        label = labelFor(format, ordinal, totals[group.type] ?: trackCount),
                         detail = detailFor(format),
                         selected = group.isTrackSelected(i),
                         supported = group.isTrackSupported(i),
@@ -126,7 +139,7 @@ data class MediaTracks(
          * it leads, and the language and codec are appended in brackets rather than replacing it.
          * Without this every `eng` subtitle read as an identical "eng" row.
          */
-        private fun labelFor(format: Format, index: Int, groupSize: Int): String {
+        private fun labelFor(format: Format, ordinal: Int, typeTotal: Int): String {
             val title = format.label?.takeIf { it.isNotBlank() }
             val language = format.language?.takeIf { it.isNotBlank() && it != "und" }
             val codec = format.codecs?.takeIf { it.isNotBlank() }
@@ -136,7 +149,7 @@ data class MediaTracks(
             codec?.let { qualifiers += it }
 
             val head = title
-                ?: if (groupSize > 1) "Track ${index + 1} of $groupSize" else "Track ${index + 1}"
+                ?: if (typeTotal > 1) "Track $ordinal of $typeTotal" else "Track $ordinal"
 
             return if (qualifiers.isEmpty()) head else "$head [${qualifiers.joinToString(" · ")}]"
         }

@@ -285,12 +285,12 @@ the full native text that no log line produced.
 | `tools/smoke-test.sh` | 23 | basic play/seek/state |
 | `tools/verify-multichannel.sh` | 22 | codec routing + **same-language subtitle identity** |
 | `tools/verify-poweramp.sh` | 11 | provider, playable URI opens, artist+album 140/140 |
-| `tools/verify-spatial-audio.sh` | 10 | `isSpatialized=true`, head tracking non-DISABLED |
+| `tools/verify-spatial-audio.sh` | 13 | `isSpatialized=true`, head tracking non-DISABLED |
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
 | `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
 
-**91 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
+**94 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
 harnesses; `tools/chrome_presence.py` reports how much structure is in the **top bar** as the
 "chrome is visible" proxy, and `tools/glass_tracking.py` adds the freeze/tracking maths.
 Probes: `SmokeChaptersProbeActivity` (`SMOKE_CHAPTERS`, `--es chapters_probe_path`) logs one flat
@@ -417,7 +417,13 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
   (copy a report). **Choice rows show every option at once with the current one marked** - the user's
   complaint that speed and scaling "just click and change state" applies here too, so nothing cycles.
   The material setting is applied, not decorative: CLEAR darkens the picture where REGULAR lightens.
-- **C11.** The subtitle picker lists at most `subtitleTrackLimit` tracks (default 20, settable), keeps
+- **C11, with a real bug found while verifying it.** A file with fifty untitled subtitle tracks put
+  each one in its own Media3 group of one, so `labelFor` numbered them *within the group* and every
+  row read `Track 1 [application/x-subrip]` - fifty identical rows with no way to tell which was the
+  thirty-seventh. Labels now number against the whole type (`Track 7 of 50`), verified on device, and
+  the cap is exact rather than one short: the old `take(limit - selected.size)` plus a de-duplicating
+  `distinctBy` listed 19 of a 20 cap whenever a selected track fell inside the first block.
+  The cap itself: the picker lists at most `subtitleTrackLimit` tracks (default 20, settable), keeps
   whatever is selected visible regardless of where it falls, and offers "show all N" for the rest -
   the reference film has 51. A channel downmix now reports itself: a new
   `onEngineAudioDownmixed(from, to)` listener callback raises a "7.1 → 5.1" chip and a one-line
@@ -429,36 +435,44 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
   then refuses the layout would turn a track that plays into one that does not. Needing `configure`
   to *decline* is worth knowing: the return type is not nullable, so the way to opt out is to throw
   `UnhandledAudioFormatException` (Media3 catches it and drops the processor).
-- **Q1: the stereo upmix is implemented but NOT wired in, and the reason is not understood.**
-  `StereoUpmixProcessor` (verified DSP, see above) is in the tree, and `SpatialRenderersFactory`
-  deliberately builds the stock sink. Adding the processor via `setAudioProcessors` *and* via
-  `setAudioProcessorChain` both failed the same way, and the failure was chased to the point where
-  the remaining evidence is contradictory. What was established on device:
-  * The processor is constructed by the factory (logged from its `init`) — so the instance exists.
-  * The sink built in `buildAudioSink` is the very instance the renderers hold:
-    `System.identityHashCode` matched on both sides of `buildAudioRenderers`, and a reflective
-    `Proxy` over the sink logged the renderers calling `setListener`, `setAudioAttributes`,
-    `supportsFormat`, `getFormatSupport` and
-    `configure(Format(2, ..., audio/raw, ..., [2, 48000]))` on it — a **raw** configure, so the sink
-    is not in offload mode.
-  * `AudioProcessingPipeline.configure` calls `processor.configure(format)` **before** it consults
-    `isActive()`, and the method has **no exception table**, so nothing can skip a processor
-    mid-chain. `DefaultAudioSink.DefaultAudioProcessorChain` copies the array it is given without
-    filtering and returns it verbatim.
-  * Yet `StereoUpmixProcessor.configure` is never entered — proven with a log as the method's first
-    statement *and* a log in every branch that declines a format, read back with `logcat -s
-    StereoUpmix:V` so buffer eviction cannot hide it.
+- **Q1: DONE, and it needed a Media3 behaviour to be found first.** Stereo is upmixed to 5.1 and the
+  platform now spatialises it, so head tracking can engage for music. Verified on device: a stereo
+  AAC file logs `upmixing 48000 Hz stereo to 5.1`, `dumpsys audio` shows the output configured
+  `channelMask=0x3f` and `isSpatialized=true`. `tools/verify-spatial-audio.sh` asserts all three
+  (13 checks). The reason it took three attempts:
 
-  **The decisive observation is a negative one.** `SonicAudioProcessor` lives in that same chain, and
-  speed changes work in this app — so a chain *is* configured, and it is the stock one. The chain
-  given to the builder is not the chain the sink ends up with. That is a Media3 internal, and
-  guessing further is not worth risking a working audio path, so nothing is wired in.
-  Disabling offload (`setAudioOffloadSupportProvider { DEFAULT_UNSUPPORTED }`) was also tried — it is
-  the documented way to keep the platform spatialiser (which taps the PCM) in the path — and made no
-  difference, so it is not carried either: it costs battery and forces hi-res audio to PCM.
-  **Next step is not more of this analysis** — it is to ask upstream (Media3 issue, or the nextlib
-  author) with the four points above, or to upmix outside `AudioSink` entirely, e.g. by wrapping the
-  sink in a delegating `AudioSink` that does the mix between `handleBuffer` and the real sink.
+  **`DefaultAudioSink.configure` in Media3 1.8 skips the custom `AudioProcessorChain` entirely
+  whenever float output is used.** From `javap` on the 1.8.0 artifact:
+  ```
+  70: ifeq 86        // shouldUseFloatOutput(pcmEncoding) == false -> the int path
+  73: add(toFloatPcmAudioProcessor)
+  83: goto 111       // <-- jumps past the chain
+  86: add(toInt16PcmAudioProcessor)
+  99: add(audioProcessorChain.getAudioProcessors())   // only reachable on the int path
+  ```
+  `shouldUseFloatOutput` is `enableFloatOutput && isEncodingHighResolutionPcm(pcmEncoding)`, and
+  nextlib's FFmpeg audio renderer decodes to **float** — which is exactly why this app enabled float
+  output. With it on, the sink configures happily, raises nothing, and simply never calls
+  `getAudioProcessors()`: a **silent** bypass, which is why this looked like the processor was not in
+  the chain at all. The symptom that gave it away was a negative one — `SonicAudioProcessor` lives in
+  the same chain and speed still worked, because speed is handled by `AudioTrack` playback params
+  rather than by `SonicAudioProcessor`.
+
+  The upmix is therefore installed only when spatial audio is on, and with float output off. That
+  costs a float-to-16-bit conversion, which is a deliberate trade: the case this feature exists for
+  is a Bluetooth headset whose link is lossy (LDAC) long before 16 bits matter, and switching spatial
+  audio off in Settings restores the bit-perfect float path for music that does not want to be
+  spatialised.
+
+  **Declining a format must not throw.** The processor originally declined non-stereo input by
+  throwing `UnhandledAudioFormatException`, which is the other documented way to opt out — but
+  `DefaultAudioSink.configure` converts it into `AudioSink.ConfigurationException`, which is *fatal*:
+  an 8-channel file failed outright with `UnhandledAudioFormatException: Unhandled input format:
+  AudioFormat[..., channelCount=8]`. It now returns the input format unchanged and reports inactive,
+  which makes `AudioProcessingPipeline.configure` skip it cleanly (it only advances the format and
+  records the processor when `isActive()` is true). Verified afterwards: 8-channel passes through
+  with zero errors, 5.1 passes through, stereo upmixes. The 7.1 PCM asset earned its keep by catching
+  this.
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 

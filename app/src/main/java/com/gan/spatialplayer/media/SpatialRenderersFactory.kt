@@ -5,6 +5,7 @@ import android.os.Handler
 import android.util.Log
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -36,6 +37,8 @@ import java.util.ArrayList
 class SpatialRenderersFactory(
     context: Context,
     private val profile: DecoderProfile,
+    /** Whether the user wants the platform to spatialise; also gates the stereo upmix. */
+    private val spatialEnabled: Boolean = false,
 ) : NextRenderersFactory(context) {
 
     init {
@@ -54,43 +57,62 @@ class SpatialRenderersFactory(
     }
 
     /**
-     * The stock sink, deliberately.
+     * Builds the sink, inserting the stereo upmix when spatial audio is wanted.
      *
-     * A stereo upmix was wired in here through `setAudioProcessors` / `setAudioProcessorChain`, and
-     * **it never engaged**. What was established on device, in order, because the answer is not
-     * obvious and should not have to be rediscovered:
+     * ## Why float output has to be off for the upmix to exist at all
      *
-     *  * The processor is constructed by this factory (`Log` from its `init`) and the sink built here
-     *    is the very instance the renderers hold — `System.identityHashCode` matched on both sides of
-     *    `buildAudioRenderers`, and a reflective proxy over the sink logged the renderers calling
-     *    `setListener`, `setAudioAttributes`, `supportsFormat`, `getFormatSupport` and
-     *    `configure(Format(2, ..., audio/raw, ..., [2, 48000]))` on it.
-     *  * `AudioProcessingPipeline.configure` provably calls `processor.configure(format)` before
-     *    consulting `isActive()`, and has no exception table, so nothing can quietly skip a
-     *    processor in the middle of the chain.
-     *  * `DefaultAudioSink.DefaultAudioProcessorChain` copies the array it is given without
-     *    filtering, and its `getAudioProcessors()` returns it verbatim.
-     *  * Yet `configure` is **never** entered on the processor — proven with a log as the method's
-     *    first statement *and* with one in every branch that declines a format.
+     * This cost most of a session to find, so it is written down precisely: **Media3 1.8
+     * `DefaultAudioSink.configure` skips the custom `AudioProcessorChain` whenever float output is
+     * used.** From `javap` on the 1.8.0 artifact:
      *
-     * The decisive observation is a negative one: `SonicAudioProcessor` lives in the same chain, and
-     * speed changes work in this app — so a chain *is* being configured, and it is the stock one.
-     * The chain handed to the builder is not the chain the sink ends up with. That is a Media3
-     * internal this app cannot see into, and guessing at it further is not worth the risk to a working
-     * audio path, so the upmix is not wired in at all until it is understood. `StereoUpmixProcessor`
-     * is kept because its DSP is implemented and unit-verified.
+     * ```
+     * 70: ifeq 86        // shouldUseFloatOutput(pcmEncoding) == false -> the int path
+     * 73: add(toFloatPcmAudioProcessor)
+     * 83: goto 111       // <-- jumps past the chain entirely
+     * 86: add(toInt16PcmAudioProcessor)
+     * 99: add(audioProcessorChain.getAudioProcessors())   // only reached on the int path
+     * ```
      *
-     * Disabling offload was also tried (it bypasses the processor chain, and the platform spatialiser
-     * with it) and made no difference, so it is not carried either — it was a real cost to battery and
-     * to high-resolution audio for no benefit.
+     * `shouldUseFloatOutput` is `enableFloatOutput && isEncodingHighResolutionPcm(pcmEncoding)`, and
+     * nextlib's FFmpeg audio renderer decodes to **float** - which is exactly why this app enabled
+     * float output in the first place. So with float output on, every custom processor is silently
+     * bypassed: the sink is configured, no exception is raised, the chain's `getAudioProcessors` is
+     * simply never called and `configure` is never invoked on the processor.
+     *
+     * The upmix is therefore only installed with float output off. That costs a float-to-16-bit
+     * conversion on the decoder's output, which is a real trade and a deliberate one: the case this
+     * feature exists for is a Bluetooth headset, whose link is lossy (LDAC) long before 16 bits
+     * matter, and turning spatial audio off in Settings restores the bit-perfect float path for
+     * music that does not want to be spatialised.
+     *
+     * Speed changes are unaffected either way: `setEnableAudioTrackPlaybackParams(true)` hands
+     * `PlaybackParameters` to `AudioTrack` itself rather than to `SonicAudioProcessor`.
      */
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
-    ): AudioSink = requireNotNull(
-        super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams),
-    ) { "default audio sink unavailable" }
+    ): AudioSink {
+        if (!spatialEnabled) {
+            return requireNotNull(
+                super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams),
+            ) { "default audio sink unavailable" }
+        }
+
+        Log.i(TAG, "building audio sink with the stereo upmix in the chain")
+        return DefaultAudioSink.Builder(context)
+            .setAudioProcessorChain(
+                DefaultAudioSink.DefaultAudioProcessorChain(
+                    StereoUpmixProcessor { sampleRate ->
+                        AudioOutputCapability.canOpenTrack(6, sampleRate)
+                    },
+                ),
+            )
+            // Off, for the reason above - not a preference.
+            .setEnableFloatOutput(false)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .build()
+    }
 
     override fun buildAudioRenderers(
         context: Context,
