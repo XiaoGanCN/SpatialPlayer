@@ -125,6 +125,19 @@ class PlayerGestureController(
     private var viewWidth = 1
     private var viewHeight = 1
 
+    /**
+     * Height that vertical drags are measured against, which is deliberately **not** [viewHeight].
+     *
+     * [viewHeight] is the picture's rectangle, because the left/right halves and the scrub area are
+     * the picture's. Scaling the drag by it too made the sensitivity depend on the video's aspect
+     * ratio: the same finger movement covered four times as much of the volume range over a 16:9
+     * letterboxed picture (616 px tall in portrait) as it would over a taller one, and the shorter
+     * the picture, the twitchier the gesture. Measured: a one-centimetre drag moved 7 of 33 volume
+     * steps, with the same 0.30 gain that moved one step when the viewport happened to be taller.
+     * Setting this to the window height makes the gesture feel identical no matter what is playing.
+     */
+    private var dragReferenceHeight = 1
+
     /** True while a vertical gesture is waiting out [ADJUST_HOLD_MS] before it may act. */
     private var adjustArmed = false
     private var slopCrossedAtMs = 0L
@@ -149,6 +162,12 @@ class PlayerGestureController(
     fun setViewport(width: Int, height: Int) {
         viewWidth = width.coerceAtLeast(1)
         viewHeight = height.coerceAtLeast(1)
+        if (dragReferenceHeight <= 1) dragReferenceHeight = viewHeight
+    }
+
+    /** The window height; see [dragReferenceHeight]. Not the picture's. */
+    fun setDragReferenceHeight(height: Int) {
+        dragReferenceHeight = height.coerceAtLeast(1)
     }
 
     fun setSeekStep(stepMs: Long) {
@@ -250,7 +269,7 @@ class PlayerGestureController(
 
                     Mode.BRIGHTNESS -> {
                         val delta = clampStep(
-                            (lastY - event.y) / viewHeight * verticalGain,
+                            (lastY - event.y) / dragReferenceHeight * verticalGain,
                         )
                         lastY = event.y
                         if (delta != 0f) host.onBrightnessDelta(delta)
@@ -258,7 +277,7 @@ class PlayerGestureController(
 
                     Mode.VOLUME -> {
                         val delta = clampStep(
-                            (lastY - event.y) / viewHeight * verticalGain,
+                            (lastY - event.y) / dragReferenceHeight * verticalGain,
                         )
                         lastY = event.y
                         if (delta != 0f) host.onVolumeDelta(delta)

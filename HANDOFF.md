@@ -473,6 +473,20 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
   records the processor when `isActive()` is true). Verified afterwards: 8-channel passes through
   with zero errors, 5.1 passes through, stereo upmixes. The 7.1 PCM asset earned its keep by catching
   this.
+- **Gesture sensitivity is now measured against the window, not the picture.** The volume and
+  brightness drags were scaled by the *video rectangle* height, which is also where the left/right
+  zones and the scrub area come from. That made the same finger movement cover four times as much of
+  the volume range over a 16:9 letterboxed picture (616 px tall in portrait) as over a taller one -
+  the shorter the picture, the twitchier the gesture. `setDragReferenceHeight` now feeds the window
+  height in separately. Confirmed on device: a 10 mm drag logs deltas of 3.9e-4 each and leaves the
+  volume at `next=8`, unchanged, and 5 cm moves one step.
+- **The gesture suite's "small drag" check was measuring the wrong thing.** It reported 7 steps from
+  a drag the app had correctly ignored, because `streamVolume` follows the *active output* and this
+  phone moved it between readings - the speaker held 7 and the Bluetooth headset 14, and the
+  difference was read as a gesture. The check now asserts on the app's own `volDelta ... next=N`,
+  which routing cannot confuse, and `settle_volume` waits for key presses to stop landing before the
+  starting level is read. Worth remembering: a harness that reads platform state can be wrong in
+  ways the app never is.
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 

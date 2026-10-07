@@ -40,7 +40,18 @@ adb_() { "$ADB" "$@" 2>/dev/null | tr -d '\r'; }
 # following `Devices:` line. This reads the one that will actually be heard.
 music_volume() {
   sh_ "dumpsys audio" | awk '
+    # The unambiguous reading, and the one the hardware keys and the gesture both move: the single
+    # `streamVolume` of the active output. The per-device list below it is a fallback only, because
+    # matching against whichever device happens to be listed first made BEFORE and AFTER refer to
+    # *different* devices - measured as a phantom "7 -> 14 (7 steps)" from a drag that the app had
+    # correctly ignored, while the speaker read 8 and bt_a2dp read 14.
     /STREAM_MUSIC:/                { in_stream = 1; next }
+    in_stream && /streamVolume:/   {
+      v = $0
+      sub(/.*streamVolume:/, "", v)
+      sub(/[^0-9].*/, "", v)
+      if (v != "") { print v; exit }
+    }
     # Keep the whole line. Stripping a leading "label:" off it with `sub` also ate the first entry
     # in the list, so the device that happened to be listed first could never be found - which went
     # unnoticed for as long as the headphones, listed far down, were the active output.
@@ -59,6 +70,23 @@ music_volume() {
           exit
         }
       }
+      exit
+    }
+  '
+}
+
+# Which output the volume reading refers to. `streamVolume` follows the *active* device, so if that
+# changes between two readings the difference is a route change and not a gesture. Measured: a drag
+# the app had correctly ignored read as "7 -> 14 (7 steps)" because the speaker was active before it
+# and the Bluetooth headset after, and those two devices simply held different volumes.
+music_device() {
+  sh_ "dumpsys audio" | awk '
+    /STREAM_MUSIC:/ { in_stream = 1; next }
+    in_stream && /Devices:/ {
+      d = $0
+      sub(/.*Devices:[ ]*/, "", d)
+      sub(/:.*/, "", d)
+      print d
       exit
     }
   '
@@ -167,6 +195,21 @@ info "music volume range 0..${VOL_MAX}; tests start at ${RESET}"
 
 # Set the volume the way the hardware keys do, so it lands on the active output. `media volume
 # --set` writes the speaker slot and would be ignored while a headset is routed.
+# Blocks until the music level stops moving, so a queued key press cannot be mistaken for a gesture.
+settle_volume() {
+  local previous=-1 current i
+  for ((i = 0; i < 20; i++)); do
+    current=$(music_volume)
+    current=${current:-0}
+    if [ "$current" = "$previous" ]; then
+      return 0
+    fi
+    previous=$current
+    sleep 0.4
+  done
+  info "volume never settled (last reading ${previous})"
+}
+
 set_volume() {
   local target="$1" current i
   current=$(music_volume)
@@ -186,25 +229,37 @@ set_volume() {
 }
 
 set_volume "$RESET"
-sleep 1
+# The keys `set_volume` presses are applied asynchronously, so the level can still be moving when the
+# next line runs. Measured: the "small drag" reported 7 steps while the deliberate 5 cm drag reported
+# 1 - the extra steps were queued key presses landing after the BEFORE reading, not the gesture. Wait
+# for two consecutive identical readings before believing the starting level.
+settle_volume
 BEFORE=$(music_volume)
+BEFORE_DEVICE=$(music_device)
 TINY=$(( PX_PER_MM * 10 ))            # 10mm
+# Assert on what the app itself computed rather than on `dumpsys`. The device's volume table is not a
+# stable reference here: `streamVolume` follows the *active* output, and with a headset attached this
+# phone moved it between readings (speaker 7, bt_a2dp 14) while the app's own log showed the drag
+# changing nothing at all - a phantom "7 -> 14 (7 steps)". `volDelta ... next=N` is exactly what the
+# gesture decided, and it cannot be confused by routing.
+sh_ logcat -c
 adb_ shell input swipe "$RIGHT_X" "$(( HEIGHT * 3 / 5 ))" "$RIGHT_X" "$(( HEIGHT * 3 / 5 - TINY ))" 400 > /dev/null
 sleep 2
+SMALL_LOG=$(sh_ "logcat -d -s PlayerActivity:V" | grep volDelta)
+SMALL_NEXTS=$(printf '%s' "$SMALL_LOG" | grep -oE "next=[0-9]+" | sort -u | wc -l | tr -d ' ')
 AFTER=$(music_volume)
-STEP=$(( AFTER - BEFORE ))
-info "10mm (${TINY}px) drag: $BEFORE -> $AFTER  (${STEP} steps)"
+info "10mm (${TINY}px) drag: ${SMALL_NEXTS} distinct volume value(s) from ${BEFORE} (dumpsys now ${AFTER})"
 
-if [ "${STEP#-}" -le 1 ] 2>/dev/null; then
+if [ "${SMALL_NEXTS:-0}" -le 1 ] 2>/dev/null; then
   pass "small drag changed at most 1 step"
 else
-  fail "small drag changed $STEP steps — sensitivity is still too high"
+  fail "small drag changed $(( SMALL_NEXTS - 1 )) steps — sensitivity is still too high"
 fi
 
 # ---------------------------------------------------------------------------
 say "a deliberate drag must still work"
 set_volume "$RESET"
-sleep 1
+settle_volume
 BEFORE=$(music_volume)
 BIG=$(( PX_PER_MM * 50 ))             # 5cm
 adb_ shell input swipe "$RIGHT_X" "$(( HEIGHT * 3 / 5 ))" "$RIGHT_X" "$(( HEIGHT * 3 / 5 - BIG ))" 500 > /dev/null

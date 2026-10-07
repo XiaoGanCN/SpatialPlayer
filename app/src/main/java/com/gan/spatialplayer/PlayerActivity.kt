@@ -211,6 +211,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // saturated its per-event cap and a short drag moved the volume by many steps at once.
         binding.controlsOverlay.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
             gestures.setViewport(r - l, b - t)
+            // Sensitivity is measured against the window, not the picture; see the controller.
+            gestures.setDragReferenceHeight(binding.gestureLayer.height)
         }
         binding.controlsOverlay.post {
             gestures.setViewport(binding.controlsOverlay.width, binding.controlsOverlay.height)
