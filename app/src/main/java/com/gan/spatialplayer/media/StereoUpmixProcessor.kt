@@ -1,5 +1,6 @@
 package com.gan.spatialplayer.media
 
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import java.nio.ByteBuffer
@@ -144,11 +145,17 @@ class StereoUpmixProcessor(
             active = false
             throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
         }
+        // One line each way. Whether this engaged is otherwise invisible: the chips report the
+        // decoder's layout, not the sink's, so a stereo track that was upmixed and one that was left
+        // alone look identical everywhere in the app.
+        Log.i(TAG, "upmixing ${inputAudioFormat.sampleRate} Hz stereo to 5.1")
+
         if (!canRenderSixChannels(inputAudioFormat.sampleRate)) {
             // The output cannot take 5.1 at this rate, so leave the stereo alone. The platform cannot
             // spatialise stereo, so this track simply does not get head tracking - which is honest,
             // and better than a track that refuses to play.
             active = false
+            Log.i(TAG, "passing through: output cannot take 5.1 at ${inputAudioFormat.sampleRate} Hz")
             throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
         }
 
@@ -390,6 +397,8 @@ class StereoUpmixProcessor(
     }
 
     private companion object {
+        const val TAG = "StereoUpmix"
+
         /** Only the two rates the audio sink actually runs at; 96 kHz is left as pass-through. */
         const val SR_44_1 = 44_100
 

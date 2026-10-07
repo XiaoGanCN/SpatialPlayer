@@ -37,6 +37,15 @@ import java.util.ArrayList
 class SpatialRenderersFactory(
     context: Context,
     private val profile: DecoderProfile,
+    /**
+     * Whether the stereo upmix may be inserted into the sink.
+     *
+     * Turned off for good once the output has refused a channel layout. The capability probe can
+     * claim six channels and the sink still refuse them - that is exactly what happened with 7.1 on
+     * the reference device - so the probe alone is not enough to trust, and an upmix that keeps
+     * failing would turn a track that plays into one that does not.
+     */
+    private val upmixAllowed: Boolean = true,
 ) : NextRenderersFactory(context) {
 
     init {
@@ -68,17 +77,27 @@ class SpatialRenderersFactory(
         context: Context,
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
-    ): AudioSink = DefaultAudioSink.Builder(context)
-        .setAudioProcessors(
-            arrayOf(
-                StereoUpmixProcessor { sampleRate ->
-                    AudioOutputCapability.canOpenTrack(6, sampleRate)
-                },
-            ),
-        )
-        .setEnableFloatOutput(enableFloatOutput)
-        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-        .build()
+    ): AudioSink {
+        // The superclass declares a nullable return; the default path never actually returns null.
+        if (!upmixAllowed) {
+            return requireNotNull(
+                super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams),
+            ) { "default audio sink unavailable" }
+        }
+
+        Log.i(TAG, "building audio sink with the stereo upmix in the chain")
+        return DefaultAudioSink.Builder(context)
+            .setAudioProcessors(
+                arrayOf(
+                    StereoUpmixProcessor { sampleRate ->
+                        upmixAllowed && AudioOutputCapability.canOpenTrack(6, sampleRate)
+                    },
+                ),
+            )
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .build()
+    }
 
     override fun buildAudioRenderers(
         context: Context,

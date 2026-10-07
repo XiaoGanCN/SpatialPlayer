@@ -104,6 +104,9 @@ class PlayerEngine(
      * has to be remembered - otherwise rebuilding would ask for the same rejected layout again.
      */
     private var forcedChannelCap: Int? = null
+
+    /** Cleared for good once the output has refused a channel layout; see SpatialRenderersFactory. */
+    private var upmixAllowed = true
     private var subtitleConfigurations: List<MediaItem.SubtitleConfiguration> = emptyList()
 
     /** Preferred audio language tag, "und" meaning "no preference". */
@@ -144,7 +147,7 @@ class PlayerEngine(
         maxAudioChannelCount = forcedChannelCap
             ?: AudioOutputCapability.verifiedMaxChannels(context)
 
-        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile)
+        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile, upmixAllowed)
         configureRenderers(renderersFactory)
 
         val audioAttributes = buildAudioAttributes()
@@ -437,6 +440,9 @@ class PlayerEngine(
         // Remember the refusal so build() does not immediately raise the cap back to its advertised
         // value - the platform claims a capability the sink then rejects.
         forcedChannelCap = next
+        // The same probe gated the stereo upmix, so stop trusting it for that too. A track that
+        // plays as stereo is worth more than one that fails trying to be 5.1.
+        upmixAllowed = false
 
         val position = player?.currentPosition ?: 0L
         val wasPlaying = player?.isPlaying == true
