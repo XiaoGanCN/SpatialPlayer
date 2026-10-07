@@ -388,10 +388,15 @@ class PlayerGestureController(
  *
  * ## The rule now
  *
- * Nothing animates `visibility`. The view stays `VISIBLE` for its whole life and *alpha alone*
- * expresses whether the chrome is showing, so no end callback is needed to establish the hidden
- * state and no stale listener can undo a `show`. `stop()` clears the listener before every new
- * animation so a superseded animation cannot fire an action for a state that no longer applies.
+ * Alpha alone expresses whether the chrome is showing, and `stop()` clears the listener before every
+ * new animation so a superseded animation cannot fire an action for a state that no longer applies.
+ * No stale callback can undo a `show`.
+ *
+ * The one exception is [hide]'s `gone` flag, which parks the faded view at `INVISIBLE` so it stops
+ * taking touches - alpha does not affect hit-testing, and an invisible-but-clickable chrome was the
+ * second half of the same bug. It is safe from the stale-listener trap because `stop()` runs first on
+ * every path, and because `show` always resets the view to `VISIBLE` before looking at its alpha, so
+ * a parked view is un-parked by definition rather than by a callback arriving in the right order.
  */
 object PlayerAnimation {
 
@@ -437,20 +442,43 @@ object PlayerAnimation {
             .start()
     }
 
-    /** Fades the chrome out. Purely alpha; visibility is never touched. */
-    fun hide(view: View, durationMs: Long = 140L, endAction: (() -> Unit)? = null) {
+    /**
+     * Fades the chrome out.
+     *
+     * Alpha is still the state; visibility is never touched *by the animation*. When [gone] is set,
+     * however, the view is made `INVISIBLE` once the fade has finished, and that is the whole reason
+     * the flag exists: a transparent view still receives touches, so a chrome that had faded to
+     * `alpha = 0` kept swallowing taps on Back, Inspect and Metadata - the buttons were invisible but
+     * still clicked, and the gesture layer never saw the touch that should have brought the chrome
+     * back. `INVISIBLE` rather than `GONE` because the view's measured size is what the gesture
+     * controller's viewport and the capsule's placement are computed from.
+     *
+     * It is opt-in because this object is also used for transient overlays - the seek feedback and
+     * the error card - which are deliberately left `VISIBLE` at zero alpha so they keep their place
+     * in the layout.
+     */
+    fun hide(
+        view: View,
+        durationMs: Long = 140L,
+        endAction: (() -> Unit)? = null,
+        gone: Boolean = false,
+    ) {
         stop(view)
         view.visibility = View.VISIBLE
+        val settle: () -> Unit = {
+            if (gone) view.visibility = View.INVISIBLE
+            endAction?.invoke()
+        }
         if (!isShown(view)) {
             view.alpha = 0f
-            endAction?.invoke()
+            settle()
             return
         }
         view.animate()
             .alpha(0f)
             .setDuration(durationMs)
             .setInterpolator(DecelerateInterpolator())
-            .withEndAction { endAction?.invoke() }
+            .withEndAction(settle)
             .start()
     }
 

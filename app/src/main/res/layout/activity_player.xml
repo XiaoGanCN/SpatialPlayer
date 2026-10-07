@@ -56,13 +56,22 @@
         android:textColor="@color/text_primary"
         android:textSize="15sp" />
 
-    <!-- Centre play/pause, shown briefly -->
+    <!--
+      Centre play/pause, shown briefly.
+
+      `invisible`, not just `alpha="0"`: alpha does not affect hit-testing, so a transparent
+      clickable view still takes the touch. This one sits *below* `controlsOverlay` in the draw
+      order, so once the overlay parks itself at `INVISIBLE` (see `PlayerActivity.hideControls`)
+      this would be the next thing to catch a tap aimed at the capsule - and with the chrome hidden
+      that would toggle play/pause out of nowhere.
+    -->
     <ImageButton
         android:id="@+id/centerPlayPause"
         android:layout_width="66dp"
         android:layout_height="66dp"
         android:layout_gravity="center"
         android:alpha="0"
+        android:visibility="invisible"
         android:background="@drawable/bg_glass_button"
         android:contentDescription="@string/play"
         android:padding="17dp"

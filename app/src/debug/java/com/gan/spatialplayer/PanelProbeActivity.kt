@@ -19,7 +19,13 @@ class PanelProbeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Both probes are triggered here rather than from a broadcast by the host: the receiver is
+        // registered dynamically, for the actions it names, so a `sendBroadcast` from adb reaches it
+        // only if the filter lists that action - and this shim is the one place that has to be kept
+        // in step with the receiver instead of two.
         sendBroadcast(Intent(PanelProbeReceiver.ACTION).setPackage(packageName))
+        sendBroadcast(Intent(PanelProbeReceiver.ACTION_CHROME_TOUCH).setPackage(packageName))
+        sendBroadcast(Intent(PanelProbeReceiver.ACTION_GEOMETRY).setPackage(packageName))
         finish()
     }
 }

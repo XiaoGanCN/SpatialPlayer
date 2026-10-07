@@ -79,6 +79,16 @@ class AmbientGlowView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * The rectangle the wash is currently drawing around, for the debug geometry probe.
+     *
+     * This is what a rotation has to keep in step with the player view: the wash is drawn *in the
+     * bands this rect leaves empty*, so a rect left over from the previous orientation puts the glow
+     * on top of the picture. Reported out of bounds three times, so it is measured rather than
+     * eyeballed.
+     */
+    internal fun videoRectForTest(): Rect? = videoRect?.let { Rect(it) }
+
     /** New edge samples. Colours are blended over [DURATION_MS] so the wash drifts. */
     fun setEdgeColors(top: Int, bottom: Int, left: Int, right: Int) {
         if (!glowEnabled) return

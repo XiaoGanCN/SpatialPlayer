@@ -34,6 +34,14 @@ import com.gan.spatialplayer.ui.InspectorSheet
 class PanelProbeReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_CHROME_TOUCH) {
+            probeChromeTouch()
+            return
+        }
+        if (intent.action == ACTION_GEOMETRY) {
+            probeGeometry(context)
+            return
+        }
         trigger()
     }
 
@@ -41,6 +49,20 @@ class PanelProbeReceiver : BroadcastReceiver() {
         private const val TAG = "PanelProbe"
 
         const val ACTION = "com.gan.spatialplayer.debug.PANEL_PROBE"
+
+        /**
+         * Exercises the chrome's touch path instead of its panels.
+         *
+         * Separate action because it is a different question: what happens when the chrome has timed
+         * out and the user taps where one of its buttons used to be. See [probeChromeTouch].
+         */
+        const val ACTION_CHROME_TOUCH = "com.gan.spatialplayer.debug.CHROME_TOUCH"
+
+        /**
+         * Reports the picture geometry the ambient wash is drawing with. Used by
+         * `tools/verify-rotation.sh` after each rotation.
+         */
+        const val ACTION_GEOMETRY = "com.gan.spatialplayer.debug.GEOMETRY"
 
         /**
          * Every panel whose rows the activity supplies, with the label its tab shows.
@@ -110,8 +132,108 @@ class PanelProbeReceiver : BroadcastReceiver() {
             return lines.joinToString("; ") + " closed=${if (closed) "yes" else "no"}"
         }
 
+        /**
+         * What happens when the chrome has timed out and the user taps where a button used to be.
+         *
+         * The bug: the chrome faded to `alpha = 0` but stayed `VISIBLE`, and a transparent view still
+         * takes touches. The tap went to the invisible button rather than becoming a gesture, so
+         * nothing appeared to happen and the chrome did not come back either - reported as "these
+         * buttons are dead".
+         *
+         * Two things are measured, both properties of the real activity rather than of a synthetic
+         * event:
+         *
+         *  * `routed` - the predicate `dispatchTouchEvent` branches on, asked about the point the
+         *    More button occupies. It must be true while the chrome is up and false once it has timed
+         *    out, because that is what sends the tap to the gesture layer.
+         *  * `parked` - the overlay has actually left the touch path. Alpha alone does not do that.
+         *
+         * The button's own action is exercised as the control: if `opened` were false with the chrome
+         * up, the probe would be measuring nothing.
+         */
+        private fun probeChromeTouch() {
+            val activity = PlayerActivity.instance
+            if (activity == null) {
+                report("chrome-touch error=no_activity")
+                return
+            }
+
+            activity.showControlsTemporarilyForTest()
+            activity.window.decorView.post {
+                val visible = activity.controlsShownForTest()
+                val more = activity.controlCentreForTest(moreButtonOf(activity))
+                val routedVisible = activity.routesToControlsForTest(
+                    more[0].toFloat(),
+                    more[1].toFloat(),
+                )
+                activity.tapMoreForTest()
+                val opened = activity.overflowSheetOpenForTest()
+
+                activity.window.decorView.postDelayed(
+                    {
+                        activity.overflowSheetCloseForTest()
+                        activity.hideControlsForTest()
+                        activity.window.decorView.postDelayed(
+                            {
+                                val hidden = !activity.controlsShownForTest()
+                                val parked = !activity.controlsTouchableForTest()
+                                val routedHidden = activity.routesToControlsForTest(
+                                    more[0].toFloat(),
+                                    more[1].toFloat(),
+                                )
+                                report(
+                                    "chrome-touch visible=$visible routedVisible=$routedVisible " +
+                                        "opened=$opened hidden=$hidden parked=$parked " +
+                                        "routedHidden=$routedHidden",
+                                )
+                                activity.hideControlsForTest()
+                            },
+                            HIDE_SETTLE_MS,
+                        )
+                    },
+                    SHEET_SETTLE_MS,
+                )
+            }
+        }
+
+        /**
+         * The picture geometry, after a settle delay so a pending layout or geometry pass has run.
+         *
+         * Posted rather than read immediately: a rotation schedules its recompute on the next frame
+         * (see `PlayerActivity.scheduleVideoRectRefresh`), so reading at once would measure the
+         * intermediate state and report a failure that no user would ever see.
+         */
+        private fun probeGeometry(context: Context) {
+            val activity = PlayerActivity.instance
+            if (activity == null) {
+                report("geometry error=no_activity")
+                return
+            }
+            activity.window.decorView.postDelayed(
+                { report("geometry :: " + activity.ambientGeometryForTest()) },
+                GEOMETRY_SETTLE_MS,
+            )
+        }
+
+        /**
+         * Long enough for `PanelProbeActivity`'s `finish()` to complete and the player to be the
+         * resumed activity again.
+         *
+         * This is not padding. The probe shim is a full-screen activity, so while it is finishing the
+         * view tree is being re-laid out, and a reading taken inside that window described a capsule
+         * 1100 px lower than the one the placement code had just computed - which looked exactly
+         * like a layout bug and was not one.
+         */
+        private const val GEOMETRY_SETTLE_MS = 2_500L
+
+        private fun moreButtonOf(activity: PlayerActivity): android.view.View =
+            activity.findViewById(R.id.buttonMore)
+
         private fun report(data: String) {
             Log.i(TAG, "panel probe :: $data")
         }
+
+        private const val SHEET_SETTLE_MS = 600L
+        private const val HIDE_SETTLE_MS = 500L
     }
 }

@@ -138,6 +138,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private var refreshJob: Job? = null
     private var isScrubbing = false
 
+    /** Guards the one-shot recompute `onConfigurationChanged` schedules; see [scheduleVideoRectRefresh]. */
+    private var videoRectRefreshPosted = false
+
     /** The debug-only panel probe's receiver, so it can be unregistered with the activity. */
     private var panelProbeReceiver: BroadcastReceiver? = null
 
@@ -252,11 +255,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         gesturesReady = true
 
-        // Where the picture sits is a function of the player view's size, and the only reliable
-        // moment to recompute it is when that size actually changes. Posting from
-        // `onConfigurationChanged` instead raced the layout pass: the posted run could still see the
-        // pre-rotation width, which left the ambient wash drawn for the old orientation - the bands
-        // landed on top of the picture instead of in the letterbox.
+        // Where the picture sits is a function of the player view's size, so a genuine size change is
+        // a reason to recompute. Note that this fires *before* the new geometry can be read during a
+        // rotation, which is why `onConfigurationChanged` also schedules a refresh rather than
+        // relying on this listener - see `scheduleVideoRectRefresh`.
         binding.playerView.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
             if (r - l != or - ol || b - t != ob - ot) updateVideoRect()
         }
@@ -741,7 +743,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun hideControls() {
-        PlayerAnimation.hide(binding.controlsOverlay)
+        // `gone = true` parks the overlay at `INVISIBLE` once it has faded, so its buttons stop
+        // taking touches. Without it a tap on the (invisible) Back, Inspect or Metadata button was
+        // delivered to the button instead of starting a gesture, so nothing appeared to happen.
+        PlayerAnimation.hide(binding.controlsOverlay, gone = true)
     }
 
     private var hideControlsRunnable: Runnable? = null
@@ -1069,10 +1074,23 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             val capsuleHeight = capsule.height
             if (height <= 0 || capsuleHeight <= 0) return@post
 
-            // Room left between the top of the window and the top of the capsule, so a picture that
-            // sits high on the screen cannot push the chrome out through the status bar.
-            val headroom = (height - capsuleHeight).coerceAtLeast(0)
-            val below = (height - rect.bottom).coerceAtLeast(0)
+            // Everything here is in the overlay's own coordinates, and the overlay fills the
+            // *window* - which is taller than the display on this device because the app draws
+            // behind the navigation bar (measured: window 2560 against a display of 2497). Laying
+            // the capsule out against the window's bottom edge therefore put its lower 63 px under
+            // the navigation bar, where it cannot be touched; reported as the chrome being "out of
+            // bounds". The bars are measured rather than assumed, because the inset changes with
+            // rotation and with the bars being hidden or shown.
+            val bars = ViewCompat.getRootWindowInsets(overlay)
+                ?.getInsets(WindowInsetsCompat.Type.systemBars())
+            val barTop = bars?.top ?: 0
+            val barBottom = bars?.bottom ?: 0
+            val usable = (height - barTop - barBottom).coerceAtLeast(capsuleHeight)
+
+            // Room left between the top of the usable area and the top of the capsule, so a picture
+            // that sits high on the screen cannot push the chrome out through the status bar.
+            val headroom = (usable - capsuleHeight).coerceAtLeast(0)
+            val below = (usable - barTop - rect.bottom).coerceAtLeast(0)
             val target = (below + dp(CHROME_VIDEO_INSET_DP)).coerceIn(0, headroom)
 
             val lp = capsule.layoutParams as? ViewGroup.MarginLayoutParams ?: return@post
@@ -1101,10 +1119,27 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // A first pass so anything that can be answered from the current geometry is not left stale
-        // until the next layout. The real work happens in the layout listener below: at this point
-        // the player view has not been re-measured, so `container.width/height` are still the
-        // pre-rotation values and anything derived from them is wrong.
+        // until the next layout. It is *not* trusted: at this point the player view has not been
+        // re-measured, so `container.width/height` are still the pre-rotation values and the rect
+        // derived from them is wrong - measured, that is a 16:9 picture drawn as a 424-pixel-wide
+        // band in a 1096-pixel window.
         updateVideoRect()
+        // So the authoritative pass is scheduled rather than inferred. It used to depend on the
+        // player view's layout-change listener firing afterwards, which is a property of how
+        // SurfaceView resizes - and the wash was reported out of bounds after a rotation three
+        // times, so that inference has not held. Two passes are enough and harmless: the second
+        // computes the same rect and `updateVideoRect` is idempotent.
+        scheduleVideoRectRefresh()
+    }
+
+    /** Recomputes the picture geometry once the rotation's layout has settled. */
+    private fun scheduleVideoRectRefresh() {
+        if (videoRectRefreshPosted) return
+        videoRectRefreshPosted = true
+        binding.playerView.post {
+            videoRectRefreshPosted = false
+            if (!isFinishing && !isDestroyed) updateVideoRect()
+        }
     }
 
     override fun onResume() {
@@ -1121,8 +1156,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 // EXPORTED because the sender is `adb shell am broadcast`, a different uid from the
                 // app. One of the two flags is mandatory from API 34 - without either the
                 // registration throws and takes the activity down with it, which is how this was
-                // found. The action exists only in debug builds.
-                registerReceiver(it, IntentFilter(PanelProbeReceiver.ACTION), RECEIVER_EXPORTED)
+                // found. Both probe actions are listed: a dynamically registered receiver only hears
+                // the actions it named, which is why the second probe was silent until it was added.
+                registerReceiver(
+                    it,
+                    IntentFilter().apply {
+                        addAction(PanelProbeReceiver.ACTION)
+                        addAction(PanelProbeReceiver.ACTION_CHROME_TOUCH)
+                        addAction(PanelProbeReceiver.ACTION_GEOMETRY)
+                    },
+                    RECEIVER_EXPORTED,
+                )
             }
         }
         instance = this
@@ -1858,6 +1902,135 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     /** The sheet itself, for a probe that has to read what it rendered. */
     internal fun sheetForTest() = inspectorSheet
+
+    /** Reveals the chrome with its idle countdown, the same call every interaction makes. */
+    internal fun showControlsTemporarilyForTest() = showControlsTemporarily()
+
+    /** Takes the chrome away the way the idle countdown does. */
+    internal fun hideControlsForTest() = hideControls()
+
+    /**
+     * True while the chrome is on screen, so a probe can tell a real hide from a pending fade.
+     *
+     * Read through [PlayerAnimation.isShown] rather than from `visibility` alone: hiding is alpha
+     * first and `INVISIBLE` only once the fade has finished, so `visibility` is `VISIBLE` for the
+     * whole animation.
+     */
+    internal fun controlsShownForTest(): Boolean =
+        PlayerAnimation.isShown(binding.controlsOverlay)
+
+    /** Whether the chrome has parked itself out of the touch path yet. */
+    internal fun controlsTouchableForTest(): Boolean =
+        binding.controlsOverlay.visibility == View.VISIBLE
+
+    /**
+     * Whether a touch at this point would be routed to a chrome control rather than to a gesture.
+     *
+     * This is the predicate `dispatchTouchEvent` actually branches on, exposed so a probe can assert
+     * on it directly. A synthetic `MotionEvent` is not a substitute: it carries no real pointer state
+     * and `ViewGroup` hit-testing rejects it, so the probe read `opened=false` even while the button
+     * was on screen and would have accepted a real tap.
+     */
+    internal fun routesToControlsForTest(x: Float, y: Float): Boolean =
+        isInsideControls(x, y) || isInsideChips(x, y)
+
+    /** Screen centre of a view, so a probe can ask about the point a tap would land on. */
+    internal fun controlCentreForTest(view: View): IntArray {
+        val location = IntArray(2)
+        view.getLocationOnScreen(location)
+        return intArrayOf(location[0] + view.width / 2, location[1] + view.height / 2)
+    }
+
+    /** True while the overflow sheet is up, as the observable result of tapping the More button. */
+    internal fun overflowSheetOpenForTest(): Boolean = overflowSheet.isOpen
+
+    /** Closes the overflow sheet between probe steps. */
+    internal fun overflowSheetCloseForTest() = overflowSheet.hide()
+
+    /** The More button's own action, for the probe's control case: it must open the sheet. */
+    internal fun tapMoreForTest() = binding.buttonMore.performClick()
+
+    /**
+     * A description of the picture geometry the ambient wash is using, against what it should be.
+     *
+     * Reported as numbers because the failure is invisible in a screenshot on dark footage - the wash
+     * is a dim gradient and the picture is mostly dark, so "out of bounds" reads as "nothing is
+     * wrong". A stale rect is unambiguous as coordinates.
+     */
+    internal fun ambientGeometryForTest(): String {
+        val container = binding.playerView
+        val size = videoSize
+        val expected = if (size != null && size.width > 0 && size.height > 0) {
+            VideoRectCalculator.compute(
+                containerWidth = container.width,
+                containerHeight = container.height,
+                videoWidth = size.width,
+                videoHeight = size.height,
+                pixelWidthHeightRatio = size.pixelWidthHeightRatio,
+                rotationDegrees = 0,
+                mode = scaleMode,
+                userZoom = userZoom,
+            )
+        } else {
+            null
+        }
+        val actual = binding.ambientGlow.videoRectForTest()
+        val matches = actual != null && expected != null &&
+            actual.left == expected.left && actual.top == expected.top &&
+            actual.right == expected.right && actual.bottom == expected.bottom
+        // Dimensions are printed explicitly rather than only as a rect: a shell parser for
+        // "[0,972][1096,1588]" got the numbers wrong once already, and a wrong parser here reports a
+        // failure that is not there.
+        val rectSize = actual?.let { "${it.width()}x${it.height()}" } ?: "none"
+        // The capsule is positioned from the same rect (`positionChromeOverPicture`), and "out of
+        // bounds" describes it at least as well as the wash: it is lifted to sit just inside the
+        // picture's bottom edge, so a rect that is still the old orientation's puts it somewhere
+        // else entirely. Its bounds and the top bar's are reported so the suite can check what
+        // "inside the window" means for both.
+        val capsuleLoc = IntArray(2)
+        binding.controlGlass.getLocationOnScreen(capsuleLoc)
+        val capsule = "capsule=${capsuleLoc[0]},${capsuleLoc[1]}," +
+            "${capsuleLoc[0] + binding.controlGlass.width}," +
+            "${capsuleLoc[1] + binding.controlGlass.height}"
+        val topBarLoc = IntArray(2)
+        binding.buttonBack.getLocationOnScreen(topBarLoc)
+        val topBarBottom = topBarLoc[1] + binding.buttonBack.height
+        // The overlay's own frame, because the capsule is positioned against it: a capsule that is
+        // laid out from the wrong parent edge is a different bug from a wrong margin.
+        val overlayLoc = IntArray(2)
+        binding.controlsOverlay.getLocationOnScreen(overlayLoc)
+        val overlay = "overlay=${overlayLoc[0]},${overlayLoc[1]}," +
+            "${binding.controlsOverlay.width}x${binding.controlsOverlay.height}"
+        val margin = (binding.controlGlass.layoutParams as? ViewGroup.MarginLayoutParams)
+            ?.bottomMargin ?: -1
+        val capsuleLoc2 = IntArray(2)
+        binding.controlGlass.getLocationOnScreen(capsuleLoc2)
+        val capsuleBottom = capsuleLoc2[1] + binding.controlGlass.height
+        val rootLoc = IntArray(2)
+        binding.root.getLocationOnScreen(rootLoc)
+        val windowSize = "window=${binding.root.width}x${binding.root.height}" +
+            "@${rootLoc[0]},${rootLoc[1]}"
+        val display = resources.displayMetrics
+        // What "inside the screen" means: the window is not the display here, so a check against the
+        // window height would pass a capsule laid out underneath the navigation bar. Measured:
+        // window 2560 against display 2497, which is exactly the gap that hid the lower 63 px.
+        val bars = ViewCompat.getRootWindowInsets(binding.root)
+            ?.getInsets(WindowInsetsCompat.Type.systemBars())
+        // The window is the coordinate space; the display is what the user can touch. When the window
+        // is taller than the display (it draws behind the bars) the capsule must still end above the
+        // display's bottom, so that - not the window height - is the limit.
+        val usableBottom = minOf(
+            binding.root.height - (bars?.bottom ?: 0),
+            display.heightPixels,
+        )
+        return "container=${container.width}x${container.height} size=$rectSize " +
+            "glow=${actual?.flattenToString() ?: "null"} " +
+            "expected=${expected?.flattenToString() ?: "null"} matches=$matches " +
+            "$capsule capsuleBottom=$capsuleBottom margin=$margin $overlay $windowSize " +
+            "display=${display.widthPixels}x${display.heightPixels} " +
+            "navBottom=${bars?.bottom ?: 0} usableBottom=$usableBottom " +
+            "topBarBottom=$topBarBottom"
+    }
 
     override fun onSheetClosed() {
         showControlsTemporarily()

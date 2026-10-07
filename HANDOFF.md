@@ -326,6 +326,53 @@ already stopped when the question was left open is one whose picture the user ca
 `onResume` clears the flag, and `onPause` deliberately does **not** set it — that is where a retry
 timer went wrong once already, pausing the film during a transient `onPause` at launch.
 
+### 4.13 Alpha does not affect hit-testing, and this screen hid three controls behind that
+`ViewPropertyAnimator.alpha(0)` leaves the view `VISIBLE`, clickable, and first in line for a touch.
+Every "the chrome is hidden" state in this player is alpha, so a faded chrome kept eating taps: pressing
+where Back / Inspect / Metadata sat did nothing visible, and the gesture layer never saw the touch that
+should have brought the chrome back. Worse, `centerPlayPause` is declared *below* the overlay, so once
+the overlay was parked it was next in line - a tap on a capsule button would have toggled play/pause
+instead.
+
+The rule: a view hidden by alpha that can also take a touch must be parked at `INVISIBLE`.
+`PlayerAnimation.hide(..., gone = true)` does that once the fade ends, and it is safe from the shared
+-`ViewPropertyAnimator` trap in §3.4 because `stop()` clears the listener first and `show()` always
+resets `visibility` before reading alpha. `tools/verify-rotation.sh` asserts both halves through
+`PanelProbeReceiver`'s chrome probe: `routedVisible=true` (a tap on the button goes to the button) and
+`routedHidden=false` + `parked=true` (once the chrome times out, the same point is a gesture again).
+
+Note what a synthetic `MotionEvent` is not: feeding one to `dispatchTouchEvent` produced `opened=false`
+even with the button on screen and clickable, because `ViewGroup` hit-testing rejects an event with no
+real pointer state. Assert the routing predicate instead.
+
+### 4.14 The window is taller than the display, and the capsule was laid out against the window
+Measured in portrait: `window=1096x2560` against `display=1096x2497`, because the app draws behind the
+navigation bar. The control capsule is the last child of the controls overlay and is positioned with a
+`bottomMargin`, so a margin computed from the *window* height puts its lower 63 px under the navigation
+bar - visible as chrome hanging off the bottom of the screen. `positionChromeOverPicture` now subtracts
+the measured system-bar insets, and reports the target it computed rather than only the margin.
+
+Two things went wrong on the way to finding that, both worth not repeating. Reading a view's position
+back immediately after changing its layout params returns the **pre-layout** frame - and on API 34+
+`View.post` runs inside the same traversal, so even a posted readback is too early; it reported a
+capsule 1163 px below where the placement code had just put it, which looks exactly like a layout bug
+and is not one. And a probe activity that `finish()`es leaves the tree mid-layout for a moment, so a
+reading taken then is about the probe, not the player. When the numbers and the pixels disagree, take
+the screenshot.
+
+### 4.15 `refresh()` and "already loaded" must agree about who owns the data
+`MainActivity.refresh()` rebuilt the library from MediaStore and the granted folder and called
+`publish`, which begins with `entries.clear()`. Poweramp's rows had been merged into that same list, so
+a refresh deleted all 140 of them - while `powerampLoaded` stayed `true`, which made the chip take its
+"already in `entries`, no need to re-read" branch and open a permanently empty fold.
+
+The fix is ownership: Poweramp's rows live in `powerampEntries`, which a refresh merges back in (and
+re-reads, so music added since does show up). Two related traps are closed with it: an open fold
+persisted across launches is now filled by `loadPowerampLibrary()` rather than only re-opened, and an
+empty read does **not** set `powerampLoaded`, because `PowerampReader` turns a provider failure into an
+empty list with `runCatching` - so latching on empty made "could not read" indistinguishable from "no
+music", permanently.
+
 ## 5. Reference UI geometry (measured from the user's screenshot)
 
 User's screenshot: 2016 px wide → device 1096 px ⇒ **×0.5437**; then ÷2.625 for dp.
@@ -358,8 +405,10 @@ the full native text that no log line produced.
 | `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
 | `tools/verify-background.sh` | 7 | audio survives HOME and screen-off, video does not. `SKIP_SCREEN_OFF=1` skips the two screen-off checks (§3.13) |
 | `tools/verify-panels.sh` | 11 | every inspector panel renders its rows however it was reached |
+| `tools/verify-rotation.sh` | 12 | the picture rect, and the chrome's touch path, survive a rotation |
 
-**112 checks total.** `verify-panels.sh` is 11 of 11. `verify-background.sh` passes the check that was
+**124 checks total.** `verify-panels.sh`, `verify-rotation.sh` and `verify-gestures.sh` are
+fully passing; `verify-background.sh` passes the check that was
 open for the whole life of this document — video pauses on HOME — when run with `SKIP_SCREEN_OFF=1`;
 without it, this phone's lock screen takes window focus during the screen-off phase and the following
 checks cannot see the app at all (§3.13). `tools/png_reader.py` is a dependency-free PNG reader shared
@@ -633,6 +682,10 @@ glass revamp). This is the short version, so the state of the project can be rea
   `empty=yes` on all six panels, which is the reported symptom exactly.
 - Head tracking is live at 5.1 with the upmix in the chain, and the background policy is settings-
   driven for both music and anything with a picture.
+- The chrome's controls work after the idle timeout, and the picture geometry survives a rotation in
+  both directions (`tools/verify-rotation.sh`, 12 checks).
+- Poweramp's library survives a refresh, and an open Poweramp fold is filled when the app is
+  relaunched rather than only re-opened.
 
 ### The harnesses
 
@@ -666,11 +719,9 @@ Format: `- [ ] **What** — where it lives / how to tell it is done.`
 Struck-out items stay in place with the measurement that closed them, because the next person needs to
 know what was already tried and what the device actually did.
 
-### Known-broken or unfinished
+### Known broken
 
-- [x] **Video does not pause when the app is backgrounded (HOME)** — fixed in `PlayerActivity`
-      (`onStop` records the open question, `onEngineTracksChanged` answers it). Measured passing:
-      `playing before: PLAYING(3); after HOME: PAUSED(2)`. Details in §4.12; do not add a retry timer.
+Things that do not work. Each says how to tell it is done.
 
 - [ ] **This phone's lock screen keeps window focus after `KEYCODE_SLEEP`/`WAKEUP`, which stops
       `verify-background.sh` measuring its screen-off checks.**
@@ -691,6 +742,56 @@ know what was already tried and what the device actually did.
       actually headset-side (`com.sony.songpal` is installed, and the 1000X does its own tracking -
       check the headphones app first, because nothing on the phone would change that).
 
+- [ ] **Film mentioned in 4.4 still failed to decode/playback** File `/Volumes/Storage/Not Assigned/Lost6815751/Movies/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`, nothing on the screen when playing.
+
+### Unfinished & Issues
+
+Work that is wanted but not started, or that works and is not right yet.
+
+- [x] **Video does not pause when the app is backgrounded (HOME)** — fixed in `PlayerActivity`
+      (`onStop` records the open question, `onEngineTracksChanged` answers it). Measured passing:
+      `playing before: PLAYING(3); after HOME: PAUSED(2)`. Details in §4.12; do not add a retry timer.
+
+- [x] **Panels show nothing when switched from another page** — fixed: the sheet now pulls each
+      panel's rows through `onPanelShown` instead of relying on whoever opened it to have pushed them.
+      `tools/verify-panels.sh` 11/11. Details in §4.11.
+
+- [x] **Back / Inspector / Metadata have no effect once the controls time out** — fixed: a transparent
+      view still takes touches, so the chrome now parks itself at `INVISIBLE` when it fades
+      (`hideControls(gone = true)`), and the invisible-but-clickable `centerPlayPause` that sat under
+      it is `invisible` in the layout. Measured through `PanelProbeReceiver`'s chrome probe:
+      `routedVisible=true opened=true hidden=true parked=true routedHidden=false`.
+
+- [x] **Ambient glow out of bounds when switching between portrait and landscape** — verified rather
+      than changed: `tools/verify-rotation.sh` reads the rect the wash is *drawing with* and compares it
+      with the one the current container implies, and it matches through portrait → landscape →
+      portrait → the other landscape → portrait. The recompute after a rotation is now scheduled
+      instead of inferred from a `SurfaceView` layout callback, so it no longer depends on how the
+      surface happens to resize. The capsule was measured against a screenshot as well, because
+      `getLocationOnScreen` cannot be read back reliably while a probe activity is finishing.
+
+- [x] **Poweramp playlist shows empty after refresh** — root-caused and fixed. `refresh()` rebuilt the
+      list from MediaStore and the granted folder only, so `publish`'s `entries.clear()` took all 140
+      Poweramp rows with it, while `powerampLoaded` stayed `true` and told the chip there was nothing to
+      re-read. Poweramp's rows are now held in their own field that a refresh merges back in, the chip
+      re-reads on every open, a persisted open fold is filled on launch, and an empty read no longer
+      latches "loaded" (which had made a failed read look like an empty library, permanently).
+
+- [ ] **Setting icon at `ImageButton` need rework** The library header's gear reads as a smudge at
+      24 dp: three slider bars whose gaps are the knobs, so the bars vanish into the track. Replace
+      with something legible at 24 dp and look at it rendered, not as a vector source.
+
+- [ ] **Launcher icon needs a real double-check.** Earlier attempts were rejected as "nearly
+      unusable"; whatever replaces them must be looked at as a rendered icon at real sizes, not as a
+      vector source. `app/src/main/res/mipmap-*/`.
+
+- [ ] **Add double click reset and editable values for sliders** Both editors build sliders in code
+      (`InspectorSheet.sliderRow`, and the Settings screen). A double tap should restore the default
+      and the reading should be typeable. `SliderRow` currently fires `onChoiceSelected` on every drag
+      frame, which is why the value cannot be edited in place.
+
+- [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
+
 - [ ] **Glass refresh is ~11 Hz on the player, against a reference that runs at display rate.**
       `LiquidGlassView` polls `PixelCopy` every `REFRESH_MS = 90`. Closing the gap means changing *how*
       the backdrop is obtained, not tuning the timer - and every alternative (TextureView) gives up HDR
@@ -702,24 +803,6 @@ know what was already tried and what the device actually did.
       window is an SDR `V0_SRGB` layer, so chrome over the picture is tone-mapped *against* it by
       SurfaceFlinger. Answer with the layer dump in §4.10 rather than attempting it. Still unanswered
       as a design question, not as a bug.
-
-- [ ] **Launcher icon needs a real double-check.** Earlier attempts were rejected as "nearly
-      unusable"; whatever replaces them must be looked at as a rendered icon at real sizes, not as a
-      vector source. `app/src/main/res/mipmap-*/`.
-      
-- [ ] **Film mentioned in 4.4 still failed to decode/playback** File `/Volumes/Storage/Not Assigned/Lost6815751/Movies/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`, nothing on the screen when playing.
-
-- [ ] **Setting icon at `ImageButton` need rework** This should be self-explanatory.
-
-- [ ] **Poweramp playlist shows empty after refresh** Correctly show `140·1 folders Poweramp` when first launch, shows empty after refresh, root cause not find yet.
-
-- [ ] **Add double click reset and editable values for sliders** This should be self-explanatory.
-
-- [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
-
-- [ ] **'Back', 'Inspector' and 'Metadata' button in player screen are out of bounds when controls timeout and pressing these buttons have no effect**
-
-- [ ] **Ambient glow out of bounds when switching between portrait mode and landscape mode** The third time this thing is broken
 
 - [ ] **`README.md` must stay terse.** No excessive explanation. It is currently stale with respect to
       the settings screen, the upmix matrix and the media session.

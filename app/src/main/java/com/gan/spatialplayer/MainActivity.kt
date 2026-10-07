@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.provider.Settings
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -77,8 +78,21 @@ class MainActivity : AppCompatActivity() {
     private val entries = ArrayList<FileEntry>()
     private var scopedFolderUri: Uri? = null
 
-    /** Poweramp's provider is queried once; after that the fold just filters what is already here. */
+    /**
+     * Poweramp's rows, kept aside so a refresh cannot lose them.
+     *
+     * They used to live only inside the merged [entries], and [refresh] rebuilds that list from
+     * MediaStore and the granted folder - so pressing refresh dropped all 140 of them, while
+     * [powerampLoaded] stayed `true` and told the chip there was nothing to re-read. The fold then
+     * showed its empty state for the rest of the activity's life. Holding them here means "refresh"
+     * means "re-read the sources we know about", not "forget the one we are not re-reading".
+     */
+    private var powerampEntries: List<FileEntry> = emptyList()
+
+    /** True once Poweramp has answered with rows; see [loadPowerampLibrary]. */
     private var powerampLoaded = false
+
+    private val tag = "MainActivity"
 
     private val requestMediaPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -320,10 +334,33 @@ class MainActivity : AppCompatActivity() {
 
             scopedFolderUri?.let { collected += repository.fromTree(it) }
 
+            // Re-read Poweramp as well when the fold has already been opened. Without this the
+            // refresh silently dropped the music: the list above holds only MediaStore and folder
+            // rows, so `entries.clear()` inside `publish` took every Poweramp row with it. Re-reading
+            // rather than re-appending the cached rows is deliberate - "refresh" should pick up music
+            // added since, and it converges even if a cheap lossless merge would be enough.
+            if (powerampLoaded) {
+                val result = poweramp.readLibrary()
+                powerampEntries = result.entries
+                if (result.entries.isEmpty()) {
+                    // An empty answer means the read failed, not that the library is empty; see
+                    // loadPowerampLibrary. Leaving the flag set would hide the fold's retry path.
+                    powerampLoaded = false
+                }
+            }
+
+            collected += powerampEntries
             publish(collected)
         }
     }
 
+    /**
+     * Reads Poweramp's library into [powerampEntries], which is what [refresh] merges in.
+     *
+     * Deliberately does not `publish` on its own: both entry points into the data - the initial load
+     * and a refresh - build one list and publish it once, so there is a single place where the three
+     * sources are combined. Two publishers racing was a second way to lose the music.
+     */
     private fun loadPowerampLibrary() {
         // Without audio access Poweramp's files cannot be opened, so ask before trying.
         val audioGranted = ContextCompat.checkSelfPermission(
@@ -339,11 +376,15 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = poweramp.readLibrary()
             showToast(result.status)
-            powerampLoaded = true
-            // Merged into the same store as everything else; which of them is on screen is decided by
-            // the filter, so the two libraries cannot drift apart.
-            val merged = ArrayList<FileEntry>(result.entries)
-            merged += entries.filter { it.source != FileEntry.Source.POWERAMP }
+            powerampEntries = result.entries
+            // `runCatching` inside the reader turns a provider failure into an empty list, so an empty
+            // result is "could not read", not "no music". Latching `true` on it is what made the chip
+            // refuse to try again - the fold opened onto a permanent empty state.
+            powerampLoaded = result.entries.isNotEmpty()
+            if (!powerampLoaded) Log.w(tag, "poweramp returned no rows; the fold will retry")
+
+            val merged = ArrayList<FileEntry>(entries.filter { it.source != FileEntry.Source.POWERAMP })
+            merged += powerampEntries
             publish(merged)
         }
     }
@@ -365,19 +406,24 @@ class MainActivity : AppCompatActivity() {
             // have been granted yet, so the fold opens first and fills in when the read lands.
             if (folded == Fold.POWERAMP) {
                 setFold(Fold.NONE, animate = true)
-            } else if (powerampLoaded) {
-                setFold(Fold.POWERAMP, animate = true)
             } else {
                 setFold(Fold.POWERAMP, animate = true)
+                // Re-reads even when it is already loaded. It used to skip the read on the theory
+                // that the rows were already in `entries`, which stopped being true the moment
+                // anything called `refresh` - the chip then opened onto a permanently empty fold.
+                // One provider query on each open is cheap next to a fold that cannot show its
+                // contents.
                 loadPowerampLibrary()
             }
         }
 
         val restored = prefs.getString(KEY_FOLDED, null)
-        setFold(
-            runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.NONE),
-            animate = false,
-        )
+        val initialFold = runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.NONE)
+        setFold(initialFold, animate = false)
+        // A fold that was left open comes back open, so it also has to come back *filled*: the
+        // restore used to call `setFold` alone, so a fresh process opened onto an empty Poweramp
+        // fold that only a tap-away-and-back would populate.
+        if (initialFold == Fold.POWERAMP) loadPowerampLibrary()
 
         // Where the chip docks depends on where the status chips ended up, which is only known after
         // a layout pass - and it changes again on rotation or a font-scale change. Recompute from the
