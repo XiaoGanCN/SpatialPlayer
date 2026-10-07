@@ -717,6 +717,10 @@ know what was already tried and what the device actually did.
 
 - [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
 
+- [ ] **'Back', 'Inspector' and 'Metadata' button in player screen are out of bounds when controls timeout and pressing these buttons have no effect**
+
+- [ ] **Ambient glow out of bounds when switching between portrait mode and landscape mode** The third time this thing is broken
+
 - [ ] **`README.md` must stay terse.** No excessive explanation. It is currently stale with respect to
       the settings screen, the upmix matrix and the media session.
 
