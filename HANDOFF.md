@@ -335,6 +335,90 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
 
 ---
 
+## 6b. Quickfix round: background audio, chips, header, covers, fonts, and the upmix matrix
+
+### Background playback and the media session
+
+`media/PlaybackEngine.kt` is a process-wide holder, `PlaybackService.kt` is a `MediaSessionService`,
+and `PlayerActivity` no longer owns the engine's lifetime. Music is allowed to outlive the screen;
+nothing else is.
+
+* **The policy is one predicate**: `engine.hasVideo` decides whether `onPause`/`onStop` pause. It
+  reads the *selected tracks*, not the mime type, because a Matroska file may hold either and the
+  container says nothing. Verified on device: a six-channel audio-only MKV reported
+  `state=PLAYING(3)` with the position advancing `8908 -> 17932` across ten seconds with the screen
+  off, and a video paused on HOME.
+* **`AudioProcessor.configure` is not the only thing that must not throw** - so is nothing here, but
+  the same lesson applied twice in this file's history.
+* The service does **not** own the player. The activity still drives the engine directly (chapters,
+  tracks, spatial controls), and routing all of that through a `MediaController` would have been a
+  much larger change for no gain in a single-process app. The service's job is the session and the
+  notification, and it re-points itself at the new player whenever the engine rebuilds - a rebuild
+  creates a *new* `ExoPlayer`, so a session holding the old one would show dead transport controls.
+* Two bugs found by reviewing this rather than by running it: `PlaybackEngine.acquire` originally
+  applied its listener only when it *created* the engine, so a screen reopening onto a running engine
+  got no callbacks at all and would have sat on stale state with no error anywhere; and the service
+  was left started after a video was closed, claiming a notification slot for nothing.
+* `POST_NOTIFICATIONS` is requested on the library screen. Without it the player still runs in the
+  background - measured - but there is no transport control and no entry to tap, which is most of the
+  point. `startForegroundCount` was 0 before the permission was granted; **this is the one thing in
+  this round not yet re-checked after the grant**.
+
+### The rest
+
+* **Chips wrap instead of scrolling.** Both chip strips were `HorizontalScrollView`s with a 36 dp
+  fading edge, and the fade rendered whichever chip sat at the right edge - usually the decoder -
+  through a gradient, which reads as a broken pill rather than as "scroll for more". `ChipStrip` now
+  measures and lays out its own lines. The fallback for an unbounded width restores the old
+  `LinearLayout` behaviour, because a missing position entry would otherwise stack every chip at 0.
+* **The header buttons were touching**: three 40 dp `ImageButton`s with no margins at all.
+* **Audio without cover art** had two separate faults. `.aiff` was missing from `AUDIO_EXTENSIONS`,
+  so an AIFF with no type of its own was laid out as a *video* and its cover cropped into a 58x34
+  letterbox; and the placeholder was a speaker-with-waves glyph, which is the symbol for output
+  rather than for music, and is the same shape as the volume controls. `mimeForExtension` now maps
+  audio containers too (it only knew video), which fixes both the layout and the type handed to the
+  player, and `ic_audio` is beamed eighth notes.
+* **Artist and album are no longer monospace.** Only the numbers on those lines are technical, and
+  `TextSpans.mixed` already existed to mark exactly those; the row's second and third lines were
+  simply inheriting a monospace style. New `Text.Row.Meta` and `Text.Row.Caption`, system face.
+* **The stray "-"** was the em dash standing in for an unknown size, sitting between the duration and
+  the source: folder-scanned entries have `durationMs = 0` and Poweramp entries can have no size, so
+  `"3:26  ·  —  ·  poweramp"` is what that produced. The line is now assembled from the parts that
+  are actually known.
+
+### Q3: the upmix matrix, and six-channel sources
+
+* `UpmixMode` has three mappings, chosen in Settings and stored by name so reordering the enum cannot
+  silently change what a saved preference means:
+  * `SURROUND` - fronts copied, centre `(L+R)/2` at -3 dB, rears the difference signal delayed 12 ms,
+    sub both channels low-passed at 120 Hz. What it did before.
+  * `WIDE` - left to front-left **and** surround-left, right to front-right and surround-right, no
+    delay and no difference: the original image wrapped around, at -6 dB in the rears because unlike
+    the difference signal this adds to the fronts.
+  * `FRONT` - the front pair only, nothing invented.
+* Verified that the choice reaches the DSP: selecting Wide in Settings and playing a stereo file logs
+  `upmixing 48000 Hz stereo to 5.1 using WIDE`. The mode is read at `configure`, so a change rebuilds
+  the player, exactly like the spatial toggle.
+* **Homemade six-channel audio works as spatial audio.** The stems in `~/Desktop/a` (six stereo WAVs,
+  each named for its target channel) were merged to a 5.1 PCM Matroska at
+  `/sdcard/Movies/SpatialPlayerTest/stems_51.mkv` and play as proper 5.1: the processor passes them
+  through untouched (they are already six channels), `dumpsys audio` shows `channelMask=0x3f`, and
+  `isSpatialized=true`.
+
+### New harness
+
+`tools/verify-background.sh` asserts the policy from the platform's own view: audio still `PLAYING`
+with the position advancing after HOME and across a screen-off, video not playing in either case, and
+the session published. **Written but not yet run** - see the blocker below.
+
+### Blocker at the end of this round
+
+adb lost its authorisation (an `adb kill-server` after a stale-touch problem), and the phone also has
+the notification-permission dialog waiting. Both need a tap on the device; a notification was sent to
+this Mac. Until then: `verify-background.sh` is unrun, the notification/FGS state after granting the
+permission is unchecked, and the chips, header, cover and font changes have not been looked at on a
+screen.
+
 ## 7. Task state
 
 ### Done and verified on-device

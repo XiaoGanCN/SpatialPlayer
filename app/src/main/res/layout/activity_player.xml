@@ -120,28 +120,16 @@
                     android:textSize="15sp" />
 
                 <!--
-                  Scrollable so a long chip set never has to compress: inside a weighted parent a
-                  plain ChipStrip gets squeezed and single-line labels such as "5.1" end up
-                  truncated to "5.".
-
-                  The fading edge hides the fact that the strip is clipped by the inspect button:
-                  without it the last chip is cut off mid-label, which reads as a rendering fault
-                  rather than as "there is more here, scroll".
+                  Wraps onto as many lines as the chips need. It used to be a horizontal scroller
+                  with a fading edge, which rendered whichever chip sat at the right edge - usually
+                  the decoder - through a gradient, and that read as a broken pill rather than as
+                  "scroll for more". See ChipStrip.
                 -->
-                <HorizontalScrollView
+                <com.gan.spatialplayer.ui.ChipStrip
+                    android:id="@+id/playerChips"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
-                    android:clipToPadding="false"
-                    android:fadingEdgeLength="36dp"
-                    android:requiresFadingEdge="horizontal"
-                    android:scrollbars="none">
-
-                    <com.gan.spatialplayer.ui.ChipStrip
-                        android:id="@+id/playerChips"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
-                </HorizontalScrollView>
+                    android:layout_marginTop="5dp" />
             </LinearLayout>
 
             <ImageButton

@@ -51,6 +51,26 @@
         <item name="android:letterSpacing">0.06</item>
     </style>
 
+    <!--
+      The row's second and third lines.
+
+      Both used to be Text.Mono.Section, which put the artist, the album and the word "poweramp" in a
+      fixed-width face. Only the numbers on those lines are technical - the duration and the size -
+      and those are wrapped in monospace spans by TextSpans.mixed, so the rest of the line can and
+      should read as ordinary copy.
+    -->
+    <style name="Text.Row.Meta" parent="Text.Body">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing">0.04</item>
+    </style>
+
+    <style name="Text.Row.Caption" parent="Text.Body">
+        <item name="android:textColor">@color/text_tertiary</item>
+        <item name="android:textSize">11.5sp</item>
+        <item name="android:letterSpacing">0.01</item>
+    </style>
+
     <!-- Human-facing copy: system default font, quiet hierarchy. -->
     <style name="Text.Body" parent="">
         <item name="android:fontFamily">sans-serif</item>

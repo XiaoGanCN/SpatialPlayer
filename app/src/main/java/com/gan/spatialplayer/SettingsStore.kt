@@ -1,6 +1,7 @@
 package com.gan.spatialplayer
 
 import android.content.Context
+import com.gan.spatialplayer.media.UpmixMode
 import android.content.SharedPreferences
 import com.gan.spatialplayer.media.DecoderProfile
 
@@ -123,6 +124,16 @@ class SettingsStore(context: Context) {
      * CLEAR dims what is behind the pane and lets more of it through, which is the readable choice
      * over dark video; REGULAR is the brighter, more opaque one.
      */
+    /**
+     * How the stereo upmix spreads two channels across six; see `UpmixMode`.
+     *
+     * Stored by name rather than by ordinal so reordering the enum cannot silently change what a
+     * stored preference means.
+     */
+    var upmixMode: String
+        get() = prefs.getString(KEY_UPMIX_MODE, UpmixMode.SURROUND.name) ?: UpmixMode.SURROUND.name
+        set(value) = prefs.edit().putString(KEY_UPMIX_MODE, value).apply()
+
     var glassMaterial: String
         get() = prefs.getString(KEY_GLASS_MATERIAL, null) ?: GLASS_REGULAR
         set(value) = prefs.edit().putString(KEY_GLASS_MATERIAL, value).apply()
@@ -140,6 +151,8 @@ class SettingsStore(context: Context) {
         const val KEY_SUBTITLE_SIZE = "subtitle_size_sp"
         const val KEY_SUBTITLE_POSITION = "subtitle_position"
         const val KEY_SUBTITLE_TRACK_LIMIT = "subtitle_track_limit"
+        const val KEY_UPMIX_MODE = "upmix_mode"
+
         const val KEY_GLASS_MATERIAL = "glass_material"
 
         const val FOLD_NONE = "NONE"

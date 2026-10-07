@@ -32,8 +32,18 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
  */
 class PlayerEngine(
     private val context: Context,
-    private val listener: Listener,
+    listener: Listener?,
 ) {
+
+    /**
+     * Where state changes are reported.
+     *
+     * Settable, and nullable, because this engine can outlive the screen that created it: music is
+     * allowed to keep playing with the app in the background, and the activity that owns the views
+     * must not be held alive by a callback list while that happens. The activity attaches itself in
+     * `onStart` and detaches in `onDestroy`.
+     */
+    var listener: Listener? = listener
 
     interface Listener {
         fun onEnginePlaybackState(state: Int)
@@ -71,7 +81,20 @@ class PlayerEngine(
     var spatialAudioEnabled: Boolean = settings.spatialEnabled
         private set
 
+    /** Which mapping the stereo upmix uses when it engages. */
+    var upmixMode: UpmixMode = runCatching {
+        UpmixMode.valueOf(settings.upmixMode)
+    }.getOrDefault(UpmixMode.SURROUND)
+        private set
+
     private var currentMedia: MediaItem? = null
+
+    /** What is loaded right now, so a screen reopening from the notification can avoid a reload. */
+    val currentMediaUri: android.net.Uri?
+        get() = currentMedia?.localConfiguration?.uri
+
+    val currentMediaMime: String?
+        get() = currentMedia?.localConfiguration?.mimeType
 
     /**
      * Whether a decoder failure should automatically retry with a different renderer stack.
@@ -137,6 +160,9 @@ class PlayerEngine(
         player?.trackSelectionParameters = buildTrackSelectionParameters()
     }
 
+    /** Invoked after [build] replaces the player, so a media session can re-point at the new one. */
+    var onPlayerChanged: (() -> Unit)? = null
+
     fun build() {
         release()
 
@@ -145,7 +171,7 @@ class PlayerEngine(
         maxAudioChannelCount = forcedChannelCap
             ?: AudioOutputCapability.verifiedMaxChannels(context)
 
-        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile, spatialAudioEnabled)
+        val renderersFactory = DecoderPolicy.renderersFactory(context, decoderProfile, spatialAudioEnabled, upmixMode)
         configureRenderers(renderersFactory)
 
         val audioAttributes = buildAudioAttributes()
@@ -167,7 +193,18 @@ class PlayerEngine(
         exo.addAnalyticsListener(analyticsListener)
         exo.setTrackSelectionParameters(buildTrackSelectionParameters())
         player = exo
+        onPlayerChanged?.invoke()
     }
+
+    /**
+     * Whether the current item actually carries a picture.
+     *
+     * Read from the selected tracks rather than from the mime type, because a Matroska file may hold
+     * either and the container tells you nothing. This is what decides whether playback survives the
+     * app going to the background: audio is meant to keep going, a film is not.
+     */
+    val hasVideo: Boolean
+        get() = player?.currentTracks?.groups?.any { it.type == C.TRACK_TYPE_VIDEO } == true
 
     private fun configureRenderers(factory: DefaultRenderersFactory) {
         // FFmpeg's audio decoders emit float PCM and can exceed the default 2-channel assumption.
@@ -317,6 +354,19 @@ class PlayerEngine(
      * the app asks for, and the live platform state is shown next to it so the two are never
      * confused.
      */
+    /**
+     * Changes the stereo mapping.
+     *
+     * The mode is read when the sink is built, so this rebuilds - the same cost as the spatial
+     * toggle, and for the same reason.
+     */
+    fun switchUpmixMode(mode: UpmixMode) {
+        if (mode == upmixMode && player != null) return
+        upmixMode = mode
+        settings.upmixMode = mode.name
+        rebuildPreservingState()
+    }
+
     fun setSpatialAudioEnabled(enabled: Boolean) {
         if (enabled == spatialAudioEnabled) return
         spatialAudioEnabled = enabled
@@ -449,7 +499,7 @@ class PlayerEngine(
         if (wasPlaying) player?.play()
 
         lastErrorIsTerminal = false
-        listener.onEngineAudioDownmixed(from = refused, to = next)
+        listener?.onEngineAudioDownmixed(from = refused, to = next)
         return true
     }
 
@@ -483,7 +533,7 @@ class PlayerEngine(
         // an interpolation, and the profile name needs its underscores turned into spaces.
         val tierName = next.name.lowercase().replace('_', ' ')
         val detail = lastErrorDetail?.let { " ($it)" }.orEmpty()
-        listener.onEngineError("decoder failed, retrying with $tierName$detail", null)
+        listener?.onEngineError("decoder failed, retrying with $tierName$detail", null)
         return true
     }
 
@@ -570,19 +620,19 @@ class PlayerEngine(
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            listener.onEnginePlaybackState(playbackState)
+            listener?.onEnginePlaybackState(playbackState)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            listener.onEngineIsPlaying(isPlaying)
+            listener?.onEngineIsPlaying(isPlaying)
         }
 
         override fun onTracksChanged(tracks: Tracks) {
-            listener.onEngineTracksChanged(tracks)
+            listener?.onEngineTracksChanged(tracks)
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
-            listener.onEngineVideoSize(videoSize)
+            listener?.onEngineVideoSize(videoSize)
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -601,15 +651,15 @@ class PlayerEngine(
             if (autoFallbackEnabled && advanceFallbackTier()) return
 
             lastErrorIsTerminal = true
-            listener.onEngineError(lastErrorDetail ?: error.errorCodeName, error)
+            listener?.onEngineError(lastErrorDetail ?: error.errorCodeName, error)
         }
 
         override fun onRenderedFirstFrame() {
-            listener.onEngineFirstFrame()
+            listener?.onEngineFirstFrame()
         }
 
         override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
-            listener.onEnginePlaybackParameters(playbackParameters.speed)
+            listener?.onEnginePlaybackParameters(playbackParameters.speed)
         }
     }
 
@@ -624,15 +674,15 @@ class PlayerEngine(
         }
 
         override fun onAudioSinkError(eventTime: AnalyticsListener.EventTime, audioSinkError: Exception) {
-            listener.onEngineError("audio sink: ${audioSinkError.message}", audioSinkError)
+            listener?.onEngineError("audio sink: ${audioSinkError.message}", audioSinkError)
         }
 
         override fun onVideoCodecError(eventTime: AnalyticsListener.EventTime, videoCodecError: Exception) {
-            listener.onEngineError("video codec: ${videoCodecError.message}", videoCodecError)
+            listener?.onEngineError("video codec: ${videoCodecError.message}", videoCodecError)
         }
 
         override fun onAudioCodecError(eventTime: AnalyticsListener.EventTime, audioCodecError: Exception) {
-            listener.onEngineError("audio codec: ${audioCodecError.message}", audioCodecError)
+            listener?.onEngineError("audio codec: ${audioCodecError.message}", audioCodecError)
         }
     }
 
@@ -650,15 +700,41 @@ class PlayerEngine(
         const val SEEK_STEP_MS = 10_000L
 
         /** MIME hints for containers the picker cannot describe. */
+        /**
+         * Container mime type for a file name.
+         *
+         * Audio is here as well as video, and that is not cosmetic: this is the type handed to the
+         * player for anything opened from a folder, and it is the only thing that decides whether a
+         * row in the library gets the square cover slot or the 16:9 frame slot when the source
+         * supplies no type of its own. A missing entry is therefore visible - `.aiff` was absent, so
+         * an AIFF was laid out as video and its art was cropped into a letterbox.
+         *
+         * Media3 1.8 has no constant for QuickTime or AIFF; those strings are the ones its own
+         * extractors are registered under.
+         */
         fun mimeForExtension(extension: String?): String? = when (extension?.lowercase()) {
             "mkv" -> MimeTypes.VIDEO_MATROSKA
             "mp4", "m4v" -> MimeTypes.VIDEO_MP4
             "webm" -> MimeTypes.VIDEO_WEBM
             "ts", "m2ts" -> MimeTypes.VIDEO_MP2T
             "avi" -> MimeTypes.VIDEO_AVI
-            // Media3 1.8 has no VIDEO_QUICK_TIME constant; the string is stable.
             "mov" -> "video/quicktime"
             "mpg", "mpeg" -> MimeTypes.VIDEO_MPEG
+
+            "mka" -> MimeTypes.AUDIO_MATROSKA
+            "flac" -> MimeTypes.AUDIO_FLAC
+            "mp3" -> MimeTypes.AUDIO_MPEG
+            "m4a", "m4b" -> MimeTypes.AUDIO_MP4
+            "aac" -> MimeTypes.AUDIO_AAC
+            "opus" -> MimeTypes.AUDIO_OPUS
+            "ogg", "oga" -> MimeTypes.AUDIO_OGG
+            "wav", "wave" -> MimeTypes.AUDIO_WAV
+            "aiff", "aif", "aifc" -> "audio/x-aiff"
+            "ac3" -> MimeTypes.AUDIO_AC3
+            "eac3" -> MimeTypes.AUDIO_E_AC3
+            "dts" -> MimeTypes.AUDIO_DTS
+            "thd" -> MimeTypes.AUDIO_TRUEHD
+            "amr" -> MimeTypes.AUDIO_AMR
             else -> null
         }
     }

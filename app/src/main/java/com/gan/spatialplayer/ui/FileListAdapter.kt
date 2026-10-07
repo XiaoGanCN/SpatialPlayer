@@ -65,19 +65,22 @@ class FileListAdapter(
         fun bind(entry: FileEntry, onClick: (FileEntry) -> Unit, thumbnails: ThumbnailLoader?) {
             title.text = entry.displayName
 
-            // Monospace for the technical half of the row: duration and size.
-            val duration = if (entry.durationMs > 0) TextSpans.timecode(entry.durationMs) else "—"
-            val size = if (entry.sizeBytes > 0) TextSpans.bytes(entry.sizeBytes) else "—"
+            // Only what is actually known. A missing duration used to render as an em dash, which
+            // put a bare "-" in the middle of the line between the duration and the source and read
+            // as a typo rather than as "unknown" - and the sources that leave it empty are the ones
+            // that also supply the artist, so it was the most visible line in the row.
+            val duration = if (entry.durationMs > 0) TextSpans.timecode(entry.durationMs) else null
+            val size = if (entry.sizeBytes > 0) TextSpans.bytes(entry.sizeBytes) else null
             val source = when (entry.source) {
                 FileEntry.Source.MEDIA_STORE -> "mediastore"
                 FileEntry.Source.FOLDER -> "folder"
                 FileEntry.Source.POWERAMP -> "poweramp"
                 FileEntry.Source.EXTERNAL -> "file"
             }
+            val metaParts = listOfNotNull(duration, size, source)
             meta.text = mixed(
-                "$duration  ·  $size  ·  $source",
-                duration,
-                size,
+                metaParts.joinToString("  ·  "),
+                *listOfNotNull(duration, size).toTypedArray(),
             )
 
             val isAudio = entry.mimeType?.startsWith("audio/") == true ||
@@ -139,8 +142,19 @@ class FileListAdapter(
         }
 
         private companion object {
+            /**
+             * Extensions used only when the source supplies no mime type.
+             *
+             * The list decides whether a row gets the square cover slot or the 16:9 frame slot, so a
+             * missing entry is visible: `.aiff` was absent, so an AIFF with no mime type was laid out
+             * as a video and its cover was cropped into a 58x34 rectangle. The audio-only containers
+             * are all here now, including the ones that are rare on phones but common in a music
+             * library.
+             */
             val AUDIO_EXTENSIONS = setOf(
-                "flac", "opus", "mp3", "m4a", "ac3", "eac3", "dts", "thd", "mka",
+                "flac", "opus", "mp3", "m4a", "m4b", "aac", "ac3", "eac3", "dts", "thd",
+                "mka", "aiff", "aif", "aifc", "wav", "wave", "ogg", "oga", "ape", "wv",
+                "dsf", "dff", "amr", "aa", "aax", "mpc", "wma", "caf", "au", "snd", "tak",
             )
 
             /** Width of a video row's 16:9 thumbnail slot, in dp. Matches `item_file.xml`. */

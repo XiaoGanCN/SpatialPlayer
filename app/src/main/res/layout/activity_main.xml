@@ -64,6 +64,7 @@
 
             <ImageButton
                 android:id="@+id/buttonSpatialStatus"
+                android:layout_marginStart="10dp"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="@drawable/bg_glass_button"
@@ -74,9 +75,9 @@
 
             <ImageButton
                 android:id="@+id/buttonRefresh"
+                android:layout_marginStart="10dp"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:layout_marginStart="10dp"
                 android:background="@drawable/bg_glass_button"
                 android:contentDescription="@string/refresh"
                 android:padding="9dp"
@@ -93,23 +94,13 @@
           pill: it dissolves the last one into the background, which is the only cue that the strip
           scrolls. Without it the strip simply ends mid-label with no affordance at all.
         -->
-        <HorizontalScrollView
+        <com.gan.spatialplayer.ui.ChipStrip
+            android:id="@+id/chipStrip"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
-            android:paddingBottom="10dp"
-            android:clipToPadding="false"
-            android:fadingEdgeLength="36dp"
-            android:requiresFadingEdge="horizontal"
-            android:scrollbars="none"
-            android:fillViewport="false">
-
-            <com.gan.spatialplayer.ui.ChipStrip
-                android:id="@+id/chipStrip"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </HorizontalScrollView>
+            android:paddingBottom="10dp" />
 
         <!--
           The list itself.

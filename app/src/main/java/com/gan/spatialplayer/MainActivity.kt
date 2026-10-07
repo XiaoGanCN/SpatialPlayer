@@ -7,6 +7,7 @@ import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
@@ -137,11 +138,31 @@ class MainActivity : AppCompatActivity() {
         applyAmbientSetting()
         restoreFolderGrant()
         playIntro()
+        requestNotificationPermission()
 
         // An explicit VIEW intent means the user chose a file elsewhere; honour that first.
         if (!handleViewIntent(intent)) {
             refresh()
         }
+    }
+
+    /**
+     * Asks once for the notification permission.
+     *
+     * Background playback is delivered through a media notification, and on API 33+ an app cannot post
+     * one without this. Without it the player still runs in the background - verified - but there is
+     * no transport control on the lock screen and no entry the user can tap, which is most of the
+     * point. Asked on the library screen rather than in the player so the prompt arrives before
+     * anything is playing.
+     */
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -648,6 +669,8 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
+        const val REQUEST_NOTIFICATIONS = 1001
+
         const val PREF_FOLDER_URI = "scoped_folder_uri"
 
         const val KEY_FOLDED = "folded_library"

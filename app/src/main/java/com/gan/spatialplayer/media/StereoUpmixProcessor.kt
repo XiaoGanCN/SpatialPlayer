@@ -64,6 +64,13 @@ import kotlin.math.sin
  */
 class StereoUpmixProcessor(
     /**
+     * How the two channels are spread across the six; see [UpmixMode].
+     *
+     * Read once per [configure], so a change needs a rebuilt sink and therefore a rebuilt player -
+     * which is what the settings screen triggers.
+     */
+    private val mode: UpmixMode = UpmixMode.SURROUND,
+    /**
      * Whether the output can actually take six channels at a given sample rate.
      *
      * Asked here rather than decided by the caller because the sample rate is only known once the
@@ -156,7 +163,7 @@ class StereoUpmixProcessor(
         // One line each way. Whether this engaged is otherwise invisible: the chips report the
         // decoder's layout, not the sink's, so a stereo track that was upmixed and one that was left
         // alone look identical everywhere in the app.
-        Log.i(TAG, "upmixing ${inputAudioFormat.sampleRate} Hz stereo to 5.1")
+        Log.i(TAG, "upmixing ${inputAudioFormat.sampleRate} Hz stereo to 5.1 using ${mode.name}")
 
         if (!canRenderSixChannels(inputAudioFormat.sampleRate)) {
             // The output cannot take 5.1 at this rate, so leave the stereo alone. The platform cannot
@@ -227,19 +234,49 @@ class StereoUpmixProcessor(
         repeat(completeFrames) {
             val left = readSample(array, sourceIndex)
             val right = readSample(array, sourceIndex + 2)
-            val centre = ((left + right).toLong() * centreGain / GAIN_SCALE).toInt() * TRIM_NUM / TRIM_DEN
-            val rearSource = ((left - right).toLong() * rearGain / GAIN_SCALE).toInt()
+            // FRONT invents nothing: centre, sub and rears stay silent and only the front pair is
+            // written. The gain arithmetic is skipped rather than multiplied by zero so the modes
+            // read as three distinct mappings instead of one with a volume knob.
+            val centre = if (mode == UpmixMode.FRONT) {
+                0
+            } else {
+                ((left + right).toLong() * centreGain / GAIN_SCALE).toInt() * TRIM_NUM / TRIM_DEN
+            }
 
-            // Advance the delay line, then read the sample from REAR_DELAY_MS ago and overwrite it.
-            ringIndex = (ringIndex + 1) and delayMask
-            val readIndex = (ringIndex - delaySamples) and delayMask
-            val delayedLeft = rearLeftRing[readIndex]
-            val delayedRight = rearRightRing[readIndex]
-            rearLeftRing[readIndex] = rearSource
-            rearRightRing[readIndex] = -rearSource
+            val rearLeft: Int
+            val rearRight: Int
+            when (mode) {
+                UpmixMode.SURROUND -> {
+                    val rearSource = ((left - right).toLong() * rearGain / GAIN_SCALE).toInt()
+                    // Advance the delay line, then read the sample from REAR_DELAY_MS ago and
+                    // overwrite it.
+                    ringIndex = (ringIndex + 1) and delayMask
+                    val readIndex = (ringIndex - delaySamples) and delayMask
+                    rearLeft = rearLeftRing[readIndex]
+                    rearRight = rearRightRing[readIndex]
+                    rearLeftRing[readIndex] = rearSource
+                    rearRightRing[readIndex] = -rearSource
+                }
 
-            // Subwoofer feed: both channels through their own biquad, then summed.
-            val lfe = processLowPass(left, right) * LFE_LINEAR * TRIM_LINEAR
+                UpmixMode.WIDE -> {
+                    // The left channel goes to the surround left, the right to the surround right,
+                    // with no delay and no difference: the original image, wrapped around. Trimmed,
+                    // because unlike the difference signal this adds to the fronts rather than
+                    // filling a gap between them.
+                    rearLeft = ((left.toLong() * rearGain / GAIN_SCALE) * TRIM_NUM / TRIM_DEN).toInt()
+                    rearRight = ((right.toLong() * rearGain / GAIN_SCALE) * TRIM_NUM / TRIM_DEN).toInt()
+                }
+
+                UpmixMode.FRONT -> {
+                    rearLeft = 0
+                    rearRight = 0
+                }
+            }
+
+            // Subwoofer feed: both channels through their own biquad, then summed. The filter runs in
+            // every mode so its state stays coherent if the mode ever changes underneath it.
+            val lfeLevel = if (mode == UpmixMode.FRONT) 0f else LFE_LINEAR * TRIM_LINEAR
+            val lfe = processLowPass(left, right) * lfeLevel
             val lfeSample = if (lfe >= Short.MAX_VALUE) Short.MAX_VALUE.toInt() else lfe.toInt()
 
             // Media3's 5.1 order is the platform's CHANNEL_OUT_5POINT1 order: front left, front
@@ -249,8 +286,8 @@ class StereoUpmixProcessor(
             destination = writeSample(out, destination, right)
             destination = writeSample(out, destination, clamp(centre))
             destination = writeSample(out, destination, clamp(lfeSample))
-            destination = writeSample(out, destination, clamp(delayedLeft))
-            destination = writeSample(out, destination, clamp(delayedRight))
+            destination = writeSample(out, destination, clamp(rearLeft))
+            destination = writeSample(out, destination, clamp(rearRight))
             sourceIndex += INPUT_FRAME_BYTES
         }
 

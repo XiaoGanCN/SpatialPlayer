@@ -39,6 +39,8 @@ class SpatialRenderersFactory(
     private val profile: DecoderProfile,
     /** Whether the user wants the platform to spatialise; also gates the stereo upmix. */
     private val spatialEnabled: Boolean = false,
+    /** Which mapping the upmix uses; see [UpmixMode]. */
+    private val upmixMode: UpmixMode = UpmixMode.SURROUND,
 ) : NextRenderersFactory(context) {
 
     init {
@@ -103,9 +105,12 @@ class SpatialRenderersFactory(
         return DefaultAudioSink.Builder(context)
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(
-                    StereoUpmixProcessor { sampleRate ->
-                        AudioOutputCapability.canOpenTrack(6, sampleRate)
-                    },
+                    StereoUpmixProcessor(
+                        mode = upmixMode,
+                        canRenderSixChannels = { sampleRate ->
+                            AudioOutputCapability.canOpenTrack(6, sampleRate)
+                        },
+                    ),
                 ),
             )
             // Off, for the reason above - not a preference.

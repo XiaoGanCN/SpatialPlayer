@@ -42,6 +42,8 @@ import com.gan.spatialplayer.media.Chapter
 import com.gan.spatialplayer.media.MatroskaChapters
 import java.io.File
 import com.gan.spatialplayer.media.PlaybackReport
+import com.gan.spatialplayer.media.PlaybackEngine
+import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
 import com.gan.spatialplayer.media.DecoderPolicy
@@ -193,11 +195,16 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         sizeBytes = intent.getLongExtra(EXTRA_SIZE_BYTES, 0L)
         mediaUri = intent.data
 
-        engine = PlayerEngine(this, this)
-        engine.build()
+        // The engine outlives this screen when music is playing, so it comes from a holder rather
+        // than being constructed here. See PlaybackEngine.
+        engine = PlaybackEngine.acquire(this, this)
+        if (engine.player == null) engine.build()
 
         binding.playerView.player = engine.player
         configurePlayerView()
+        // Started here rather than when playback begins so the session exists from the first frame;
+        // the notification itself only appears once there is sound (see PlaybackService).
+        startService(Intent(this, PlaybackService::class.java))
         attachGlassBackdrop()
 
         gestures = PlayerGestureController(this, this)
@@ -237,18 +244,24 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         startRefreshLoop()
 
         mediaUri?.let { uri ->
-            engine.setMedia(uri, mimeType ?: PlayerEngine.mimeForExtension(displayName.substringAfterLast('.', "")))
-            engine.prepare()
+            // Reopened from the media notification: the engine is already on this item, so attaching
+            // to it is the whole job. Rebuilding the media item would restart the track from zero and
+            // drop the notification's position.
+            val alreadyLoaded = engine.currentMediaUri == uri
+            if (!alreadyLoaded) {
+                engine.setMedia(uri, mimeType ?: PlayerEngine.mimeForExtension(displayName.substringAfterLast('.', "")))
+                engine.prepare()
+            }
 
             // Pick up where this item was left off, if it was played earlier in this session.
             val remembered = PlaybackMemory.positionFor(uri)
-            if (remembered > RESUME_MIN_MS) {
+            if (!alreadyLoaded && remembered > RESUME_MIN_MS) {
                 engine.player?.seekTo(remembered)
                 showFeedback(getString(R.string.resuming_at, TextSpans.timecode(remembered)))
             }
 
             engine.play()
-            discoverSidecarSubtitles(uri)
+            if (!alreadyLoaded) discoverSidecarSubtitles(uri)
         }
     }
 
@@ -1080,6 +1093,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             binding.playerView.player = engine.player
         }
 
+        val upmixWanted = runCatching { UpmixMode.valueOf(settings.upmixMode) }
+            .getOrDefault(UpmixMode.SURROUND)
+        if (engine.upmixMode != upmixWanted) {
+            engine.switchUpmixMode(upmixWanted)
+            binding.playerView.player = engine.player
+        }
+
         ambientEnabled = settings.ambientEnabled
         binding.ambientGlow.glowEnabled = ambientEnabled
 
@@ -1092,9 +1112,23 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         applyGlassMaterial()
     }
 
+    /**
+     * Pauses only when there is a picture.
+     *
+     * Music is meant to survive the app going away - that is what the media notification is for - so
+     * audio is left alone through `onPause` and `onStop`. Anything with a video track pauses, for the
+     * obvious reason that the user cannot see it, and because leaving a hardware video decoder
+     * running behind a black screen is the behaviour nobody wants from a video player.
+     *
+     * `hasVideo` is read from the selected tracks: a Matroska file can hold either, so the container
+     * says nothing, and the answer is only known once the tracks are known.
+     */
+    private fun shouldPauseForBackground(): Boolean =
+        engine.hasVideo && !isInPictureInPictureMode
+
     override fun onPause() {
         super.onPause()
-        if (!isInPictureInPictureMode) {
+        if (shouldPauseForBackground()) {
             engine.pause()
         }
         rememberPlaybackPosition()
@@ -1130,13 +1164,22 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         ambientSampler?.release()
         ambientSampler = null
         hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
-        engine.release()
+        // Detach before letting go: background audio keeps the engine alive, and it must not keep a
+        // destroyed activity (and its whole view tree) alive with it.
+        engine.listener = null
+        PlaybackEngine.releaseIfIdle()
+        // Nothing is playing, so there is nothing for the session to publish; leaving the service
+        // started would keep an idle notification slot claimed for as long as the process lives.
+        // When audio *is* playing the engine survives and the service stays with it.
+        if (PlaybackEngine.peek() == null) {
+            stopService(Intent(this, PlaybackService::class.java))
+        }
         super.onDestroy()
     }
 
     override fun onStop() {
         super.onStop()
-        if (!isInPictureInPictureMode) {
+        if (shouldPauseForBackground()) {
             engine.pause()
         }
     }

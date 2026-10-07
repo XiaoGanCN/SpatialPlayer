@@ -43,7 +43,7 @@
 
         <TextView
             android:id="@+id/rowMeta"
-            style="@style/Text.Mono.Section"
+            style="@style/Text.Row.Meta"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
@@ -53,7 +53,7 @@
         <!-- Artist and album, when the source provides them. Hidden otherwise. -->
         <TextView
             android:id="@+id/rowTags"
-            style="@style/Text.Mono.Section"
+            style="@style/Text.Row.Caption"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"

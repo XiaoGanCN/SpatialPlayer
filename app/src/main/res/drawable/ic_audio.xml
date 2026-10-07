@@ -1,9 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Audio, as beamed eighth notes.
+
+  This replaced a speaker-with-sound-waves glyph. A speaker is the symbol for *output*, not for
+  music: it read as "this file has no picture" rather than as "this is a song", and it was the same
+  shape as the volume controls elsewhere in the app. It is also a square glyph, so an audio row
+  without cover art keeps the same 1:1 bound as one with it.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp"
-    android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFF2F4F7" android:pathData="M10.4,4.2 L5.6,8.2 H2.6 v7.6 h3 L10.4,19.8 Z" />
-    <path android:strokeColor="#FFF2F4F7" android:strokeWidth="1.7" android:fillColor="#00000000"
-        android:strokeLineCap="round" android:pathData="M13.6,9 A4.2,4.2 0 0,1 13.6,15" />
-    <path android:strokeColor="#FFF2F4F7" android:strokeWidth="1.7" android:fillColor="#00000000"
-        android:strokeLineCap="round" android:pathData="M16.6,6 A8.4,8.4 0 0,1 16.6,18" />
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Beam across the top. -->
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:pathData="M10.6,4.0 L22.0,6.4 L22.0,8.6 L10.6,6.2 Z" />
+
+    <!-- Left stem and head. -->
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:pathData="M10.6,5.6 L13.0,6.1 L13.0,18.6 L10.6,18.6 Z" />
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:pathData="M7.0,18.6 a3.0,2.3 0 1,0 6.0,0 a3.0,2.3 0 1,0 -6.0,0 Z" />
+
+    <!-- Right stem and head, set higher to match the beam's slope. -->
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:pathData="M19.6,8.0 L22.0,8.5 L22.0,16.6 L19.6,16.6 Z" />
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:pathData="M16.0,16.6 a3.0,2.3 0 1,0 6.0,0 a3.0,2.3 0 1,0 -6.0,0 Z" />
 </vector>

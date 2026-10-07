@@ -144,6 +144,7 @@ object DecoderPolicy {
         context: Context,
         profile: DecoderProfile,
         spatialEnabled: Boolean = false,
+        upmixMode: UpmixMode = UpmixMode.SURROUND,
     ): DefaultRenderersFactory =
         when (profile) {
             DecoderProfile.FFMPEG_ONLY ->
@@ -156,7 +157,7 @@ object DecoderPolicy {
                         setEnableAudioTrackPlaybackParams(true)
                     }
 
-            else -> SpatialRenderersFactory(context, profile, spatialEnabled)
+            else -> SpatialRenderersFactory(context, profile, spatialEnabled, upmixMode)
         }
 
     /**

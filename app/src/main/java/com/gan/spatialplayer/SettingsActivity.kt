@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.gan.spatialplayer.media.DecoderPolicy
+import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.DeviceCapabilities
 import com.gan.spatialplayer.media.DecoderProfile
 import com.gan.spatialplayer.media.FfmpegCodecs
@@ -128,6 +129,30 @@ class SettingsActivity : AppCompatActivity() {
                 subtitle = "Tints the letterbox with the colours of the picture",
                 value = settings.ambientEnabled,
             ) { settings.ambientEnabled = it },
+        )
+
+        column.addView(
+            segmentedRow(
+                title = getString(R.string.settings_upmix),
+                options = listOf(
+                    getString(R.string.upmix_surround) to UpmixMode.SURROUND.name,
+                    getString(R.string.upmix_wide) to UpmixMode.WIDE.name,
+                    getString(R.string.upmix_front) to UpmixMode.FRONT.name,
+                ),
+                selected = settings.upmixMode,
+            ) { settings.upmixMode = it },
+        )
+
+        column.addView(
+            infoRow(
+                getString(R.string.settings_upmix),
+                when (runCatching { UpmixMode.valueOf(settings.upmixMode) }
+                    .getOrDefault(UpmixMode.SURROUND)) {
+                    UpmixMode.SURROUND -> getString(R.string.upmix_surround_hint)
+                    UpmixMode.WIDE -> getString(R.string.upmix_wide_hint)
+                    UpmixMode.FRONT -> getString(R.string.upmix_front_hint)
+                },
+            ),
         )
 
         column.addView(

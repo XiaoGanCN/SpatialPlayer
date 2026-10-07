@@ -8,6 +8,13 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      Background audio. The media notification is a foreground service notification, which on API 34
+      needs both the generic permission and the mediaPlayback type declared.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!--
@@ -31,6 +38,22 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SpatialPlayer">
+
+        <!--
+          Publishes the player to the media centre and keeps audio alive in the background.
+
+          `exported="true"` is required: the system media controls and other apps' transport buttons
+          bind to it through the MediaSessionService interface action.
+        -->
+        <service
+            android:name=".PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
 
         <activity
             android:name=".SettingsActivity"
