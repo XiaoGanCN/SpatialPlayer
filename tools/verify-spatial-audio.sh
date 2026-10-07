@@ -157,6 +157,31 @@ else
   fi
 fi
 
+say "channel downmix is reported"
+# A 7.1 track on an output that takes stereo must say so. The chip strip reports the *decoder*, so
+# without this a 7.1 film quietly claims 7.1 while the user hears a downmix.
+CLIP_71="/sdcard/Movies/SpatialPlayerTest/seven_one_pcm.mkv"
+HOST_71="${HOST_71:-/tmp/seven_one_pcm.mkv}"
+if [ ! -f "$HOST_71" ]; then
+  skip "no 7.1 test file at $HOST_71 (ffmpeg -f lavfi -i sine=frequency=440:sample_rate=48000:duration=15 -af aformat=channel_layouts=7.1 -ac 8 -c:a pcm_s16le $HOST_71)"
+else
+  if [ "$(sh_ "[ -f $CLIP_71 ] && echo yes || echo no")" != "yes" ]; then
+    "$ADB" push "$HOST_71" "$CLIP_71" >/dev/null 2>&1
+  fi
+  sh_ am force-stop "$PKG_DEBUG"
+  sleep 1
+  sh_ logcat -c
+  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+      --es smoke_path "$CLIP_71" --es smoke_mime video/x-matroska >/dev/null
+  sleep 8
+  DOWNMIX="$(sh_ "logcat -d" | grep -E "audio downmix" | tail -1)"
+  if [ -n "$DOWNMIX" ]; then
+    pass "the downmix is reported: $(printf '%s' "$DOWNMIX" | sed 's/.*PlayerActivity: //')"
+  else
+    fail "a 7.1 track on this output was not reported as downmixed"
+  fi
+fi
+
 say "summary"
 printf '  passed %d   failed %d   skipped %d\n' "$PASS" "$FAIL" "$SKIP"
 printf '  artifacts: %s\n' "$OUT_DIR"

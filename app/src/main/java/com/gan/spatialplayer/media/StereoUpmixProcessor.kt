@@ -143,6 +143,7 @@ class StereoUpmixProcessor(
         }
         if (inputAudioFormat.sampleRate != SR_44_1 && inputAudioFormat.sampleRate != SR_48) {
             active = false
+            Log.i(TAG, "passing through: ${inputAudioFormat.sampleRate} Hz is not a rate we filter for")
             throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
         }
         // One line each way. Whether this engaged is otherwise invisible: the chips report the

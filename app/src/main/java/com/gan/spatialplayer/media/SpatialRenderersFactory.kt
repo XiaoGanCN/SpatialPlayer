@@ -5,6 +5,7 @@ import android.os.Handler
 import android.util.Log
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -86,7 +87,7 @@ class SpatialRenderersFactory(
         }
 
         Log.i(TAG, "building audio sink with the stereo upmix in the chain")
-        return DefaultAudioSink.Builder(context)
+        val built = DefaultAudioSink.Builder(context)
             .setAudioProcessors(
                 arrayOf(
                     StereoUpmixProcessor { sampleRate ->
@@ -96,7 +97,14 @@ class SpatialRenderersFactory(
             )
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            // Offload hands the *encoded* stream straight to a hardware DSP, which skips the whole
+            // AudioProcessor chain - measured here: with offload allowed, `configure` was never
+            // called on the upmix processor at all, and the sink was configured with the encoded
+            // format rather than `audio/raw`. The same shortcut bypasses the platform spatialiser,
+            // which taps the PCM, so offload quietly defeats the feature this app exists for.
+            .setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }
             .build()
+        return built
     }
 
     override fun buildAudioRenderers(

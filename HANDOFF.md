@@ -429,13 +429,36 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
   then refuses the layout would turn a track that plays into one that does not. Needing `configure`
   to *decline* is worth knowing: the return type is not nullable, so the way to opt out is to throw
   `UnhandledAudioFormatException` (Media3 catches it and drops the processor).
-- **Q1 is the one item not verified on device.** It is wired, gated and observable - the processor
-  logs `upmix ... stereo to 5.1` when it engages and the factory logs when it puts it in the chain -
-  but the phone was on a call for the whole of the verification window, so audio focus was held
-  elsewhere, the sink was never configured and the log never fired. **Check this first next time**:
-  play a stereo FLAC or the AAC clip with the headset connected and confirm two things - the
-  `StereoUpmix` line appears, and the track still plays. If it appears and the track fails, the
-  fallback described below is what should catch it.
+- **Q1 is the one item not verified on device, and it is worse than "not tested".** The processor is
+  never `configure`d. What is *proven* on device:
+  * `SpatialRenderersFactory.buildAudioSink` runs and builds a `DefaultAudioSink` with the processor
+    in its chain (log: `building audio sink with the stereo upmix in the chain`).
+  * That exact sink instance is what reaches `buildAudioRenderers` — verified by matching
+    `System.identityHashCode` on both sides, and nextlib's `FfmpegAudioRenderer` takes the sink as a
+    parameter rather than building its own (`javap` on `FfmpegAudioRenderer.<init>`).
+  * An audio track **is** selected for the test clip (the chips read `STEREO`), so this is not a
+    "no audio track" case.
+  * `StereoUpmixProcessor.configure` is never entered — proven with a log as the **first statement**
+    of the method, so no guard can be hiding it.
+
+  `AudioProcessingPipeline.configure` provably calls `processor.configure(format)` *before* it looks
+  at `isActive()`, so the chain is not filtering the processor out. That leaves the sink taking the
+  branch in `DefaultAudioSink.configure` that requires `format.sampleMimeType == "audio/raw"`
+  (`javap` offset 17 → `ifeq 255`): with a non-raw format the whole `AudioProcessingPipeline` is
+  skipped. In other words the sink is being driven in offload/passthrough mode.
+
+  `setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }` is already set
+  on the builder and did not change the outcome, and `dumpsys media.audio_flinger` shows
+  `AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD` threads present on the device. **Next diagnostic, in order:**
+  1. Wrap the sink in a delegating `AudioSink` that logs `configure(format, ...)` and forwards. That
+     settles whether the raw or the encoded format arrives, in one run.
+  2. If it is the encoded format, find who asked for offload. `MediaCodecAudioRenderer` is the usual
+     suspect and it decides from `AudioSink.getFormatSupport`, not only from the builder's provider.
+  3. Failing that, insert the processor from the renderer side instead: construct
+     `FfmpegAudioRenderer(handler, listener, sink)` ourselves in `buildAudioRenderers` rather than
+     letting nextlib do it, so the sink cannot be swapped underneath.
+  The regex/asset for the test is done: `/tmp/stereo_48k.mp4` (pushed to the device) is 30 s of
+  640x360 testsrc2 with a 48 kHz stereo AAC 440 Hz tone.
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 

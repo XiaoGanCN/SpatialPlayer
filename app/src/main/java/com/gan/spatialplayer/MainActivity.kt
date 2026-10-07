@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
      */
     private var actionBarDocking = false
     private val prefs by lazy { getSharedPreferences("spatial_player", MODE_PRIVATE) }
+    private val settings by lazy { SettingsStore(this) }
 
     private val entries = ArrayList<FileEntry>()
     private var scopedFolderUri: Uri? = null
@@ -133,6 +134,7 @@ class MainActivity : AppCompatActivity() {
         applyWindowInsets()
         setUpList()
         setUpActions()
+        applyAmbientSetting()
         restoreFolderGrant()
         playIntro()
 
@@ -269,6 +271,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------ data
+
+    /** The library's wash is the same setting as the player's, so it has to be applied here too. */
+    private fun applyAmbientSetting() {
+        binding.ambientScrim.glowEnabled = settings.ambientEnabled
+    }
 
     private fun refresh() {
         setScanning(true)

@@ -110,6 +110,15 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * Read once per item on a background thread: the reference film is a 70 GB remux, and walking its
      * element tree on the main thread would stall the first frame.
      */
+    /**
+     * Set when the subtitle picker has been asked to ignore the cap, for this item only.
+     *
+     * Raising the stored cap instead would mean the setting the user chose is silently replaced by
+     * "51" the first time they open a film with a lot of tracks, and every later item would list all
+     * of its tracks too.
+     */
+    private var subtitleLimitOverridden = false
+
     private var chapters: List<Chapter> = emptyList()
     private var chapterJob: Job? = null
     private var refreshJob: Job? = null
@@ -191,10 +200,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         configurePlayerView()
         attachGlassBackdrop()
 
-        subtitleSizeSp = settings.subtitleSizeSp
-        subtitlePositionFraction = settings.subtitlePositionFraction
-        ambientEnabled = settings.ambientEnabled
         gestures = PlayerGestureController(this, this)
+        applySettings()
         gestures.verticalGain = settings.verticalGain
         // Restores the saved jump length, and through the setter also configures the controller and
         // the player's seek increments.
@@ -414,6 +421,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     private fun updateTitle() {
         audioDownmixNote = null
+        subtitleLimitOverridden = false
         loadChapters()
         binding.mediaTitle.text = displayName
         updateStreamChips()
@@ -1041,8 +1049,45 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onResume() {
         super.onResume()
+        applySettings()
         engine.play()
         startAmbientSampling()
+    }
+
+    /**
+     * Re-applies everything the settings screen can change.
+     *
+     * Called on resume as well as at setup: the settings screen is a separate activity, so a change
+     * made there has to be picked up when this one comes back - otherwise the setting appears to do
+     * nothing until the item is reopened, which reads as a broken control rather than as a stale one.
+     *
+     * The two engine settings rebuild the player, and both no-op when the value has not changed, so
+     * the common case costs a comparison.
+     */
+    private fun applySettings() {
+        val spatialWanted = settings.spatialEnabled
+        if (engine.spatialAudioEnabled != spatialWanted) {
+            engine.setSpatialAudioEnabled(spatialWanted)
+            binding.playerView.player = engine.player
+        }
+
+        val profile = runCatching { DecoderProfile.valueOf(settings.decoderProfile) }
+            .getOrDefault(DecoderProfile.DEFAULT)
+        if (engine.decoderProfile != profile) {
+            engine.switchDecoderProfile(profile)
+            binding.playerView.player = engine.player
+        }
+
+        ambientEnabled = settings.ambientEnabled
+        binding.ambientGlow.glowEnabled = ambientEnabled
+
+        subtitleSizeSp = settings.subtitleSizeSp
+        subtitlePositionFraction = settings.subtitlePositionFraction
+        applySubtitleStyle()
+
+        if (::gestures.isInitialized) gestures.verticalGain = settings.verticalGain
+
+        applyGlassMaterial()
     }
 
     override fun onPause() {
@@ -1181,6 +1226,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      */
     override fun onEngineAudioDownmixed(from: Int, to: Int) {
         audioDownmixNote = "${PlaybackReport.channelLayout(from)} → ${PlaybackReport.channelLayout(to)}"
+        // Logged as well as shown: the harness asserts on this line, because the chip is only
+        // visible in a screenshot and the player will not settle for uiautomator.
+        Log.i(TAG, "audio downmixed from $from to $to channels")
         showFeedback(getString(R.string.audio_downmixed, from, to))
         updateStreamChips()
     }
@@ -1281,10 +1329,23 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             )
         }
 
-        // Only once it has actually happened, and it stays for the item: the layout on screen will
-        // read "5.1" either way, and without this there is nothing to say it was 7.1.
-        audioDownmixNote?.let { note ->
-            chips += ChipStrip.Chip(note, ChipStrip.Tone.ACTIVE)
+        // What the decoder produced and what the output will actually receive are different things.
+        // The track selector caps the channel count to what the sink accepts and Media3 downmixes to
+        // fit, but the chip above reports the *decoder*, so a 7.1 film on a stereo output cheerfully
+        // claims "7.1". This is the reachable case, and the one a user would otherwise never learn
+        // about - the failure callback below only fires when the cap itself turns out to be wrong.
+        val decoded = audioFormat?.channelCount ?: 0
+        val delivered = engine.maxAudioChannelCount
+        val note = audioDownmixNote ?: if (decoded > delivered && delivered > 0) {
+            "${PlaybackReport.channelLayout(decoded)} → ${PlaybackReport.channelLayout(delivered)}"
+        } else {
+            null
+        }
+        note?.let {
+            chips += ChipStrip.Chip(it, ChipStrip.Tone.ACTIVE)
+            // Only when there is something to say, so this stays one line per item rather than one
+            // per chip rebuild. The harness greps it; the user reads the chip.
+            Log.i(TAG, "audio downmix: decoder $decoded channels, output takes $delivered")
         }
 
         binding.playerChips.setChips(chips)
@@ -1405,7 +1466,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // A remux can carry fifty or more subtitle tracks and building a row for each one makes the
         // panel slow to open and impossible to scan. The cap keeps the common case instant; whatever
         // is selected is always listed, wherever it falls, and the rest are one tap away.
-        val limit = settings.subtitleTrackLimit
+        val limit = if (subtitleLimitOverridden) Int.MAX_VALUE else settings.subtitleTrackLimit
         val selectedTracks = textTracks.filter { it.selected }
         val listed = if (textTracks.size <= limit) {
             textTracks
@@ -1632,7 +1693,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         when {
             choice.value == VALUE_TEXT_SHOW_ALL -> {
-                settings.subtitleTrackLimit = mediaTracks.text.size
+                subtitleLimitOverridden = true
                 populateSubtitlePanel()
                 return
             }
