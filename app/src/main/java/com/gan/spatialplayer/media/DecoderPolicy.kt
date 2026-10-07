@@ -140,11 +140,7 @@ object DecoderPolicy {
      * which registers both the platform and the FFmpeg renderer families and reorders them
      * according to policy. `FFMPEG_ONLY` registers nothing but FFmpeg renderers.
      */
-    fun renderersFactory(
-        context: Context,
-        profile: DecoderProfile,
-        upmixAllowed: Boolean = true,
-    ): DefaultRenderersFactory =
+    fun renderersFactory(context: Context, profile: DecoderProfile): DefaultRenderersFactory =
         when (profile) {
             DecoderProfile.FFMPEG_ONLY ->
                 io.github.anilbeesetti.nextlib.media3ext.ffdecoder
@@ -156,7 +152,7 @@ object DecoderPolicy {
                         setEnableAudioTrackPlaybackParams(true)
                     }
 
-            else -> SpatialRenderersFactory(context, profile, upmixAllowed)
+            else -> SpatialRenderersFactory(context, profile)
         }
 
     /**

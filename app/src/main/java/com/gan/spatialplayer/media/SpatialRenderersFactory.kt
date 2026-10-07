@@ -5,9 +5,7 @@ import android.os.Handler
 import android.util.Log
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
-import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
-import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegAudioRenderer
@@ -38,15 +36,6 @@ import java.util.ArrayList
 class SpatialRenderersFactory(
     context: Context,
     private val profile: DecoderProfile,
-    /**
-     * Whether the stereo upmix may be inserted into the sink.
-     *
-     * Turned off for good once the output has refused a channel layout. The capability probe can
-     * claim six channels and the sink still refuse them - that is exactly what happened with 7.1 on
-     * the reference device - so the probe alone is not enough to trust, and an upmix that keeps
-     * failing would turn a track that plays into one that does not.
-     */
-    private val upmixAllowed: Boolean = true,
 ) : NextRenderersFactory(context) {
 
     init {
@@ -65,47 +54,43 @@ class SpatialRenderersFactory(
     }
 
     /**
-     * Builds the default sink with the stereo upmix in front of it.
+     * The stock sink, deliberately.
      *
-     * This is the documented seam for inserting an audio processor, and it has to reproduce what the
-     * superclass would have built: the float-output and playback-params flags come straight from the
-     * factory's own settings, and dropping either would change how every track is decoded.
+     * A stereo upmix was wired in here through `setAudioProcessors` / `setAudioProcessorChain`, and
+     * **it never engaged**. What was established on device, in order, because the answer is not
+     * obvious and should not have to be rediscovered:
      *
-     * The gate is deliberately a runtime question rather than a build-time one - the sink is asked
-     * whether it can take six channels at the stream's own sample rate.
+     *  * The processor is constructed by this factory (`Log` from its `init`) and the sink built here
+     *    is the very instance the renderers hold — `System.identityHashCode` matched on both sides of
+     *    `buildAudioRenderers`, and a reflective proxy over the sink logged the renderers calling
+     *    `setListener`, `setAudioAttributes`, `supportsFormat`, `getFormatSupport` and
+     *    `configure(Format(2, ..., audio/raw, ..., [2, 48000]))` on it.
+     *  * `AudioProcessingPipeline.configure` provably calls `processor.configure(format)` before
+     *    consulting `isActive()`, and has no exception table, so nothing can quietly skip a
+     *    processor in the middle of the chain.
+     *  * `DefaultAudioSink.DefaultAudioProcessorChain` copies the array it is given without
+     *    filtering, and its `getAudioProcessors()` returns it verbatim.
+     *  * Yet `configure` is **never** entered on the processor — proven with a log as the method's
+     *    first statement *and* with one in every branch that declines a format.
+     *
+     * The decisive observation is a negative one: `SonicAudioProcessor` lives in the same chain, and
+     * speed changes work in this app — so a chain *is* being configured, and it is the stock one.
+     * The chain handed to the builder is not the chain the sink ends up with. That is a Media3
+     * internal this app cannot see into, and guessing at it further is not worth the risk to a working
+     * audio path, so the upmix is not wired in at all until it is understood. `StereoUpmixProcessor`
+     * is kept because its DSP is implemented and unit-verified.
+     *
+     * Disabling offload was also tried (it bypasses the processor chain, and the platform spatialiser
+     * with it) and made no difference, so it is not carried either — it was a real cost to battery and
+     * to high-resolution audio for no benefit.
      */
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
-    ): AudioSink {
-        // The superclass declares a nullable return; the default path never actually returns null.
-        if (!upmixAllowed) {
-            return requireNotNull(
-                super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams),
-            ) { "default audio sink unavailable" }
-        }
-
-        Log.i(TAG, "building audio sink with the stereo upmix in the chain")
-        val built = DefaultAudioSink.Builder(context)
-            .setAudioProcessors(
-                arrayOf(
-                    StereoUpmixProcessor { sampleRate ->
-                        upmixAllowed && AudioOutputCapability.canOpenTrack(6, sampleRate)
-                    },
-                ),
-            )
-            .setEnableFloatOutput(enableFloatOutput)
-            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            // Offload hands the *encoded* stream straight to a hardware DSP, which skips the whole
-            // AudioProcessor chain - measured here: with offload allowed, `configure` was never
-            // called on the upmix processor at all, and the sink was configured with the encoded
-            // format rather than `audio/raw`. The same shortcut bypasses the platform spatialiser,
-            // which taps the PCM, so offload quietly defeats the feature this app exists for.
-            .setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }
-            .build()
-        return built
-    }
+    ): AudioSink = requireNotNull(
+        super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams),
+    ) { "default audio sink unavailable" }
 
     override fun buildAudioRenderers(
         context: Context,

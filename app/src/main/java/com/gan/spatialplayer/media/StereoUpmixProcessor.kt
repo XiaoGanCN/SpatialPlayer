@@ -139,6 +139,7 @@ class StereoUpmixProcessor(
     override fun configure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT || inputAudioFormat.channelCount != 2) {
             active = false
+            Log.i(TAG, "passing through: not stereo 16-bit PCM ($inputAudioFormat)")
             throw AudioProcessor.UnhandledAudioFormatException(inputAudioFormat)
         }
         if (inputAudioFormat.sampleRate != SR_44_1 && inputAudioFormat.sampleRate != SR_48) {

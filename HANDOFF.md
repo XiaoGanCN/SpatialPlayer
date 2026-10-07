@@ -285,12 +285,12 @@ the full native text that no log line produced.
 | `tools/smoke-test.sh` | 23 | basic play/seek/state |
 | `tools/verify-multichannel.sh` | 22 | codec routing + **same-language subtitle identity** |
 | `tools/verify-poweramp.sh` | 11 | provider, playable URI opens, artist+album 140/140 |
-| `tools/verify-spatial-audio.sh` | 9 | `isSpatialized=true`, head tracking non-DISABLED |
+| `tools/verify-spatial-audio.sh` | 10 | `isSpatialized=true`, head tracking non-DISABLED |
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
 | `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
 
-**90 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
+**91 checks total.** `tools/png_reader.py` is a dependency-free PNG reader shared by the image
 harnesses; `tools/chrome_presence.py` reports how much structure is in the **top bar** as the
 "chrome is visible" proxy, and `tools/glass_tracking.py` adds the freeze/tracking maths.
 Probes: `SmokeChaptersProbeActivity` (`SMOKE_CHAPTERS`, `--es chapters_probe_path`) logs one flat
@@ -429,36 +429,36 @@ GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
   then refuses the layout would turn a track that plays into one that does not. Needing `configure`
   to *decline* is worth knowing: the return type is not nullable, so the way to opt out is to throw
   `UnhandledAudioFormatException` (Media3 catches it and drops the processor).
-- **Q1 is the one item not verified on device, and it is worse than "not tested".** The processor is
-  never `configure`d. What is *proven* on device:
-  * `SpatialRenderersFactory.buildAudioSink` runs and builds a `DefaultAudioSink` with the processor
-    in its chain (log: `building audio sink with the stereo upmix in the chain`).
-  * That exact sink instance is what reaches `buildAudioRenderers` — verified by matching
-    `System.identityHashCode` on both sides, and nextlib's `FfmpegAudioRenderer` takes the sink as a
-    parameter rather than building its own (`javap` on `FfmpegAudioRenderer.<init>`).
-  * An audio track **is** selected for the test clip (the chips read `STEREO`), so this is not a
-    "no audio track" case.
-  * `StereoUpmixProcessor.configure` is never entered — proven with a log as the **first statement**
-    of the method, so no guard can be hiding it.
+- **Q1: the stereo upmix is implemented but NOT wired in, and the reason is not understood.**
+  `StereoUpmixProcessor` (verified DSP, see above) is in the tree, and `SpatialRenderersFactory`
+  deliberately builds the stock sink. Adding the processor via `setAudioProcessors` *and* via
+  `setAudioProcessorChain` both failed the same way, and the failure was chased to the point where
+  the remaining evidence is contradictory. What was established on device:
+  * The processor is constructed by the factory (logged from its `init`) — so the instance exists.
+  * The sink built in `buildAudioSink` is the very instance the renderers hold:
+    `System.identityHashCode` matched on both sides of `buildAudioRenderers`, and a reflective
+    `Proxy` over the sink logged the renderers calling `setListener`, `setAudioAttributes`,
+    `supportsFormat`, `getFormatSupport` and
+    `configure(Format(2, ..., audio/raw, ..., [2, 48000]))` on it — a **raw** configure, so the sink
+    is not in offload mode.
+  * `AudioProcessingPipeline.configure` calls `processor.configure(format)` **before** it consults
+    `isActive()`, and the method has **no exception table**, so nothing can skip a processor
+    mid-chain. `DefaultAudioSink.DefaultAudioProcessorChain` copies the array it is given without
+    filtering and returns it verbatim.
+  * Yet `StereoUpmixProcessor.configure` is never entered — proven with a log as the method's first
+    statement *and* a log in every branch that declines a format, read back with `logcat -s
+    StereoUpmix:V` so buffer eviction cannot hide it.
 
-  `AudioProcessingPipeline.configure` provably calls `processor.configure(format)` *before* it looks
-  at `isActive()`, so the chain is not filtering the processor out. That leaves the sink taking the
-  branch in `DefaultAudioSink.configure` that requires `format.sampleMimeType == "audio/raw"`
-  (`javap` offset 17 → `ifeq 255`): with a non-raw format the whole `AudioProcessingPipeline` is
-  skipped. In other words the sink is being driven in offload/passthrough mode.
-
-  `setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }` is already set
-  on the builder and did not change the outcome, and `dumpsys media.audio_flinger` shows
-  `AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD` threads present on the device. **Next diagnostic, in order:**
-  1. Wrap the sink in a delegating `AudioSink` that logs `configure(format, ...)` and forwards. That
-     settles whether the raw or the encoded format arrives, in one run.
-  2. If it is the encoded format, find who asked for offload. `MediaCodecAudioRenderer` is the usual
-     suspect and it decides from `AudioSink.getFormatSupport`, not only from the builder's provider.
-  3. Failing that, insert the processor from the renderer side instead: construct
-     `FfmpegAudioRenderer(handler, listener, sink)` ourselves in `buildAudioRenderers` rather than
-     letting nextlib do it, so the sink cannot be swapped underneath.
-  The regex/asset for the test is done: `/tmp/stereo_48k.mp4` (pushed to the device) is 30 s of
-  640x360 testsrc2 with a 48 kHz stereo AAC 440 Hz tone.
+  **The decisive observation is a negative one.** `SonicAudioProcessor` lives in that same chain, and
+  speed changes work in this app — so a chain *is* configured, and it is the stock one. The chain
+  given to the builder is not the chain the sink ends up with. That is a Media3 internal, and
+  guessing further is not worth risking a working audio path, so nothing is wired in.
+  Disabling offload (`setAudioOffloadSupportProvider { DEFAULT_UNSUPPORTED }`) was also tried — it is
+  the documented way to keep the platform spatialiser (which taps the PCM) in the path — and made no
+  difference, so it is not carried either: it costs battery and forces hi-res audio to PCM.
+  **Next step is not more of this analysis** — it is to ask upstream (Media3 issue, or the nextlib
+  author) with the four points above, or to upmix outside `AudioSink` entirely, e.g. by wrapping the
+  sink in a delegating `AudioSink` that does the mix between `handleBuffer` and the real sink.
 - **C6 leftover**: the user reported the real error only occurred on the 70 GB film; confirm the
   guard resolves it.
 
