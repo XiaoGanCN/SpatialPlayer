@@ -24,7 +24,7 @@ cd "/Applications/deepseek-harness-dsh-v0.1.6-alpha.1/Wrokspaces/Spatial Player"
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 ADB=$HOME/Library/Android/sdk/platform-tools/adb
-PKG=com.gan.spatialplayer.debug          # debug package id; release is com.gan.spatialplayer
+PKG=com.gan.spatialplayer.debug          # debug package id; release is org.spatialplayer
 
 ./gradlew :app:assembleDebug --no-daemon 2>&1 | grep -E "^e:|BUILD" | head -6
 $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
@@ -209,7 +209,7 @@ for 4K. Create one retriever per decode and `release()` in a `finally`; holding 
 file descriptors. Skip black lead-ins by trying several timestamps and rejecting frames below a
 luma/coverage threshold (two HDR files showed black at t=1s and now show real frames).
 
-### 4.8 Glass: the library cannot be used as-is
+### 4.8 Glass: the library cannot be used as-is for player page
 `QWEA0/Liquid-Glass-Android` (MIT) captures its backdrop by **drawing the view tree into a canvas**,
 which cannot see a `SurfaceView` — so it needs a `TextureView`, which gives up HDR passthrough.
 Also `setCustomBackdropCapture` makes its AGSL lens path bail out
@@ -341,7 +341,7 @@ On device: `/sdcard/Movies/SpatialPlayerTest/` holds `ac3_51_720p.mkv`, `truehd_
 `grid_720p.mp4` (static SMPTE bars + grid lines, 30 s — use this one for anything pixel-level, §3.12).
 
 Commit style: `git -c user.name="XiaoGanCN" -c user.email="76635216+XiaoGanCN@users.noreply.github.com"`.
-Use `commit -F -` with a heredoc; backticks in `-m` get shell-expanded.
+Use `commit -F -` with a heredoc; backticks in `-m` get shell-expanded, commit message should be short and precise.
 Repo: https://github.com/XiaoGanCN/SpatialPlayer (branch `main`). Release `v0.1.0` has a **stale** asset.
 GPL-3.0 applies to distributed builds (nextlib); app source is MIT.
 
@@ -569,6 +569,7 @@ ones that read oddly (a `dumpsys` field, a pixel correlation) are all explained 
 - **Never** `pm clear`, uninstall, reboot, or `adb shell monkey`. `KEYCODE_WAKEUP` / `SLEEP` / `HOME`
   are fine. Restore anything you change (rotation, volume, animation scale).
 - **Do not blast the volume** while testing.
+- **Do not copy the 70 GB film to the phone.** Make a shortened version for testing.
 - If adb needs re-authorising or the phone needs a tap, **say so on this Mac** - a modal `osascript
   display dialog` with a sound works; a plain `display notification` was missed more than once.
 - `README.md` stays terse.
@@ -616,6 +617,18 @@ Format: `- [ ] **What** — where it lives / how to tell it is done.`
 - [ ] **Launcher icon needs a real double-check.** Earlier attempts were rejected as "nearly
       unusable"; whatever replaces them must be looked at as a rendered icon at real sizes, not as a
       vector source. `app/src/main/res/mipmap-*/`.
+      
+- [ ] **Film mentioned in 4.4 still failed to decode/playback** File `/Volumes/Storage/Not Assigned/Lost6815751/Movies/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`, nothing on the screen when playing.
+
+- [ ] **Setting icon at `ImageButton` need rework** This should be self-explanatory.
+
+- [ ] **Poweramp playlist shows empty after refresh** Correctly show `140·1 folders Poweramp` when first launch, shows empty after refresh, root cause not find yet.
+
+- [ ] **Add double click reset and editable values for sliders** This should be self-explanatory.
+
+- [ ] **Decoder, Subtitles, Audio&spatial, Scaling, Speed and chapters page shows nothing if switched from other pages** Only opened from dedicated enteries will display corresponding page content. If opened from Scaling, Speed page will be empty, but change from other pages to Scaling will display Scaling settings correctly because opened from Scaling before. Switch to other video, the opened status reset.
+
+- [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
 
 - [ ] **`README.md` must stay terse.** No excessive explanation. It is currently stale with respect to
       the settings screen, the upmix matrix and the media session.
