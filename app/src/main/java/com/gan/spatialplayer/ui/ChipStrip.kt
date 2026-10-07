@@ -83,7 +83,21 @@ class ChipStrip @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
             includeFontPadding = false
             setPadding(dp(9), dp(5), dp(9), dp(5))
-            background = ChipDrawable(colors.fill, colors.stroke, dp(20).toFloat())
+            // The pill is glass, like every other surface: a chip sits over the picture in the player
+            // and over the ambient wash in the library, and it should refract what is behind it rather
+            // than sit on top of it as a flat tint.
+            background = GlassDrawable(
+                this,
+                GlassStyle(
+                    cornerRadiusPx = dp(20).toFloat(),
+                    bevelWidthPx = dp(8).toFloat(),
+                    refractionPx = dp(5).toFloat(),
+                    blurTexels = 6f,
+                    tint = colors.fill,
+                    specularStrength = if (chip.tone == Tone.NEUTRAL) 0.75f else 1.25f,
+                    fallbackFill = colors.fill,
+                ),
+            ).apply { radiusPx = dp(20).toFloat() }
             layoutParams = LayoutParams(
                 LayoutParams.WRAP_CONTENT,
                 LayoutParams.WRAP_CONTENT,

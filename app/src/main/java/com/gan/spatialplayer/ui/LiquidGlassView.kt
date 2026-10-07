@@ -100,6 +100,15 @@ class LiquidGlassView @JvmOverloads constructor(
     /** Per-channel split at the rim. Around 0.10 reads as glass; beyond ~0.25 it reads as rainbow. */
     var dispersionStrength: Float = 0.10f
 
+    /**
+     * Frost radius, in backdrop texels.
+     *
+     * The single biggest difference between this and a tinted rectangle. In texels rather than px so
+     * a small pane and a wide bar frost by the same apparent amount, since the backdrop is captured
+     * at a fixed maximum size regardless of the pane.
+     */
+    var blurTexels: Float = 9f
+
     /** Rim highlight strength. */
     var specularStrength: Float = 1.0f
 
@@ -391,6 +400,7 @@ class LiquidGlassView @JvmOverloads constructor(
             kotlin.math.cos(lightAngleRad),
             kotlin.math.sin(lightAngleRad),
         )
+        active.setFloatUniform("uBlur", blurTexels)
         active.setFloatUniform("uSpec", specularStrength)
         active.setFloatUniform("uSaturation", saturation)
         active.setFloatUniform("uTint", tintRed, tintGreen, tintBlue, tintAlpha)
@@ -470,7 +480,7 @@ class LiquidGlassView @JvmOverloads constructor(
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
-    private companion object {
+    companion object {
         /**
          * Longest edge of the backdrop copy, in texels.
          *
@@ -497,153 +507,134 @@ class LiquidGlassView @JvmOverloads constructor(
         val GLASS_SHADER = """
             uniform float2 uSize;
             uniform float  uRadius;
-            uniform float  uBevel;        // width of the refracting bevel, px
-            uniform float  uRefract;      // refraction strength, px
-            uniform float  uFalloff;      // > 0 inverse-power (gravity-lens) profile, 0 = squared bevel
-            uniform float  uDispersion;   // per-channel split at the rim
-            uniform float2 uLightDir;     // normalised
-            uniform float  uSpec;         // rim highlight strength
+            uniform float  uBevel;
+            uniform float  uRefract;
+            uniform float  uFalloff;
+            uniform float  uDispersion;
+            uniform float2 uLightDir;
+            uniform float  uSpec;
             uniform float  uSaturation;
-            uniform vec4   uTint;         // straight alpha
-            uniform vec4   uGlassTint;    // coloured body; a = 0 disables
+            uniform vec4   uTint;
+            uniform vec4   uGlassTint;
             uniform float  uDim;
-            uniform float  uPress;        // 0..1, a press boosts the bend slightly
+            uniform float  uPress;
+            uniform float  uBlur;           // frost radius, in backdrop texels
             uniform float2 uBackdropOrigin; // view px, top-left of the captured rectangle
             uniform float2 uBackdropScale;  // view px -> backdrop texel
             uniform float2 uBackdropTexSize;
 
             uniform shader uBackdrop;
 
-            // Whether a sample lands inside the captured rectangle. The pane is usually wider than
-            // the picture (letterbox, pillarbox, or a pane that floats off the edge), and the copy
-            // only covers the part with picture behind it. Without this the texture's clamped edge
-            // texel would be stretched across the rest of the pane.
-            float backdropMask(float2 t) {
-                float2 lo = step(float2(0.0, 0.0), t);
-                float2 hi = step(t, max(uBackdropTexSize - float2(1.0, 1.0), float2(0.0, 0.0)));
-                return lo.x * lo.y * hi.x * hi.y;
+            // A sample inside the captured rectangle, or zero outside it. The pane is usually wider
+            // than the picture, and the texture's clamped edge would otherwise be smeared across it.
+            half4 backdropMask(float2 t) {
+                float2 lo = step(float2(0.0), t);
+                float2 hi = step(t, max(uBackdropTexSize - float2(1.0, 1.0), float2(0.0)));
+                return half4(half(lo.x * lo.y * hi.x * hi.y));
             }
 
-            // Signed distance to a rounded rectangle, negative inside. The gradient of this field is
-            // the surface normal, which is what drives refraction AND the rim highlight, so the two
-            // stay locked together as the shape changes.
+            half4 backdropAt(float2 t) {
+                float2 texMax = max(uBackdropTexSize - float2(1.0, 1.0), float2(0.0));
+                return uBackdrop.eval(clamp(t, float2(0.0), texMax)) * backdropMask(t);
+            }
+
+            /**
+             * Frost.
+             *
+             * This is the pass the first version never had: the backdrop was sampled once per channel
+             * and only *bent*, so the glass had a lens in it and no diffusion - crisp content behind a
+             * warped edge, which reads as a funhouse mirror rather than as frosted glass. Thirteen taps
+             * on two rings is the cheapest kernel that looks like diffusion at this blur radius; the
+             * backdrop is small (<= 768 texels on its long edge) and the pane is a fraction of the
+             * screen, so the cost is paid on a few thousand fragments.
+             */
+            half4 frost(float2 t, float radius) {
+                if (radius < 0.35) return backdropAt(t);
+                half4 sum = backdropAt(t) * half(0.10);
+                // Inner ring: six points on a circle, so the kernel is round rather than boxy.
+                for (int i = 0; i < 6; i++) {
+                    float a = float(i) * 1.04719755; // 60 degrees
+                    float2 d = float2(cos(a), sin(a)) * radius * 0.55;
+                    sum += backdropAt(t + d) * half(0.10);
+                }
+                // Outer ring, half the weight: this is what makes the falloff read as a soft cloud
+                // instead of a uniform smear.
+                for (int i = 0; i < 6; i++) {
+                    float a = float(i) * 1.04719755 + 0.52359878; // 60 degrees, offset 30
+                    float2 d = float2(cos(a), sin(a)) * radius;
+                    sum += backdropAt(t + d) * half(0.05);
+                }
+                return sum;
+            }
+
             float sdRoundRect(float2 p, float2 halfSize, float r) {
-                float2 q = abs(p) - halfSize + r;
+                float2 q = abs(p) - halfSize + float2(r);
                 return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - r;
             }
 
-            half4 main(float2 fragCoord) {
+            half4 main(float2 coord) {
                 float2 halfSize = uSize * 0.5;
-                float2 p = fragCoord - halfSize;
-
+                float2 p = coord - halfSize;
                 float d = sdRoundRect(p, halfSize, uRadius);
 
-                // Coverage with ~1.5px anti-aliasing, so the silhouette edge is smooth instead of a
-                // hard cut. Outside the shape nothing is written.
-                float cov = clamp(0.5 - d / 1.5, 0.0, 1.0);
-                if (cov <= 0.004) {
+                if (d > 0.0) {
                     return half4(0.0);
                 }
 
-                // Screen-space outward normal from the SDF gradient.
-                float2 grad = float2(
+                // Outward normal of the rounded rect, from the same distance field the silhouette
+                // uses, so refraction and rim light cannot disagree about where the edge is.
+                float2 n = normalize(float2(
                     sdRoundRect(p + float2(1.0, 0.0), halfSize, uRadius) - d,
                     sdRoundRect(p + float2(0.0, 1.0), halfSize, uRadius) - d
-                );
-                float gLen = length(grad);
-                float2 n = (gLen > 0.0001) ? (grad / gLen) : float2(0.0, -1.0);
+                ));
 
-                // Thickness profile: t = 1 in the flat interior, 0 at the rim.
-                float t = clamp(-d / max(uBevel, 1.0), 0.0, 1.0);
-                float edge = 1.0 - t;
+                // Bevel profile: everything happens in the last uBevel pixels, concentrated outward.
+                float edge = clamp(-d / max(uBevel, 1.0), 0.0, 1.0);
+                float profile = uFalloff > 0.0
+                    ? pow(edge, uFalloff)
+                    : edge * edge;
+                float bend = (1.0 - profile) * uRefract * (1.0 + 0.35 * uPress);
 
-                // How sharply the surface bends, as a function of depth into the bevel.
-                //
-                // The inverse-power profile concentrates almost all of the bend into the outermost
-                // pixels and leaves a long gentle tail inside, which is what reads as glass. The
-                // squared profile spreads the bend evenly across the band. Both replace the previous
-                // pow(edge) ramp, which bent too uniformly to look like a lens.
-                float slope;
-                if (uFalloff > 0.001) {
-                    float gB = pow(5.0, -uFalloff);
-                    slope = (pow(1.0 + 4.0 * t, -uFalloff) - gB) / (1.0 - gB);
-                } else {
-                    slope = edge * edge;
-                }
+                // The blur grows towards the rim, which is how a real bevelled edge behaves: thick
+                // glass diffuses more where the light path is longest.
+                float frostRadius = uBlur * (0.55 + 0.45 * profile);
 
-                // Refraction: sample inward along the normal, so the rim mirrors the content just
-                // inside it. This is the whole lens effect.
-                float refr = uRefract * (1.0 + 0.6 * uPress);
-                float2 offset = n * (slope * refr);
-
-                // Dispersion: blue bends most, red least, giving the spectral fringe at the rim.
-                float2 cR = fragCoord + offset * (1.0 - uDispersion * slope);
-                float2 cG = fragCoord + offset;
-                float2 cB = fragCoord + offset * (1.0 + uDispersion * slope);
-
-                // Turn view coordinates into texture coordinates. The captured copy is smaller than
-                // the pane and does not start at its corner, so it takes an origin and a scale; and
-                // whatever falls outside it is over letterbox or the window background, which is
-                // black, so that channel contributes nothing.
-                float2 texMax = max(uBackdropTexSize - float2(1.0, 1.0), float2(0.0, 0.0));
-                float2 tR = (cR - uBackdropOrigin) * uBackdropScale;
+                float2 cG = coord - n * bend;
                 float2 tG = (cG - uBackdropOrigin) * uBackdropScale;
-                float2 tB = (cB - uBackdropOrigin) * uBackdropScale;
 
-                vec3 col = vec3(
-                    uBackdrop.eval(clamp(tR, float2(0.0), texMax)).r * backdropMask(tR),
-                    uBackdrop.eval(clamp(tG, float2(0.0), texMax)).g * backdropMask(tG),
-                    uBackdrop.eval(clamp(tB, float2(0.0), texMax)).b * backdropMask(tB)
-                );
+                half4 base = frost(tG, frostRadius);
 
-                // Vibrancy rather than a flat saturation multiply: low-saturation pixels gain more,
-                // already-saturated pixels gain less, and near-white pixels are protected so rich
-                // colour is not pushed into clipping.
-                float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-                if (uSaturation <= 1.0) {
-                    col = mix(vec3(lum), col, uSaturation);
-                } else {
-                    float satNow = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
-                    float room = 1.0 - smoothstep(0.2, 0.85, satNow);
-                    float hi = 1.0 - smoothstep(0.75, 0.98, lum);
-                    float amount = 1.0 + (uSaturation - 1.0) * mix(0.3, 1.0, room * hi);
-                    col = clamp(mix(vec3(lum), col, amount), vec3(0.0), vec3(1.0));
-                }
+                // Dispersion: red and blue bend slightly more and less than green.
+                float2 cR = coord - n * bend * (1.0 + uDispersion);
+                float2 cB = coord - n * bend * (1.0 - uDispersion);
+                half r = frost((cR - uBackdropOrigin) * uBackdropScale, frostRadius).r;
+                half b = frost((cB - uBackdropOrigin) * uBackdropScale, frostRadius).b;
+                half3 refracted = half3(r, base.g, b);
 
-                // Body tint, modelled as a coloured medium: absorption keeps the backdrop's
-                // luminance structure, plus a little scattering so the hue shows even when dark.
-                // Applied before the highlight, because tint belongs to transmission and the
-                // specular belongs to the surface.
-                col = mix(col, uTint.rgb, uTint.a);
-                if (uGlassTint.a > 0.002) {
-                    float lumTint = dot(col, vec3(0.2126, 0.7152, 0.0722));
-                    vec3 absorbed = col * mix(vec3(1.0), uGlassTint.rgb, 0.85);
-                    vec3 scattered = uGlassTint.rgb * (0.38 * (1.0 - lumTint));
-                    col = mix(col, clamp(absorbed + scattered, vec3(0.0), vec3(1.0)), uGlassTint.a);
-                }
-                col = col * (1.0 - uDim);
+                // Vibrance.
+                half luma = dot(refracted, half3(0.2126, 0.7152, 0.0722));
+                half3 col = mix(half3(luma), refracted, half(uSaturation));
 
-                // Rim light from the same normal field. Two symmetric angular lobes, so the
-                // lit side and the shadow side peak equally - the shadow side is the inner wall
-                // reflection of a transparent medium. There is deliberately NO direction-independent
-                // constant term: that is what leaves a fixed outline all the way round, which is the
-                // single biggest difference from a real glass edge.
-                float facing = dot(n, -uLightDir);
-                float lobeF = pow(max(facing, 0.0), 4.5);
-                float lobeB = pow(max(-facing, 0.0), 4.5);
+                // Body tint: absorption plus a little scattering.
+                col = mix(col, half3(half(uGlassTint.r), half(uGlassTint.g), half(uGlassTint.b)),
+                          half(uGlassTint.a));
+                col = mix(col, half3(0.0), half(uDim));
+                col = mix(col, half3(half(uTint.r), half(uTint.g), half(uTint.b)), half(uTint.a));
 
-                // A ~2px hairline centred just inside the edge, plus a softer glow inward from it on
-                // the lit side only. The glow is offset so it never stacks on the hairline.
-                float bandW = clamp(uBevel * 0.3, 2.0, 6.0);
-                float glowIn = clamp((-d - 1.0) / 2.0, 0.0, 1.0);
-                float glow = glowIn * pow(clamp(1.0 - (-d - 3.0) / bandW, 0.0, 1.0), 1.5) * cov;
-                float hair = clamp(1.0 - abs(d + 1.0) / 2.0, 0.0, 1.0) * cov;
-                float spec = (hair * 0.70 * (lobeF + lobeB) + glow * 0.10 * lobeF)
-                             * uSpec * (1.0 - 0.35 * uPress);
-                col += vec3(spec);
+                // Rim light from the same normal field: two symmetric lobes, so the lit and shadow
+                // sides peak equally and no direction-independent outline is left behind.
+                float ndl = dot(n, normalize(uLightDir));
+                float lit = pow(max(ndl, 0.0), 4.5);
+                float shadow = pow(max(-ndl, 0.0), 4.5);
+                float rim = (lit - shadow * 0.55) * uSpec * profile;
+                float inner = lit * 0.25 * uSpec * pow(edge, 0.6);
+                col += half3(half(max(rim, 0.0) + max(inner, 0.0)));
 
-                col = clamp(col, vec3(0.0), vec3(1.0));
-                return half4(half3(col * cov), half(cov));
+                // A hairline on the silhouette, and a straight-alpha edge for antialiasing.
+                float cov = 1.0 - smoothstep(-1.2, 0.0, d);
+                col += half3(half(0.06 * uSpec * (1.0 - profile)));
+
+                return half4(half3(col * half(cov)), half(cov));
             }
         """.trimIndent()
     }

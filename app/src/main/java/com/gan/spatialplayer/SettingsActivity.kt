@@ -20,6 +20,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.gan.spatialplayer.media.DecoderPolicy
 import com.gan.spatialplayer.media.PlaybackEngine
 import com.gan.spatialplayer.media.UpmixMatrix
+import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.media.DeviceCapabilities
 import com.gan.spatialplayer.media.DecoderProfile
@@ -77,6 +78,7 @@ class SettingsActivity : AppCompatActivity() {
         buildDiagnostics(column)
 
         setContentView(root)
+        GlassInstaller.apply(root)
     }
 
     // ------------------------------------------------------------------ chrome

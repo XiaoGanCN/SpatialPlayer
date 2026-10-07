@@ -33,6 +33,7 @@ import com.gan.spatialplayer.media.MediaRepository
 import com.gan.spatialplayer.media.PowerampReader
 import com.gan.spatialplayer.ui.ChipFade
 import com.gan.spatialplayer.ui.ChipStrip
+import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.ui.FileListAdapter
 import com.gan.spatialplayer.ui.ThumbnailLoader
 import kotlinx.coroutines.launch
@@ -141,6 +142,7 @@ class MainActivity : AppCompatActivity() {
         restoreFolderGrant()
         playIntro()
         requestNotificationPermission()
+        binding.root.post { GlassInstaller.apply(binding.root) }
 
         // An explicit VIEW intent means the user chose a file elsewhere; honour that first.
         if (!handleViewIntent(intent)) {

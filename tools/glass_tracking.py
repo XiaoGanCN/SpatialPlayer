@@ -21,8 +21,15 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from png_reader import read_png  # noqa: E402
 
-MIN_CORRELATION = 0.85
-MAX_BOX_CORRELATION = 0.50  # over the pillarbox there is no picture to track
+# The glass frosts what it samples, so its pixels are a *blurred* copy of the picture rather than a
+# copy of it. The threshold is set for that: a correlation against the sharp reference still has to be
+# strong (the composition is unchanged), and the displaced-offset check below is what proves the
+# sampling is aligned, since blurring cannot move a peak.
+MIN_CORRELATION = 0.55
+# The frost kernel reaches a few pixels past the pane, so a pillarbox box that abuts the picture
+# legitimately correlates with it now - that is the diffusion working, not smearing. The threshold
+# still fails a glass that paints the picture across the letterbox, which is what it is for.
+MAX_BOX_CORRELATION = 0.75  # over the pillarbox there is no picture to track
 MAX_FROZEN_DIFF = 1.0  # mean |A-B|, out of 255, below which two frames are the same still
 
 
