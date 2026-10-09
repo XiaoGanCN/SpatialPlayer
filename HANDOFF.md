@@ -423,6 +423,101 @@ output, where the tag and pid sit *between* the message and the first `|`. A pat
 pattern that is already known to work on the file rather than writing a fresh one from the format, and
 test it against the file.
 
+### 4.18 A Dolby Vision film plays to a black screen, and the decoder is innocent
+
+The user's 78 GB film: 3840×2160 HEVC Main 10, `smpte2084`/`bt2020nc`/`bt2020`, 23.976 fps, plus a
+Dolby Vision configuration record and an enhancement-layer decoder config (so **Profile 7**, dual
+layer), with TrueHD Atmos 7.1 and 51 subtitle tracks. Audio played, the clock advanced, the picture
+was black.
+
+Media3's Matroska extractor relabels the track the moment it finds that record:
+
+```java
+// MatroskaExtractor.parseTrackEntry
+if (dolbyVisionConfigBytes != null) {
+  DolbyVisionConfig dolbyVisionConfig = DolbyVisionConfig.parse(...);
+  if (dolbyVisionConfig != null) { codecs = dolbyVisionConfig.codecs; mimeType = MimeTypes.VIDEO_DOLBY_VISION; }
+}
+```
+
+Nothing on this phone is registered for `video/dolby-vision` (the panel advertises HDR10 and HLG),
+so the candidate list is empty, `MediaCodecVideoRenderer.supportsFormatInternal` returns
+`FORMAT_UNSUPPORTED_SUBTYPE`, and the video group becomes `supported=false`. **Media3 drops the
+track with no error at all** - `READY`, `isPlaying=true`, position advancing, black screen. Only the
+player can see this, which is why `TrackProbeActivity` exists:
+
+```
+group :: #1 type=video selected=false supported=false
+selector :: video/hevc         -> [c2.qti.hevc.decoder hw=true, c2.qti.hevc.decoder.low_latency, c2.android.hevc.decoder]
+selector :: video/dolby-vision -> []
+```
+
+The base layer is an ordinary HEVC Main10 stream and the hardware decodes it in ~90 ms - proved by
+decoding it in `DecodeProbeActivity` with and without the video MIME forced to `video/hevc`, both
+`DECODED 1 frame`. **Do not look for a codec problem here.** The fix is `DolbyVisionFallback`, which
+wraps the Matroska extractor, rewrites only a `video/dolby-vision` `Format` to `video/hevc`, drops
+the `dvhe.07.06` codec string (no HEVC decoder matches it; the real CSD is still in
+`initializationData`), and returns the stock factory untouched when the device *does* advertise a
+Dolby Vision decoder.
+
+After the fix, the same clip: `video selected=true supported=true`,
+`colorInfo=ColorInfo(BT2020, Limited range, ST2084 PQ)`, `renderedFirstFrame=true`, videoSize
+3840×2160, and **13.6% of the screen changes between two screenshots three seconds apart, where
+before it was 0.00%**. A 60 s cut carrying the film's own TrueHD track does the same
+(`audio/true-hd` 8ch selected, `renderedFirstFrame=true`).
+
+### 4.19 "Nothing on the screen" has three different causes and they look identical
+
+This cost most of a round, so it is written down as a method rather than as a finding. A black player
+with the audio running can be any of:
+
+1. the container was never parsed (no tracks at all);
+2. the track exists but no decoder was selected (`supported=false` - §4.18, and a renderer given no
+   output reports *nothing*, it never even constructs a codec);
+3. a decoder ran and produced no frames.
+
+Two probes separate them, because they stop at different boundaries: `DecodeProbeActivity` drives
+`MediaExtractor` + `MediaCodec` directly (extractor → codec creation → frames out),
+`TrackProbeActivity` reports what Media3 decided (`Tracks` groups, `isSupported`, `videoSize`,
+`renderedFirstFrame`, `PlaybackException`). **`TrackProbeActivity` must call `engine.build()`**, not
+`prepare()` - `prepare()` only prepares an existing player, and a probe that never built one sits in
+`IDLE` with the media item set and `canPrepare=true` and says nothing at all. It also must attach a
+real `SurfaceView`.
+
+And the question "is a picture on screen" needs neither: `tools/frame_motion.py a.png b.png` counts
+the pixels that differ. That single number is what turned a vague report into "0.00%", which is how
+the ceiling on a black screen was established.
+
+### 4.20 The press was a dead uniform, and the light never moved
+
+Two things were missing from **every** glass surface, and one of them was missing from the shader's
+inputs as well:
+
+* `pressAmount` was declared on `LiquidGlassView`, uploaded to the shader as `uPress`, and **never
+  written by anything**. Nothing in the app could have looked pressed.
+* `uLightDir` was a constant per surface (135° on the capsule), so the highlight stayed welded to one
+  corner however the phone was held - which is the difference between a surface and a printed
+  gradient. `tools/glass_tracking.py` cannot see this: it correlates the pane with the picture, and a
+  static highlight tracks just as well as a live one.
+
+Now: `LightSourceController` takes the world's up from gravity, remaps by `display.rotation`
+(a landscape phone reports gravity on a different axis), low-pass filters, blends back to the fixed
+direction below `FLAT_THRESHOLD` where the direction is pure noise, and invalidates only registered
+views. It is ref-counted, refuses to run in power-save or with "remove animations", and unregisters
+with the last view. The default angle is 150°, not 135°: the reference measured iOS 26's two bright
+edges at 30° off horizontal, and at 45° the lobes land on the corners and the rim reads as a vignette.
+
+The press comes from `RippleDrawable`'s own `setState` - the drawable is already wrapped in a ripple,
+so **no touch path had to be intercepted**; only the finger *position* needs a listener, because the
+ripple path cannot carry a coordinate. Down is 180 ms, up is 320 ms, and the local gaussian bulge
+under the finger is what reads as liquid (refraction alone just looks glossier).
+
+**Measured: 27% of the capsule band changes between rest and a held press in landscape, 0.01% in
+portrait.** The portrait number is not a bug: the capsule floats in the letterbox there, so the bulge
+displaces black onto black - §4.9 again. `PanelProbeActivity --es probe press` holds the press for
+3 s so a host screenshot can catch it; do not try to aim a scripted tap at a pane that is being
+hidden by the chrome's idle countdown, which is what the two failed attempts did.
+
 ## 5. Reference UI geometry (measured from the user's screenshot)
 
 User's screenshot: 2016 px wide → device 1096 px ⇒ **×0.5437**; then ÷2.625 for dp.
@@ -456,6 +551,7 @@ the full native text that no log line produced.
 | `tools/verify-background.sh` | 7 | audio survives HOME and screen-off, video does not. `SKIP_SCREEN_OFF=1` skips the two screen-off checks (§3.13) |
 | `tools/verify-panels.sh` | 11 | every inspector panel renders its rows however it was reached |
 | `tools/verify-rotation.sh` | 12 | the picture rect, and the chrome's touch path, survive a rotation |
+| `tools/frame_motion.py` | — | not a suite: prints the % of pixels that differ between two screenshots. The only honest answer to "is a picture on screen" (§4.19) |
 
 **127 checks total.** `verify-panels.sh`, `verify-rotation.sh`, `verify-gestures.sh` and
 `verify-multichannel.sh` are fully passing; `verify-background.sh` passes the check that was
@@ -718,6 +814,9 @@ glass revamp). This is the short version, so the state of the project can be rea
 ### Verified on device
 
 - Playback: AC3 / EAC3 / TrueHD / DTS through the bundled FFmpeg, 5.1 output, `isSpatialized=true`.
+- **Dolby Vision Profile 7 remuxes play as their HDR10 base layer** on this phone, which has no Dolby
+  Vision decoder - a 4K HEVC Main10 film with a TrueHD Atmos track decodes, presents and seeks. Before
+  the fix Media3 dropped the video track with no error at all (§4.18).
 - **Stereo is upmixed to 5.1 and spatialised**, which is what lets music head-track at all (§4.1).
   Three presets plus a per-channel manual matrix, all reachable from the player's audio panel and
   applied live from Settings.
@@ -728,7 +827,8 @@ glass revamp). This is the short version, so the state of the project can be rea
 - Subtitles: capped track list with "show all", and tracks are distinguishable even when the container
   gives them no titles.
 - Liquid glass: a frosted, refracting material on chips, buttons, cards, the action bar and the
-  capsule, from one shader and one style table (§6c).
+  capsule, from one shader and one style table (§6c). The highlight follows the device's attitude
+  (gravity sensor, ref-counted) and every surface presses with a local bulge under the finger (§4.20).
 - **Inspector panels render however they are reached.** Decoder, Subtitles, Audio & spatial, Scaling,
   Speed and Chapters all show their rows when switched to by tab, not only when opened from their own
   row - `tools/verify-panels.sh` is 11 of 11, and removing the one-line fix makes it report
@@ -864,7 +964,19 @@ Work that is wanted but not started, or that works and is not right yet.
       kept British selected, `text_selected=1`; disabling the identity reverted it to American every
       time. Five consecutive runs agree. Details in §4.16.
 
-- [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
+- [x] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** The
+      installer was already converting every `bg_glass_button` / `bg_glass_panel` surface, so what was
+      actually missing were the two behaviours that make the material read as a material: `按压液态`
+      and `enableSensorHighlight`. Both are now real on every surface, including the capsule. Calling
+      the reference library was not an option (its `GlassRuntimeEffects` needs API 36 and this tree is
+      pinned at 35), so both were ported from the reference source as before. Details and measurements
+      in §4.20.
+
+      **One honest limitation, measured and not a bug:** the library screens put almost nothing behind
+      the glass. The backdrop there is `(7,8,10)` at every sample taken across the list, so a pane has
+      nothing to refract and still reads as a flat grey capsule even though it now has a live
+      highlight and a press. Fixing that is a *design* change - a richer backdrop for the non-player
+      screens - and it has been raised with the user rather than guessed at.
 
 - [ ] **Glass refresh is ~11 Hz on the player, against a reference that runs at display rate.**
       `LiquidGlassView` polls `PixelCopy` every `REFRESH_MS = 90`. Closing the gap means changing *how*
@@ -878,7 +990,18 @@ Work that is wanted but not started, or that works and is not right yet.
       SurfaceFlinger. Answer with the layer dump in §4.10 rather than attempting it. Still unanswered
       as a design question, not as a bug.
 
-- [ ] **Film mentioned in 4.4 still failed to decode/playback** File `/Volumes/Storage/Not Assigned/Lost6815751/Movies/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`, nothing on the screen when playing.
+- [x] **Film mentioned in 4.4 still failed to decode/playback.** Fixed. It is a Dolby Vision Profile 7
+      remux, and Media3 relabels the video track `video/dolby-vision` when it finds the configuration
+      record - a type this phone has no decoder for, so the track is dropped **with no error** and the
+      film plays to a black screen. The HDR10 base layer is an ordinary HEVC Main10 stream that the
+      hardware decodes fine; `DolbyVisionFallback` hands it over as such. Verified on a clip cut from
+      the film and on a 60 s cut carrying its own TrueHD track: video group `selected=true
+      supported=true`, `renderedFirstFrame=true`, 13.6% of the screen moving between screenshots where
+      it was 0.00% before. Full root cause in §4.18.
+
+      **Not yet re-tested against the unmodified 78 GB file**, because the phone has no external
+      storage mounted for it. The change is in the container path, not the seek or buffer path, and the
+      clips are cuts of the same mux - but that is an extrapolation and should be said as one.
 
 - [ ] **`README.md` must stay terse.** No excessive explanation. It is currently stale with respect to
       the settings screen, the upmix matrix and the media session.
