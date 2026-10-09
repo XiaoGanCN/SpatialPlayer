@@ -20,6 +20,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -222,6 +223,12 @@ class PlayerEngine(
 
         val exo = ExoPlayer.Builder(context, renderersFactory)
             .setTrackSelector(trackSelector)
+            // Dolby Vision films carry a valid HDR10 base layer, but Media3 relabels the track
+            // `video/dolby-vision` and this device has no decoder for that type - so the track is
+            // dropped with no error and the film plays to a black screen. See DolbyVisionFallback.
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context, DolbyVisionFallback.extractorsFactory()),
+            )
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
             .setHandleAudioBecomingNoisy(true)
@@ -345,6 +352,16 @@ class PlayerEngine(
     }
 
     // ------------------------------------------------------------------ playback
+
+    /**
+     * The underlying player, for debug probes only.
+     *
+     * Playback questions that look identical from the outside - "no decoder was created" and "a
+     * decoder produced nothing" both appear as a black screen at the same position - are different
+     * bugs, and only the player can say which one is happening. Release builds never call this.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun playerForProbe(): Player? = player
 
     /**
      * Loads an item.

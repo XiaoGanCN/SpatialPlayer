@@ -108,5 +108,23 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.SpatialPlayer" />
 
+        <!--
+          Asks the decoder itself what it can do with a file, one boundary at a time. Started by
+          name with a `-d <content-uri>`; no intent filter, for the same reason as the probe above.
+        -->
+        <activity
+            android:name=".DecodeProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.SpatialPlayer" />
+
+        <activity
+            android:name=".TrackProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.SpatialPlayer" />
+
     </application>
 </manifest>
