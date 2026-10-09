@@ -745,7 +745,9 @@ Things that do not work. Each says how to tell it is done.
       actually headset-side (`com.sony.songpal` is installed, and the 1000X does its own tracking -
       check the headphones app first, because nothing on the phone would change that).
 
-- [ ] **Film mentioned in 4.4 still failed to decode/playback** File `/Volumes/Storage/Not Assigned/Lost6815751/Movies/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`, nothing on the screen when playing.
+- [ ] **Launcher icon needs a real double-check.** Earlier attempts were rejected as "nearly
+      unusable"; whatever replaces them must be looked at as a rendered icon at real sizes, not as a
+      vector source. `app/src/main/res/mipmap-*/`.
 
 ### Unfinished & Issues
 
@@ -797,14 +799,12 @@ Work that is wanted but not started, or that works and is not right yet.
       24 dp: three slider bars whose gaps are the knobs, so the bars vanish into the track. Replace
       with something legible at 24 dp and look at it rendered, not as a vector source.
 
-- [ ] **Launcher icon needs a real double-check.** Earlier attempts were rejected as "nearly
-      unusable"; whatever replaces them must be looked at as a rendered icon at real sizes, not as a
-      vector source. `app/src/main/res/mipmap-*/`.
-
 - [ ] **Add double click reset and editable values for sliders** Both editors build sliders in code
       (`InspectorSheet.sliderRow`, and the Settings screen). A double tap should restore the default
       and the reading should be typeable. `SliderRow` currently fires `onChoiceSelected` on every drag
       frame, which is why the value cannot be edited in place.
+
+- [ ] **Incorrect selected subtitle highlight** eg. choose from american english, british english, with sdh or without sdh, all of them are still classified as [en] sub, the highlight will stick with the first [en] sub in the list. Apply to all langages that share the same [`language`] tag.
 
 - [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
 
@@ -819,6 +819,8 @@ Work that is wanted but not started, or that works and is not right yet.
       window is an SDR `V0_SRGB` layer, so chrome over the picture is tone-mapped *against* it by
       SurfaceFlinger. Answer with the layer dump in §4.10 rather than attempting it. Still unanswered
       as a design question, not as a bug.
+
+- [ ] **Film mentioned in 4.4 still failed to decode/playback** File `/Volumes/Storage/Not Assigned/Lost6815751/Movies/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`, nothing on the screen when playing.
 
 - [ ] **`README.md` must stay terse.** No excessive explanation. It is currently stale with respect to
       the settings screen, the upmix matrix and the media session.
