@@ -518,6 +518,40 @@ displaces black onto black - §4.9 again. `PanelProbeActivity --es probe press` 
 3 s so a host screenshot can catch it; do not try to aim a scripted tap at a pane that is being
 hidden by the chrome's idle countdown, which is what the two failed attempts did.
 
+### 4.21 A `Drawable` cannot be identified by its resource, and glass hid behind that
+
+`GlassInstaller` recognised a surface by loading its background resource and comparing
+`constantState` with the view's background. **That can never match for a `RippleDrawable`** - every
+`getDrawable` call returns a fresh drawable with a fresh constant state, even for the same resource
+id. Measured on the library screen:
+
+```
+glass walk matched nothing: 9 painted view(s)
+  RippleDrawable@462c582/csac7e493 -> r2130844@bb79491/cs5949ff6, r2130845@7493ff7/csbb7ae64, ...
+```
+
+Nine painted views, nine candidates, no two hashes equal. All **15** XML-declared glass surfaces in the
+app - three header buttons, the action bar, Open file / Poweramp / Library, and the player's Back,
+Inspect, Metadata, Play, More, seek feedback and error card - kept the flat gradient the class exists
+to replace. The player's capsule was glass because `LiquidGlassView` is its own view; the settings
+screen and the sheet rows were glass because they set backgrounds **in code**, where the comparison
+happens by identity. So the feature looked present and was half missing, which is the worst shape for
+a bug: the one pane you look at is right.
+
+A surface now declares its role with `android:tag` / a tag set in code, and that is the only thing
+matched. `ids.xml` holds the four roles and the reason.
+
+**`android:tag="@id/glass_role_button"` does not work**, which is worth knowing before trying it: the
+framework stores it as the *string* `"false"` - measured, every tagged `ImageButton` came back
+`tag=String:false` - so the installer went on matching nothing after "fixing" the layout. The tags are
+set in the activities, where an `Int` stays an `Int`.
+
+`tools/verify-panels.sh` now asserts the installer's own count on both screens (**13** checks). That
+count is the only line that separates "installed" from "declared", and it fails on the old code - the
+library reports `0 pane(s)` against 9 painted views. **Look at this log line before believing any
+claim about the glass**, and read it before the panel probe clears logcat, which the first version of
+the check did not and so reported the library's line for the player.
+
 ## 5. Reference UI geometry (measured from the user's screenshot)
 
 User's screenshot: 2016 px wide → device 1096 px ⇒ **×0.5437**; then ÷2.625 for dp.
@@ -549,7 +583,7 @@ the full native text that no log line produced.
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
 | `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
 | `tools/verify-background.sh` | 7 | audio survives HOME and screen-off, video does not. `SKIP_SCREEN_OFF=1` skips the two screen-off checks (§3.13) |
-| `tools/verify-panels.sh` | 11 | every inspector panel renders its rows however it was reached |
+| `tools/verify-panels.sh` | 13 | every inspector panel renders its rows however it was reached, **and the glass is installed on both screens** (§4.21) |
 | `tools/verify-rotation.sh` | 12 | the picture rect, and the chrome's touch path, survive a rotation |
 | `tools/frame_motion.py` | — | not a suite: prints the % of pixels that differ between two screenshots. The only honest answer to "is a picture on screen" (§4.19) |
 
@@ -829,6 +863,9 @@ glass revamp). This is the short version, so the state of the project can be rea
 - Liquid glass: a frosted, refracting material on chips, buttons, cards, the action bar and the
   capsule, from one shader and one style table (§6c). The highlight follows the device's attitude
   (gravity sensor, ref-counted) and every surface presses with a local bulge under the finger (§4.20).
+  **Installed count is asserted, not assumed**: 8 panes on the player, 7 on the library, checked by
+  `tools/verify-panels.sh` because a surface that silently keeps its stand-in looks exactly like one
+  that was never meant to be glass (§4.21).
 - **Inspector panels render however they are reached.** Decoder, Subtitles, Audio & spatial, Scaling,
   Speed and Chapters all show their rows when switched to by tab, not only when opened from their own
   row - `tools/verify-panels.sh` is 11 of 11, and removing the one-line fix makes it report
@@ -972,11 +1009,16 @@ Work that is wanted but not started, or that works and is not right yet.
       pinned at 35), so both were ported from the reference source as before. Details and measurements
       in §4.20.
 
-      **One honest limitation, measured and not a bug:** the library screens put almost nothing behind
-      the glass. The backdrop there is `(7,8,10)` at every sample taken across the list, so a pane has
-      nothing to refract and still reads as a flat grey capsule even though it now has a live
-      highlight and a press. Fixing that is a *design* change - a richer backdrop for the non-player
-      screens - and it has been raised with the user rather than guessed at.
+      **Two corrections, both from the user saying "I didn't see any change on the main screen".**
+
+      1. They were right, and their first sentence was the whole bug report: the glass was **never
+         installed** on any XML-declared surface, so the main screen was genuinely untouched. The
+         installer was matching drawables by `constantState`, which cannot work for a ripple. Fixed by
+         tagging each surface with its role; asserted now in `verify-panels.sh`. Full account in §4.21.
+      2. The user was then asked whether to give the non-player screens a backdrop to refract, and
+         chose **flat** - so the dark UI stays pure black, deliberately, and a pane there still reads as
+         a grey capsule. That is a decision on record, not an unfinished item: do not "fix" it without
+         asking again.
 
 - [ ] **Glass refresh is ~11 Hz on the player, against a reference that runs at display rate.**
       `LiquidGlassView` polls `PixelCopy` every `REFRESH_MS = 90`. Closing the gap means changing *how*
