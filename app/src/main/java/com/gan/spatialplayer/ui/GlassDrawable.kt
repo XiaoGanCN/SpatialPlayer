@@ -1,5 +1,8 @@
 package com.gan.spatialplayer.ui
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
@@ -36,6 +39,84 @@ class GlassDrawable(
     }
     private val rect = RectF()
     private val location = IntArray(2)
+
+    /**
+     * Press state, in two parts.
+     *
+     * [pressAmount] is what the shader sees (0..1, ramped); [touchAmp] is separate because the local
+     * bulge under the finger only exists while the finger does, so releasing must fade the bulge with
+     * the ramp rather than leaving it behind.
+     *
+     * The press is driven by the drawable's own state, not by a touch listener: `RippleDrawable`
+     * above it reports the press through `setState`, so this needs no hook in the view's touch path
+     * and cannot steal a gesture from a control.
+     */
+    private var pressAmount = 0f
+    private var touchX = 0f
+    private var touchY = 0f
+    private var touchAmp = 0f
+    private var pressAnimator: ValueAnimator? = null
+    private var pressedState = false
+
+    /** Latched rather than read per press: it is a settings-provider query. */
+    private var animationsDisabled: Boolean? = null
+
+    /**
+     * Strength of the local bulge under the finger, relative to the rim refraction.
+     *
+     * The same number the player's capsule uses - the material is one material, and a button that
+     * pressed differently from the capsule would be two.
+     */
+    var pressBulgeStrength: Float = 2.4f
+
+    /** Where the finger is, in this pane's coordinates. Ignored unless it is down. */
+    fun setTouchPoint(x: Float, y: Float) {
+        if (touchX == x && touchY == y) return
+        touchX = x
+        touchY = y
+        invalidateSelf()
+    }
+
+    override fun isStateful(): Boolean = true
+
+    override fun onStateChange(state: IntArray): Boolean {
+        val pressed = state.contains(android.R.attr.state_pressed)
+        val wasPressed = pressedState
+        pressedState = pressed
+        if (pressed != wasPressed) animatePress(pressed)
+        return super.onStateChange(state)
+    }
+
+    private fun animatePress(pressed: Boolean) {
+        pressAnimator?.cancel()
+        val disabled = animationsDisabled
+            ?: LightSourceController.animationsDisabled(owner.context).also { animationsDisabled = it }
+        if (disabled) {
+            touchAmp = if (pressed) 1f else 0f
+            pressAmount = if (pressed) 1f else 0f
+            invalidateSelf()
+            return
+        }
+        if (pressed) touchAmp = 1f
+        pressAnimator = ValueAnimator.ofFloat(pressAmount, if (pressed) 1f else 0f).apply {
+            // Asymmetric: down is a displacement, up is a spring. See LiquidGlassView.animatePress.
+            duration = if (pressed) 180L else 320L
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener {
+                pressAmount = it.animatedValue as Float
+                invalidateSelf()
+            }
+            if (!pressed) {
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        touchAmp = 0f
+                        invalidateSelf()
+                    }
+                })
+            }
+            start()
+        }
+    }
 
     /** Corner radius in px; a pill passes half its height. */
     var radiusPx: Float = material.cornerRadiusPx
@@ -85,7 +166,10 @@ class GlassDrawable(
         shader.setFloatUniform("uSpec", style.specularStrength)
         shader.setFloatUniform("uSaturation", style.saturation)
         shader.setFloatUniform("uBlur", style.blurTexels)
-        shader.setFloatUniform("uLightDir", style.lightX, style.lightY)
+        // The sensor wins when there is one: a highlight welded to one corner is what makes glass
+        // read as a printed gradient. See LightSourceController.
+        val (lightX, lightY) = LightSourceController.lightFor(owner, style.lightX, style.lightY)
+        shader.setFloatUniform("uLightDir", lightX, lightY)
         shader.setFloatUniform("uTint", style.tintR, style.tintG, style.tintB, style.tintA)
         shader.setFloatUniform(
             "uGlassTint",
@@ -95,7 +179,10 @@ class GlassDrawable(
             style.bodyA,
         )
         shader.setFloatUniform("uDim", style.dimAmount)
-        shader.setFloatUniform("uPress", 0f)
+        shader.setFloatUniform("uPress", pressAmount)
+        shader.setFloatUniform("uTouchPos", touchX, touchY)
+        shader.setFloatUniform("uTouchAmp", touchAmp)
+        shader.setFloatUniform("uPressBulge", pressBulgeStrength)
         shader.setFloatUniform("uBackdropOrigin", x0, y0)
         shader.setFloatUniform("uBackdropScale", GlassBackdrop.imageScale, GlassBackdrop.imageScale)
         shader.setFloatUniform(

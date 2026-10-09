@@ -73,13 +73,17 @@ object GlassInstaller {
             } else {
                 glass
             }
+            watchTouch(view, glass)
             watch(view)
         }
     }
 
     /** Registers a view with the shared backdrop for as long as it is on screen. */
     fun watch(view: View) {
-        if (view.isAttachedToWindow) GlassBackdrop.watch(view)
+        if (view.isAttachedToWindow) {
+            GlassBackdrop.watch(view)
+            LightSourceController.register(view)
+        }
         view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             private var watching = false
 
@@ -87,6 +91,7 @@ object GlassInstaller {
                 if (!watching) {
                     watching = true
                     GlassBackdrop.watch(v)
+                    LightSourceController.register(v)
                 }
             }
 
@@ -94,9 +99,32 @@ object GlassInstaller {
                 if (watching) {
                     watching = false
                     GlassBackdrop.unwatch(v)
+                    LightSourceController.unregister(v)
                 }
             }
         })
+    }
+
+    /**
+     * Tells the glass where the finger is.
+     *
+     * The press *state* reaches the drawable through `RippleDrawable`'s `setState`, so nothing here
+     * decides whether the pane is pressed - this only adds the position, which the ripple path cannot
+     * carry. It runs before the view's own `onTouchEvent`, so the coordinate is set for the frame the
+     * press begins on rather than one frame late.
+     *
+     * Returning `false` for `ACTION_DOWN` would stop the view from ever seeing it, so the event is
+     * still dispatched. There is no gesture to steal: the only consumer below is the control itself.
+     */
+    private fun watchTouch(view: View, glass: GlassDrawable) {
+        view.setOnTouchListener { touched, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN,
+                android.view.MotionEvent.ACTION_MOVE,
+                -> glass.setTouchPoint(event.x, event.y)
+            }
+            touched.onTouchEvent(event)
+        }
     }
 
     private fun walk(view: View, visit: (View) -> Unit) {

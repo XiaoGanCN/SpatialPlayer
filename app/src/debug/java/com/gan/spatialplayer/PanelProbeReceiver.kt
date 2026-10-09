@@ -42,6 +42,10 @@ class PanelProbeReceiver : BroadcastReceiver() {
             probeGeometry(context)
             return
         }
+        if (intent.action == ACTION_GLASS_PRESS) {
+            probeGlassPress()
+            return
+        }
         trigger()
     }
 
@@ -63,6 +67,15 @@ class PanelProbeReceiver : BroadcastReceiver() {
          * `tools/verify-rotation.sh` after each rotation.
          */
         const val ACTION_GEOMETRY = "com.gan.spatialplayer.debug.GEOMETRY"
+
+        /**
+         * Holds the player's capsule in a press for a moment, so `tools/verify-glass-press.sh` can
+         * photograph the press and compare it with the same capsule at rest.
+         */
+        const val ACTION_GLASS_PRESS = "com.gan.spatialplayer.debug.GLASS_PRESS"
+
+        /** How long the press is held. Long enough to screenshot from the host, twice. */
+        private const val PRESS_HOLD_MS = 3_000L
 
         /**
          * Every panel whose rows the activity supplies, with the label its tab shows.
@@ -228,6 +241,42 @@ class PanelProbeReceiver : BroadcastReceiver() {
 
         private fun moreButtonOf(activity: PlayerActivity): android.view.View =
             activity.findViewById(R.id.buttonMore)
+
+        /**
+         * Presses the capsule and holds it, then releases and reports the geometry it was pressed at.
+         *
+         * The press is applied to the real activity's capsule rather than to a view built for the
+         * probe, for the same reason the panel probe drives the real sheet: the question is whether
+         * the material responds, and a copy would answer a different question.
+         */
+        private fun probeGlassPress() {
+            val activity = PlayerActivity.instance
+            if (activity == null) {
+                report("glass-press error=no_activity")
+                return
+            }
+            activity.showControlsTemporarilyForTest()
+            activity.window.decorView.post {
+                val (width, height) = activity.capsuleSizeForTest()
+                if (width <= 0 || height <= 0) {
+                    report("glass-press error=no_capsule w=$width h=$height")
+                    return@post
+                }
+                // A third of the way along and centred vertically: inside the silhouette, clear of the
+                // rounded ends, and away from the buttons that sit at either edge.
+                val x = width / 3f
+                val y = height / 2f
+                activity.pressCapsuleForTest(1f, x, y)
+                report("glass-press pressed=true w=$width h=$height x=${"%.0f".format(x)} y=${"%.0f".format(y)}")
+                activity.window.decorView.postDelayed(
+                    {
+                        activity.pressCapsuleForTest(0f, x, y)
+                        report("glass-press pressed=false")
+                    },
+                    PRESS_HOLD_MS,
+                )
+            }
+        }
 
         private fun report(data: String) {
             Log.i(TAG, "panel probe :: $data")

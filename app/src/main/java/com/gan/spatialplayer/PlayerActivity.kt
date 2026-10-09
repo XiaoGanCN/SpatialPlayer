@@ -1164,6 +1164,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                         addAction(PanelProbeReceiver.ACTION)
                         addAction(PanelProbeReceiver.ACTION_CHROME_TOUCH)
                         addAction(PanelProbeReceiver.ACTION_GEOMETRY)
+                        addAction(PanelProbeReceiver.ACTION_GLASS_PRESS)
                     },
                     RECEIVER_EXPORTED,
                 )
@@ -1905,6 +1906,21 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     /** Reveals the chrome with its idle countdown, the same call every interaction makes. */
     internal fun showControlsTemporarilyForTest() = showControlsTemporarily()
+
+    /**
+     * Puts the capsule into a held press, at [x]/[y] in its own coordinates, or releases it at zero.
+     *
+     * A scripted tap cannot be aimed at the capsule and held while a screenshot is taken - the
+     * chrome's idle countdown keeps hiding the controls out from under it, and the attempts made
+     * during this round photographed a fade rather than a press. Applying the state directly tests
+     * the part that can actually be wrong here, which is the rendering.
+     */
+    internal fun pressCapsuleForTest(amount: Float, x: Float, y: Float) =
+        binding.controlGlass.pressForTest(amount, x, y)
+
+    /** The capsule's size, so a probe can press somewhere inside it rather than at the origin. */
+    internal fun capsuleSizeForTest(): Pair<Int, Int> =
+        binding.controlGlass.width to binding.controlGlass.height
 
     /** Takes the chrome away the way the idle countdown does. */
     internal fun hideControlsForTest() = hideControls()

@@ -9,10 +9,16 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RuntimeShader
 import android.graphics.Shader
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
@@ -126,9 +132,38 @@ class LiquidGlassView @JvmOverloads constructor(
 
     /** 0..1 press state; boosts the bend slightly so a touch feels like it deforms the surface. */
     var pressAmount: Float = 0f
+        private set
 
-    /** Direction the light comes from, as an angle in radians. */
-    var lightAngleRad: Float = Math.toRadians(135.0).toFloat()
+    /** Where the finger is, in view coordinates, and whether it is down at all. */
+    private var touchX = 0f
+    private var touchY = 0f
+    private var touchAmp = 0f
+
+    /**
+     * Direction the light comes from, as an angle in radians.
+     *
+     * Only the fallback: when the device can track its own attitude the direction comes from
+     * [LightSourceController] instead, because a highlight welded to one corner is what makes glass
+     * read as a flat gradient. 150 degrees is up-and-left, about 30 degrees off horizontal - the
+     * angle the reference implementation measured off iOS 26 screenshots, not a 45-degree diagonal.
+     */
+    var lightAngleRad: Float = Math.toRadians(150.0).toFloat()
+
+    private var pressAnimator: ValueAnimator? = null
+
+    private var pressScaleAnimator: ObjectAnimator? = null
+
+    /** How far the pane shrinks at full press. */
+    private var pressScale = 0.965f
+
+    /**
+     * Strength of the local bulge under the finger, relative to the rim refraction.
+     *
+     * One number, because the whole "liquid" reading depends on it: too low and a press only looks
+     * glossier, too high and the backdrop smears into a bubble. 2.4 is where the magnification is
+     * visible through a control-sized pane without the edge inverting.
+     */
+    var pressBulgeStrength: Float = 2.4f
 
     /** The view whose surface should be read as the backdrop, usually the video. */
     var backdropSource: SurfaceView? = null
@@ -212,6 +247,125 @@ class LiquidGlassView @JvmOverloads constructor(
         handler.removeCallbacks(refreshTick)
     }
 
+    /**
+     * Press, release and drag, driving the liquid uniforms.
+     *
+     * The view is only clickable in the player's capsule, where it also swallows the gesture - the
+     * same contract the reference implementation has. Everywhere else this returns `false` and lets
+     * the normal touch path run, because a container that eats touches would break the controls
+     * inside it.
+     */
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchX = event.x
+                touchY = event.y
+                animatePress(true)
+                if (isClickable) {
+                    animateScale(true)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (touchAmp > 0f) {
+                    touchX = event.x
+                    touchY = event.y
+                    invalidate()
+                } else {
+                    return false
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (touchAmp > 0f) {
+                    animatePress(false)
+                    animateScale(false)
+                    if (isClickable) return true
+                }
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
+    /**
+     * Ramps the press into the shader.
+     *
+     * Asymmetric on purpose: 180 ms down and 320 ms back is what makes a press feel like it displaces
+     * something and a release feel like the surface springs back, rather than both being one fade.
+     * With the system's "remove animations" set, it jumps instead - the state still reaches the
+     * shader, so the surface is never left undrawn, only un-animated.
+     */
+    private fun animatePress(pressed: Boolean) {
+        pressAnimator?.cancel()
+        if (LightSourceController.animationsDisabled(context)) {
+            touchAmp = if (pressed) 1f else 0f
+            setPressAmount(if (pressed) 1f else 0f)
+            invalidate()
+            return
+        }
+        if (pressed) touchAmp = 1f
+        pressAnimator = ValueAnimator.ofFloat(pressAmount, if (pressed) 1f else 0f).apply {
+            duration = if (pressed) 180L else 320L
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener {
+                setPressAmount(it.animatedValue as Float)
+                invalidate()
+            }
+            if (!pressed) {
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        // The finger is gone; stop the bulge even if the ramp was cancelled.
+                        touchAmp = 0f
+                        invalidate()
+                    }
+                })
+            }
+            start()
+        }
+    }
+
+    private fun setPressAmount(value: Float) {
+        if (pressAmount == value) return
+        pressAmount = value
+        invalidate()
+    }
+
+    /**
+     * The elastic squash that accompanies the liquid.
+     *
+     * The scale is set on this view rather than on its children, so it composes with whatever layout
+     * the capsule is in; with "remove animations" it is skipped entirely, since a control that
+     * resizes under the finger is exactly what that setting is asking not to happen.
+     */
+    private fun animateScale(pressed: Boolean) {
+        if (LightSourceController.animationsDisabled(context)) return
+        pressScaleAnimator?.cancel()
+        pressScaleAnimator = ObjectAnimator.ofPropertyValuesHolder(
+            this,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, if (pressed) pressScale else 1f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, if (pressed) pressScale else 1f),
+        ).apply {
+            duration = if (pressed) 140L else 260L
+            interpolator = android.view.animation.DecelerateInterpolator()
+            start()
+        }
+    }
+
+    /**
+     * Drives a full press without a finger, for the instrumented check.
+     *
+     * A scripted tap cannot be aimed at a pane reliably - the screenshots kept catching the controls
+     * mid-fade - so the press is applied directly and the *rendering* is what gets compared, which is
+     * also the only part a test can see anyway. Release with `0f`.
+     */
+    fun pressForTest(amount: Float, x: Float, y: Float) {
+        touchAmp = amount
+        if (amount > 0f) {
+            touchX = x
+            touchY = y
+        }
+        setPressAmount(amount)
+    }
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         start()
@@ -219,6 +373,13 @@ class LiquidGlassView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         stop()
+        // The gravity sensor runs only while something is listening to it, and a detached capsule is
+        // not on screen to be lit.
+        LightSourceController.unregister(this)
+        pressAnimator?.cancel()
+        pressAnimator = null
+        pressScaleAnimator?.cancel()
+        pressScaleAnimator = null
         backBuffer?.recycle()
         backBuffer = null
         super.onDetachedFromWindow()
@@ -394,12 +555,14 @@ class LiquidGlassView @JvmOverloads constructor(
         active.setFloatUniform("uRefract", refractionPx)
         active.setFloatUniform("uFalloff", refractionFalloff)
         active.setFloatUniform("uDispersion", dispersionStrength)
-        // Light direction as a unit vector pointing FROM the surface TOWARD the light.
-        active.setFloatUniform(
-            "uLightDir",
+        // Light direction as a unit vector pointing FROM the surface TOWARD the light. The sensor
+        // wins when there is one: see LightSourceController for why the highlight has to move.
+        val (lightX, lightY) = LightSourceController.lightFor(
+            this,
             kotlin.math.cos(lightAngleRad),
             kotlin.math.sin(lightAngleRad),
         )
+        active.setFloatUniform("uLightDir", lightX, lightY)
         active.setFloatUniform("uBlur", blurTexels)
         active.setFloatUniform("uSpec", specularStrength)
         active.setFloatUniform("uSaturation", saturation)
@@ -413,6 +576,9 @@ class LiquidGlassView @JvmOverloads constructor(
         )
         active.setFloatUniform("uDim", dimAmount)
         active.setFloatUniform("uPress", pressAmount)
+        active.setFloatUniform("uTouchPos", touchX, touchY)
+        active.setFloatUniform("uTouchAmp", touchAmp)
+        active.setFloatUniform("uPressBulge", pressBulgeStrength)
         // View pixels -> backdrop texels, plus where the copy sits inside the view and how large it
         // is. The copy covers only the part of the pane with picture behind it; the shader uses the
         // extent to stop sampling at the picture's edge instead of smearing the clamped last texel.
@@ -517,7 +683,10 @@ class LiquidGlassView @JvmOverloads constructor(
             uniform vec4   uTint;
             uniform vec4   uGlassTint;
             uniform float  uDim;
-            uniform float  uPress;
+            uniform float  uPress;          // 0..1, how far into a press the surface is
+            uniform float2 uTouchPos;       // finger position in pane coordinates
+            uniform float  uTouchAmp;       // 0..1, whether the finger is on the pane at all
+            uniform float  uPressBulge;     // local magnification under the finger, vs rim refraction
             uniform float  uBlur;           // frost radius, in backdrop texels
             uniform float2 uBackdropOrigin; // view px, top-left of the captured rectangle
             uniform float2 uBackdropScale;  // view px -> backdrop texel
@@ -595,6 +764,19 @@ class LiquidGlassView @JvmOverloads constructor(
                     : edge * edge;
                 float bend = (1.0 - profile) * uRefract * (1.0 + 0.35 * uPress);
 
+                // The finger pushes a lens into the surface. This is the "liquid" half of the press:
+                // refraction alone strengthens the whole rim, which reads as the pane getting
+                // glossier, not as being pressed. A local bulge under the touch point samples towards
+                // the finger, so the backdrop magnifies exactly where the finger is - and it is
+                // weighted by uTouchAmp, which is zero unless that finger is down.
+                if (uTouchAmp > 0.001) {
+                    float2 tp = p - uTouchPos;
+                    float tr = length(tp);
+                    float sigma = max(max(halfSize.x, halfSize.y), 1.0);
+                    float bump = uTouchAmp * exp(-(tr * tr) / (sigma * sigma * 0.30));
+                    bend += bump * uRefract * uPressBulge;
+                }
+
                 // The blur grows towards the rim, which is how a real bevelled edge behaves: thick
                 // glass diffuses more where the light path is longest.
                 float frostRadius = uBlur * (0.55 + 0.45 * profile);
@@ -622,11 +804,13 @@ class LiquidGlassView @JvmOverloads constructor(
                 col = mix(col, half3(half(uTint.r), half(uTint.g), half(uTint.b)), half(uTint.a));
 
                 // Rim light from the same normal field: two symmetric lobes, so the lit and shadow
-                // sides peak equally and no direction-independent outline is left behind.
+                // sides peak equally and no direction-independent outline is left behind. Pressing
+                // tightens the lobe towards the rim and dims it slightly, which is what a thumb
+                // resting on glass does to the highlight over it.
                 float ndl = dot(n, normalize(uLightDir));
-                float lit = pow(max(ndl, 0.0), 4.5);
+                float lit = pow(max(ndl, 0.0), 4.5 + 1.6 * uPress);
                 float shadow = pow(max(-ndl, 0.0), 4.5);
-                float rim = (lit - shadow * 0.55) * uSpec * profile;
+                float rim = (lit - shadow * 0.55) * uSpec * (1.0 - 0.35 * uPress) * profile;
                 float inner = lit * 0.25 * uSpec * pow(edge, 0.6);
                 col += half3(half(max(rim, 0.0) + max(inner, 0.0)));
 

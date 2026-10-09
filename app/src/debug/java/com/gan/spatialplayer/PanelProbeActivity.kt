@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
  * | `panel` | [PanelProbeReceiver.ACTION] | the rows each inspector panel renders |
  * | `chrome` | [PanelProbeReceiver.ACTION_CHROME_TOUCH] | the chrome's touch routing, shown and timed out |
  * | `geometry` | [PanelProbeReceiver.ACTION_GEOMETRY] | the picture rect the wash is drawing with |
+ * | `press` | [PanelProbeReceiver.ACTION_GLASS_PRESS] | holds the capsule in a press for 3 s |
  *
  * The choice matters: all of them report through the same log tag, so firing more than one and then
  * grepping for "the last line" reads whichever happened to land last - which is how `verify-panels.sh`
@@ -39,6 +40,7 @@ class PanelProbeActivity : AppCompatActivity() {
                 when (wanted) {
                     PROBE_CHROME -> PanelProbeReceiver.ACTION_CHROME_TOUCH
                     PROBE_GEOMETRY -> PanelProbeReceiver.ACTION_GEOMETRY
+                    PROBE_PRESS -> PanelProbeReceiver.ACTION_GLASS_PRESS
                     else -> PanelProbeReceiver.ACTION
                 },
             )
@@ -57,5 +59,6 @@ class PanelProbeActivity : AppCompatActivity() {
         const val PROBE_PANEL = "panel"
         const val PROBE_CHROME = "chrome"
         const val PROBE_GEOMETRY = "geometry"
+        const val PROBE_PRESS = "press"
     }
 }
