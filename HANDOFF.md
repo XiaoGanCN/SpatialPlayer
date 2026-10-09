@@ -373,6 +373,56 @@ empty read does **not** set `powerampLoaded`, because `PowerampReader` turns a p
 empty list with `runCatching` - so latching on empty made "could not read" indistinguishable from "no
 music", permanently.
 
+### 4.16 A preference has to identify a track, not describe it
+A disc release carries four subtitle tracks in the same language - "American", "American / SDH",
+"British", "British / SDH" - and all four are `eng`. That makes a language preference useless for
+answering "which one did the user pick": restoring by language lands on whichever `eng` track Media3
+reaches first, which is the reported "the highlight sticks to the first [en] row".
+
+`PlayerActivity` already set a precise `TrackSelectionOverride` when a row was tapped, so the *live*
+selection was right. What was wrong was what got remembered for the next player: the language alone.
+Two things had to change and both were needed:
+
+1. `PlayerEngine` remembers the track's identity - renderer slot (`Tracks.groups` index), type, index
+   within the group, and the item it was chosen on - and re-applies it from `onTracksChanged`. The
+   group *object* cannot be remembered because a rebuild creates new ones; the index can, because the
+   renderers are built the same way and the container is the same.
+2. It is also applied at the moment of choosing, against the tracks already in hand. This is the part
+   that makes it deterministic: by the time the user taps a row, `onTracksChanged` has usually already
+   run for that track list, so waiting for the next one leaves the selection to the language
+   preference. The first version only restored on the callback and was **intermittent** - it worked
+   whenever another track change happened to follow, which is why it looked fine in one run and failed
+   in the next.
+
+If the identity no longer resolves, the override is deliberately not forced: the language preference
+already in the parameters is the right fallback, and selecting the first `eng` track beats selecting
+nothing.
+
+### 4.17 A debug probe that changes a persisted setting must put it back
+`SmokeProbeActivity --es track_probe_profile` called `engine.switchDecoderProfile`, which **writes the
+choice to the app's settings**. The probe left `FFMPEG_ONLY` behind, and that profile bypasses
+`SpatialRenderersFactory` entirely, so no FFmpeg renderer was registered for anything that ran
+afterwards. The symptom was `verify-multichannel.sh` reporting "no FFmpeg audio renderer evidence" -
+which reads exactly like a decoder regression, and cost several runs of chasing the wrong thing. The
+log line that gives it away: `SpatialRenderers :: audio renderers as built:` is absent, because the
+factory was never called.
+
+Two traps stacked here:
+
+* A probe must restore a persisted setting, and it must do so through the normal teardown. Releasing
+  the engine before `finish()` meant `onDestroy` found nothing to switch, so the restore silently did
+  nothing. The engine now outlives the report and `onDestroy` does the work.
+* A suite that reads a probe's log after a **fixed sleep** races the probe. The rebuild's settle time
+  grew and a one-second-short wait turned an empty log into "the rows are not distinguishable" and
+  "no identity restore happened" - three unrelated-looking failures from one timing bug. The probe now
+  logs a `probe_done` marker last and the subtitle checks poll for it.
+
+A related parsing note, since it bit twice in one sitting: these checks grep `logcat -v time -s Tag`
+output, where the tag and pid sit *between* the message and the first `|`. A pattern anchored on
+`(pid): *track :: type=text|...` matched nothing at all and silently reported the wrong row. Reuse the
+pattern that is already known to work on the file rather than writing a fresh one from the format, and
+test it against the file.
+
 ## 5. Reference UI geometry (measured from the user's screenshot)
 
 User's screenshot: 2016 px wide → device 1096 px ⇒ **×0.5437**; then ÷2.625 for dp.
@@ -397,7 +447,7 @@ the full native text that no log line produced.
 | Script | Checks | Notes |
 |---|---|---|
 | `tools/smoke-test.sh` | 23 | basic play/seek/state |
-| `tools/verify-multichannel.sh` | 22 | codec routing + **same-language subtitle identity** |
+| `tools/verify-multichannel.sh` | 25 | codec routing + **same-language subtitle identity**, including across a rebuild |
 | `tools/verify-poweramp.sh` | 11 | provider, playable URI opens, artist+album 140/140 |
 | `tools/verify-spatial-audio.sh` | 13 | `isSpatialized=true`, head tracking non-DISABLED |
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
@@ -407,8 +457,8 @@ the full native text that no log line produced.
 | `tools/verify-panels.sh` | 11 | every inspector panel renders its rows however it was reached |
 | `tools/verify-rotation.sh` | 12 | the picture rect, and the chrome's touch path, survive a rotation |
 
-**124 checks total.** `verify-panels.sh`, `verify-rotation.sh` and `verify-gestures.sh` are
-fully passing; `verify-background.sh` passes the check that was
+**127 checks total.** `verify-panels.sh`, `verify-rotation.sh`, `verify-gestures.sh` and
+`verify-multichannel.sh` are fully passing; `verify-background.sh` passes the check that was
 open for the whole life of this document — video pauses on HOME — when run with `SKIP_SCREEN_OFF=1`;
 without it, this phone's lock screen takes window focus during the screen-off phase and the following
 checks cannot see the app at all (§3.13). `tools/png_reader.py` is a dependency-free PNG reader shared
@@ -689,6 +739,8 @@ glass revamp). This is the short version, so the state of the project can be rea
   both directions (`tools/verify-rotation.sh`, 12 checks).
 - Poweramp's library survives a refresh, and an open Poweramp fold is filled when the app is
   relaunched rather than only re-opened.
+- The subtitle highlight follows the *specific* track chosen, not just its language, so the four `eng`
+  tracks on a disc release are distinguishable and the choice survives a decoder rebuild (§4.16).
 
 ### The harnesses
 
@@ -804,7 +856,13 @@ Work that is wanted but not started, or that works and is not right yet.
       and the reading should be typeable. `SliderRow` currently fires `onChoiceSelected` on every drag
       frame, which is why the value cannot be edited in place.
 
-- [ ] **Incorrect selected subtitle highlight** eg. choose from american english, british english, with sdh or without sdh, all of them are still classified as [en] sub, the highlight will stick with the first [en] sub in the list. Apply to all langages that share the same [`language`] tag.
+- [x] **Incorrect selected subtitle highlight** — fixed. Four `eng` tracks share one language tag, so
+      the language preference kept for a rebuilt player could not say which one was chosen and a
+      rebuild landed on the first `eng` track. `PlayerEngine` now remembers the chosen track's
+      identity and re-applies it, both when the track list changes and at the moment of choosing.
+      Measured with four same-language `eng` tracks through the app's own path: `selecting index 2`
+      kept British selected, `text_selected=1`; disabling the identity reverted it to American every
+      time. Five consecutive runs agree. Details in §4.16.
 
 - [ ] **Port all the chips, buttons to `Liquid Glass` design that is not in the player page.** Read `#### 现成小部件` in `/tmp/lg/README.md` to see what can be used. Implement `## 按压液态`, `enableSensorHighlight` in `/tmp/lg/docs/LIQUID_GLASS_V2.md` if it's possible
 
