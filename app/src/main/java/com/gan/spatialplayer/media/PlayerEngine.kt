@@ -6,12 +6,14 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
@@ -148,6 +150,28 @@ class PlayerEngine(
 
     /** Preferred subtitle language tag; null means do not auto-select subtitles. */
     var preferredSubtitleLanguageCode: String? = null
+
+    /**
+     * Which *specific* text track the user chose, and which item they chose it on.
+     *
+     * The language preference above cannot express this: a disc release carries four `eng` subtitle
+     * tracks ("American", "British", each with and without SDH) and every one of them is the same
+     * language, so restoring by language lands on whichever `eng` track Media3 reaches first - which
+     * is the reported bug, the highlight sticking to the first `[en]` row. This carries the identity
+     * so a rebuild can put the selection back exactly where it was.
+     *
+     * `mediaUri` is part of it because a selection only means anything for the item it was made on.
+     */
+    private var preferredTextTrack: TextTrackIdentity? = null
+
+    /** A text track addressed the way a rebuild can re-resolve it; see [preferredTextTrack]. */
+    private data class TextTrackIdentity(
+        val mediaUri: String,
+        /** Renderer slot, which is Media3's own index into `Tracks.groups`. */
+        val groupIndex: Int,
+        val type: Int,
+        val trackIndex: Int,
+    )
 
     /**
      * Highest channel count the track selector may choose.
@@ -506,6 +530,88 @@ class PlayerEngine(
         player?.setTrackSelectionParameters(buildTrackSelectionParameters())
     }
 
+    /**
+     * Remembers the exact text track the user picked, so a rebuild does not fall back to "some
+     * track in this language".
+     */
+    fun applyPreferredTextTrack(track: MediaTrack, mediaUri: String?) {
+        val groupIndex = groupIndexOf(track) ?: return
+        preferredTextTrack = TextTrackIdentity(
+            mediaUri = mediaUri.orEmpty(),
+            groupIndex = groupIndex,
+            type = C.TRACK_TYPE_TEXT,
+            trackIndex = track.trackIndex,
+        )
+
+        // Applied straight away, not only from `onTracksChanged`. That callback has usually already
+        // run for this track list by the time the user taps a row - and after a rebuild it always
+        // has - so waiting for the next one left the selection to the language preference, which for
+        // four `eng` tracks means the first of them. That is the reported bug, and it was intermittent
+        // for exactly this reason: whether it worked depended on whether another `onTracksChanged`
+        // happened to follow.
+        val exo = player ?: return
+        val group = exo.currentTracks.groups.getOrNull(groupIndex) ?: return
+        if (group.type != C.TRACK_TYPE_TEXT) return
+        if (track.trackIndex >= group.length) return
+        if (group.isTrackSelected(track.trackIndex)) return
+        applyTextOverride(exo, group, track.trackIndex)
+    }
+
+    /** Forgets the exact selection, e.g. when subtitles are turned off. */
+    fun clearPreferredTextTrack() {
+        preferredTextTrack = null
+    }
+
+    /**
+     * Media3's own index for the group [track] belongs to.
+     *
+     * `TrackSelectionOverride` needs the group *object*, which does not survive a rebuild - the new
+     * player has new group objects. The index does survive, because the renderers are built the same
+     * way and the container is the same, so that is what is remembered.
+     */
+    private fun groupIndexOf(track: MediaTrack): Int? {
+        val tracks = player?.currentTracks ?: return null
+        return tracks.groups.indexOfFirst { it.mediaTrackGroup.id == track.group.id }
+            .takeIf { it >= 0 }
+    }
+
+    /**
+     * Re-applies the remembered text track against a freshly published track list.
+     *
+     * Called from `onTracksChanged`, which is the first moment the new groups exist. If the identity
+     * no longer resolves - a different item, or a container whose streams moved - the override is not
+     * forced: the language preference already in the parameters is the right fallback, and it is
+     * better to select the first `eng` track than to select nothing at all.
+     */
+    private fun restorePreferredTextTrack(tracks: Tracks) {
+        val identity = preferredTextTrack ?: return
+        val exo = player ?: return
+        // A selection only means anything for the item it was made on.
+        if (identity.mediaUri.isNotEmpty() && identity.mediaUri != currentMediaUri?.toString()) return
+
+        val group = tracks.groups.getOrNull(identity.groupIndex) ?: return
+        if (group.type != identity.type) return
+        if (identity.trackIndex >= group.length) return
+        if (group.isTrackSelected(identity.trackIndex)) return
+
+        applyTextOverride(exo, group, identity.trackIndex)
+        Log.i(
+            TAG,
+            "restored text track: group ${identity.groupIndex} index ${identity.trackIndex}",
+        )
+    }
+
+    private fun applyTextOverride(
+        exo: ExoPlayer,
+        group: Tracks.Group,
+        trackIndex: Int,
+    ) {
+        val updated = exo.trackSelectionParameters.buildUpon()
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, trackIndex))
+            .build()
+        exo.trackSelectionParameters = updated
+    }
+
     // ------------------------------------------------------------------ state readout
 
     /** Snapshot for the inspection screen. */
@@ -737,6 +843,9 @@ class PlayerEngine(
         }
 
         override fun onTracksChanged(tracks: Tracks) {
+            // Before the listener, so the UI's first read of `selected` already reflects the restored
+            // choice rather than flashing the language's default track.
+            restorePreferredTextTrack(tracks)
             listener?.onEngineTracksChanged(tracks)
         }
 
@@ -806,6 +915,8 @@ class PlayerEngine(
     fun currentOutputDevice(): AudioDeviceInfo? = DeviceCapabilities.currentOutputDevice(context)
 
     companion object {
+        private const val TAG = "PlayerEngine"
+
         const val SEEK_STEP_MS = 10_000L
 
         /** MIME hints for containers the picker cannot describe. */

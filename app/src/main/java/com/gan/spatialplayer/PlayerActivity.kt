@@ -2193,6 +2193,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                         .build()
                 }
                 engine.applyPreferredSubtitleLanguage(null)
+                // Turning subtitles off has to forget the exact track too, or the next rebuild would
+                // put the one just dismissed back on screen.
+                engine.clearPreferredTextTrack()
                 Haptics.touch(binding.gestureLayer)
             }
             choice.value == "add_external" -> {
@@ -2269,7 +2272,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         when (track.type) {
             MediaTracks.TYPE_AUDIO -> track.language?.let { engine.applyPreferredAudioLanguage(it) }
-            MediaTracks.TYPE_TEXT -> track.language?.let { engine.applyPreferredSubtitleLanguage(it) }
+            MediaTracks.TYPE_TEXT -> {
+                // The language preference alone cannot say which of the four `eng` tracks was meant,
+                // so the exact track is remembered too - a rebuild restores it by identity. See
+                // `PlayerEngine.applyPreferredTextTrack`.
+                track.language?.let { engine.applyPreferredSubtitleLanguage(it) }
+                engine.applyPreferredTextTrack(track, mediaUri?.toString())
+            }
+
             else -> Unit
         }
     }

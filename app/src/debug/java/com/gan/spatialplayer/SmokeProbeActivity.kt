@@ -118,6 +118,17 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
 
     private var engine: PlayerEngine? = null
 
+    /**
+     * The decoder profile that was in force before this probe ran.
+     *
+     * `switchDecoderProfile` PERSISTS its choice to the app's settings, so a probe that leaves
+     * `FFMPEG_ONLY` behind changes the app for every later run: that profile bypasses
+     * `SpatialRenderersFactory` altogether, so no FFmpeg renderer is registered and nothing decodes.
+     * Measured - it broke `verify-multichannel.sh` for two consecutive runs, and the failure looked
+     * like a decoder regression rather than a leftover preference.
+     */
+    private var originalProfile: DecoderProfile? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val path = intent.getStringExtra(EXTRA_PATH)
@@ -143,7 +154,10 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         this.engine = engine
 
         // Optionally exercise a different decoder policy, to test whether audio track selection
-        // depends on which renderer claims the stream.
+        // depends on which renderer claims the stream. Applied before `build()`, and the previous
+        // value is restored in `onDestroy`; setting it here rather than mid-probe also means there is
+        // exactly one rebuild, so the selection made later is not racing a second one.
+        originalProfile = engine.decoderProfile
         when (intent.getStringExtra(EXTRA_PROFILE)) {
             "ffmpeg" -> engine.switchDecoderProfile(
                 com.gan.spatialplayer.media.DecoderProfile.FFMPEG_ONLY,
@@ -186,7 +200,15 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             // reflect an override until that thread has run. Report after it has settled.
             handler.postDelayed({
                 report(engine)
-                engine.release()
+                // An explicit end marker, last line always. A suite that reads the log after a fixed
+                // sleep races the rebuild it is measuring, and a half-written log looks exactly like
+                // a failed restore - measured, that is what made this check flaky at 1 run in 3.
+                Log.i(SmokeProbeActivity.TAG, "probe_done")
+                // The engine is NOT released here. It has to outlive this callback so `onDestroy` can
+                // put the decoder profile back - see `restoreProfile`. Releasing it here nulled the
+                // engine, `onDestroy` found nothing to switch, and FFMPEG_ONLY leaked into the app's
+                // settings, where it bypasses `SpatialRenderersFactory` and left every later run with
+                // no FFmpeg renderer at all.
                 finish()
             }, if (wantsText) SELECTION_SETTLE_MS else 0L)
         }, TRACK_SETTLE_MS)
@@ -244,6 +266,28 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setOverrideForType(resolved.toOverride())
             .build()
+
+        // Then do the two other things the subtitle panel does, which is the whole point of this
+        // option: record the language preference (a disc release's four `eng` tracks all share it)
+        // and the exact identity, so a rebuilt player has to restore the *specific* track rather than
+        // "some track in this language". Restoring by language alone lands on whichever `eng` track
+        // comes first, which is the reported "highlight sticks to the first [en] row". The rebuild
+        // itself is the `--es track_probe_profile` option: it is applied before the engine is built,
+        // so this track list is already the post-rebuild one.
+        if (intent.getBooleanExtra(EXTRA_APPLY_LANGUAGE, false)) {
+            resolved.language?.let { engine.applyPreferredSubtitleLanguage(it) }
+            engine.applyPreferredTextTrack(resolved, engine.currentMediaUri?.toString())
+            Log.i(
+                SmokeProbeActivity.TAG,
+                "select_text :: language=${resolved.language} recorded; this engine was built on a " +
+                    "different renderer stack, so its track list is the rebuild",
+            )
+            // No rebuild here: this option is used together with a decoder profile supplied on the
+            // command line, so the engine is already built with the profile the test wants and the
+            // track list arriving at `onTracksChanged` is the one that has to carry the selection
+            // over. See the profile handling in `onCreate` for why the profile is not switched
+            // midway.
+        }
     }
 
     private fun report(engine: PlayerEngine) {
@@ -300,9 +344,26 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         }
     }
 
-    override fun onDestroy() {
-        engine?.release()
+    /**
+     * Puts the decoder profile back and releases the engine.
+     *
+     * The profile matters more than it looks: `switchDecoderProfile` persists its choice, and
+     * `FFMPEG_ONLY` skips `SpatialRenderersFactory` entirely, so a probe that exits without restoring
+     * leaves the app unable to register an FFmpeg renderer at all. That is not a subtle failure - it
+     * broke the multichannel suite's decoder checks for every run after it.
+     */
+    private fun restoreProfile() {
+        val current = engine ?: return
+        val original = originalProfile
+        if (original != null && current.decoderProfile != original) {
+            current.switchDecoderProfile(original)
+        }
+        current.release()
         engine = null
+    }
+
+    override fun onDestroy() {
+        restoreProfile()
         super.onDestroy()
     }
 
@@ -312,9 +373,17 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
         const val EXTRA_SELECT_AUDIO = "track_probe_select_audio"
         const val EXTRA_PROFILE = "track_probe_profile"
         const val EXTRA_URI = "track_probe_uri"
+
+        /**
+         * Also record the language preference and the exact track, then rebuild - the app's path.
+         *
+         * Off by default so the existing suite's "select this specific track" check keeps testing
+         * selection alone.
+         */
+        const val EXTRA_APPLY_LANGUAGE = "track_probe_apply_language"
         private const val TRACK_SETTLE_MS = 3000L
 
         /** Time allowed for the playback thread to pick up a track-selection override. */
-        private const val SELECTION_SETTLE_MS = 5000L
+        private const val SELECTION_SETTLE_MS = 8000L
     }
 }

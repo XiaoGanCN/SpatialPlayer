@@ -249,7 +249,15 @@ else
   adb_ logcat -c
   sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
       --es track_probe_path "$MULTI_ENG" --ei track_probe_select_text_index 2 > /dev/null
-  sleep 14
+  # Waits for the probe's end marker rather than for a fixed interval, for the same reason as the
+  # rebuild check below: the probe's settle time grew, and a fixed sleep that is one second short
+  # reports an empty log as "the rows are not distinguishable".
+  waited=0
+  while [ "$waited" -lt 40 ]; do
+    if sh_ "logcat -d -s SpatialPlayerProbe:I" | grep -q "probe_done"; then break; fi
+    sleep 1
+    waited=$((waited + 1))
+  done
   adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/mc-subs-identity.txt" 2>/dev/null
   touch "$OUT_DIR/mc-subs-identity.txt"
   IDLOG="$OUT_DIR/mc-subs-identity.txt"
@@ -273,6 +281,69 @@ else
     pass "selecting index 2 highlighted the THIRD row ($SEL)"
   else
     fail "selecting index 2 highlighted '${SEL:-nothing}' instead of the third row"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # The same selection, but through the path the app actually takes and across a rebuild.
+  #
+  # Four `eng` subtitle tracks are one language, so a rebuilt player that restores "the language"
+  # lands on whichever `eng` track it reaches first - the reported bug, where the highlight stuck to
+  # the first [en] row however many times a different one was chosen. `--ez track_probe_apply_language`
+  # makes the probe record the language preference *and* the exact identity and then switch decoder
+  # profile, which is a real rebuild. Measured: without the identity the third row reverts to the
+  # first; with it, the third row stays selected.
+  # ---------------------------------------------------------------------------
+  say "same-language subtitle identity across a player rebuild"
+  sh_ am force-stop "$PKG_DEBUG"
+  sleep 1
+  adb_ logcat -c
+  # `--es track_probe_profile ffmpeg` builds the engine on a different renderer stack, which is a
+  # real rebuild: the track list that arrives afterwards is the one that has to carry the selection
+  # over. It is applied before the engine is built and put back in the probe's `onDestroy`, because
+  # `switchDecoderProfile` persists its choice and FFMPEG_ONLY would break every later run.
+  sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
+      --es track_probe_path "$MULTI_ENG" --ei track_probe_select_text_index 2 \
+      --ez track_probe_apply_language true --es track_probe_profile ffmpeg > /dev/null
+  # Wait for the probe's own end marker rather than for a fixed interval. The probe finishes after a
+  # rebuild, and reading the log mid-flight makes a slow rebuild look like a restore that never
+  # happened; the marker is written last, in the same pass as the report.
+  waited=0
+  while [ "$waited" -lt 40 ]; do
+    if sh_ "logcat -d -s SpatialPlayerProbe:I" | grep -q "probe_done"; then break; fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  adb_ logcat -d -v time -s SpatialPlayerProbe PlayerEngine > "$OUT_DIR/mc-subs-rebuild.txt" 2>/dev/null
+  touch "$OUT_DIR/mc-subs-rebuild.txt"
+  REBUILDLOG="$OUT_DIR/mc-subs-rebuild.txt"
+
+  if grep -q "select_text :: language=" "$REBUILDLOG"; then
+    pass "the app's path was taken: language preference and exact track both recorded"
+  else
+    fail "the probe did not record the selection, so this check would prove nothing"
+  fi
+
+  # No assertion on a "restored" log line. The selection is now applied when the track is chosen as
+  # well as when the track list changes, so on the normal path nothing needs restoring and that line
+  # never appears - checking for it tested which of the two paths ran, not what the user sees. The
+  # three checks below are the observable behaviour and are what the report was always about.
+  # The same pattern the checks above use. An anchored variant - `(pid): *track :: type=text|...` -
+  # matched nothing at all, because `logcat -v time -s Tag` writes the tag and pid between the message
+  # and the pipe, so the row text never begins where the anchor expects. Reusing the pattern that is
+  # already known to work on this exact file is the point; a fresh one has to be tested against the
+  # file rather than against the format it was written from.
+  R_ROWS=$(grep -oE "type=text\|selected=[a-z]+\|supported=[a-z]+\|label=[^|]*" "$REBUILDLOG")
+  R_SEL=$(printf '%s\n' "$R_ROWS" | grep "selected=true" | sed 's/.*label=//' | sed 's/ \[.*//' | head -1)
+  R_COUNT=$(printf '%s\n' "$R_ROWS" | grep -c "selected=true")
+  if [ "${R_COUNT:-0}" -eq 1 ]; then
+    pass "still exactly one subtitle row selected after the rebuild"
+  else
+    fail "expected exactly 1 selected subtitle row after the rebuild, found ${R_COUNT:-0}"
+  fi
+  if echo "$R_SEL" | grep -qi "third\|British" && ! echo "$R_SEL" | grep -qi "SDH"; then
+    pass "the rebuild kept the THIRD row selected ($R_SEL), not the first"
+  else
+    fail "the rebuild moved the selection to '${R_SEL:-nothing}' instead of keeping the third row"
   fi
 fi
 
