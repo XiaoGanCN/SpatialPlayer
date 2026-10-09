@@ -28,4 +28,23 @@
       counted a subtitle row as a heading and reported a populated panel as empty.
     -->
     <item name="sheet_section" type="id" />
+
+    <!--
+      Which glass role a view wears, set as `android:tag` in the layout.
+
+      Tagged because a Drawable cannot be identified by its resource. `GlassInstaller` originally
+      matched a view's background by loading the resource and comparing `constantState`, and that
+      **never matches for a `RippleDrawable`**: every `getDrawable` call builds a new drawable with a
+      fresh constant state, even for the same resource id. So every XML-declared glass background was
+      left as the flat gradient it was supposed to replace - which is what "the UI looks unchanged"
+      actually was. The player's own buttons only worked because `InspectorSheet` and
+      `SettingsActivity` set their backgrounds in code, where the comparison does happen by identity.
+
+      Measured on the main screen before the fix:
+      `glass walk matched nothing: 9 painted view(s)`.
+    -->
+    <item name="glass_role_button" type="id" />
+    <item name="glass_role_button_active" type="id" />
+    <item name="glass_role_bar" type="id" />
+    <item name="glass_role_panel" type="id" />
 </resources>

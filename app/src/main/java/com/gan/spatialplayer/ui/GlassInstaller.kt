@@ -3,34 +3,55 @@ package com.gan.spatialplayer.ui
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.drawable.RippleDrawable
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import com.gan.spatialplayer.R
 
+
 /**
- * Turns the app's existing glass backgrounds into real glass.
+ * Turns the app's placeholder backgrounds into real glass.
  *
- * Every control was styled with `bg_glass_button`, `bg_glass_button_active` or `bg_glass_panel` - XML
- * gradients that stand in for glass and cannot be more than a tint, because a shape drawable has no
- * idea what is behind it. Rather than hand-editing five layouts and two sheet builders and the
- * settings screen, this walks a view tree once and swaps any view wearing one of those backgrounds
- * for a [GlassDrawable] with the matching shape.
+ * Every control was styled with `bg_glass_button`, `bg_glass_button_active`, `bg_glass_bar` or
+ * `bg_glass_panel` - XML gradients that stand in for glass and cannot be more than a tint, because a
+ * shape drawable has no idea what is behind it. This walks a view tree once and swaps each of them
+ * for a [GlassDrawable] of the matching shape, so the material does not have to be installed by hand
+ * in five layouts, two sheet builders and the settings screen.
  *
- * The ripple is kept: it is re-wrapped *around* the glass rather than replaced, so a button still
- * reacts to a press. Losing that would have been the sort of regression that makes a "revamp" worse
- * than what it replaced.
+ * ## A view says what it is, and that is what gets matched
+ *
+ * The layout tags each surface with its role (`glass_role_button`, `glass_role_bar`, ...) and that
+ * tag is the only thing consulted. It used to try to recognise the background instead - load the
+ * resource, compare `constantState` - and that **cannot work for a `RippleDrawable`**: every
+ * `getDrawable` call returns a fresh drawable with a fresh constant state, even for the same resource
+ * id. Measured on the main screen: `glass walk matched nothing: 9 painted view(s)`, with every
+ * candidate's constant state a different hash from the background's. So every XML-declared surface in
+ * the app was left as the flat gradient this class exists to replace, and only the code-built ones
+ * (the settings screen, `InspectorSheet`'s rows) ever became glass. A resource-identity fallback is
+ * kept for a view that sets its background in code and was never tagged.
+ *
+ * The ripple is kept: it is re-wrapped *around* the glass rather than replaced, because its press
+ * state is what the glass reads to run the press animation. Losing that would have been the sort of
+ * regression that makes a "revamp" worse than what it replaced.
  */
 object GlassInstaller {
 
-    /** Radius and material per background resource, so a button and a panel stay different shapes. */
-    private data class Role(val radiusDp: Float, val style: (Context) -> GlassStyle)
+    /** The material for one role, built per context so dp becomes px. */
+    private data class Role(val style: (Context) -> GlassStyle)
 
+    /**
+     * The material for each role, keyed by the tag the layout puts on the view.
+     *
+     * The roundness of a control is a decision about that control, not about which drawable it used
+     * to wear - which is why the tag names the *role* and the role carries the shape. `bar` is wider
+     * than `button` because a 40 dp control and a full-width bar are not the same object.
+     */
     private fun roles(context: Context): Map<Int, Role> = mapOf(
-        R.drawable.bg_glass_button to Role(18f) { ctx ->
+        R.id.glass_role_button to Role { ctx ->
             GlassStyle(cornerRadiusPx = dp(ctx, 18f), fallbackFill = 0x2BFFFFFF)
         },
-        R.drawable.bg_glass_button_active to Role(18f) { ctx ->
+        R.id.glass_role_button_active to Role { ctx ->
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 18f),
                 tint = 0x598AB4F8.toInt(),
@@ -39,7 +60,17 @@ object GlassInstaller {
                 fallbackFill = 0x4D8AB4F8,
             )
         },
-        R.drawable.bg_glass_panel to Role(26f) { ctx ->
+        R.id.glass_role_bar to Role { ctx ->
+            GlassStyle(
+                cornerRadiusPx = dp(ctx, 30f),
+                bevelWidthPx = dp(ctx, 12f),
+                refractionPx = dp(ctx, 6f),
+                blurTexels = 8f,
+                tint = 0x1AFFFFFF,
+                fallbackFill = 0x2BFFFFFF,
+            )
+        },
+        R.id.glass_role_panel to Role { ctx ->
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 26f),
                 blurTexels = 9f,
@@ -51,31 +82,72 @@ object GlassInstaller {
         },
     )
 
-    /** Swaps every matching background in [root]'s subtree. Safe to call more than once. */
+    /**
+     * Which role [view] wears, or null if it is not a glass surface.
+     *
+     * The tag is authoritative. The old check - load the resource, compare `constantState` - is kept
+     * only as a fallback for a view that sets its background in code and was never tagged, and it is
+     * deliberately tried *second*: it cannot work for a `RippleDrawable` at all, because every
+     * `getDrawable` call produces a new constant state (see `ids.xml`).
+     */
+    private fun roleOf(view: View, map: Map<Int, Role>, legacy: Map<Int, Role>): Role? {
+        val tag = view.tag
+        if (tag is Int && map.containsKey(tag)) return map[tag]
+
+        val background = view.background ?: return null
+        val match = legacy.entries.firstOrNull { (res, _) ->
+            val candidate = runCatching { ContextCompat.getDrawable(view.context, res) }.getOrNull()
+            candidate === background
+        } ?: return null
+        return match.value
+    }
+
+    /**
+     * How many panes were installed and how many are being watched, for the log line.
+     *
+     * Kept as counters rather than a leak of the views: the interesting question is only whether the
+     * walk matched anything and whether the sensor has anything to light, and both are numbers.
+     */
+    @Volatile
+    var installedCount: Int = 0
+        private set
+
+    @Volatile
+    var watchedCount: Int = 0
+        private set
+
+    /** Swaps every tagged glass surface in [root]'s subtree for the real material. */
     fun apply(root: View) {
         val context = root.context
         val map = roles(context)
+        var installed = 0
+        var untagged = 0
         walk(root) { view ->
-            val background = view.background ?: return@walk
-            val match = map.entries.firstOrNull { (res, _) ->
-                val candidate = runCatching { ContextCompat.getDrawable(context, res) }.getOrNull()
-                candidate != null &&
-                    (candidate === background || candidate.constantState == background.constantState)
-            } ?: return@walk
-
-            val style = match.value.style(context)
+            if (view.tag !is Int || !map.containsKey(view.tag)) {
+                if (view.background != null) untagged++
+                return@walk
+            }
+            val style = map[view.tag]!!.style(context)
             val glass = GlassDrawable(view, style).apply { radiusPx = style.cornerRadiusPx }
-            // Ripples keep their press state; the glass becomes their content.
+            // A ripple's press state is what the glass drawable reads to run its press animation, so
+            // the ripple is kept and the glass becomes its content.
+            val background = view.background
             view.background = if (background is RippleDrawable) {
-                // RippleDrawable has no getter for its colour, so the same one the XML declared is
-                // used here - the tint is part of the material, not of the ripple.
+                // RippleDrawable has no getter for its colour, so the one the XML declared is used.
                 RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), glass, null)
             } else {
                 glass
             }
             watchTouch(view, glass)
             watch(view)
+            installed++
         }
+        installedCount += installed
+        Log.i(
+            TAG,
+            "glass installed on $installed pane(s) in this tree ($installedCount this session), " +
+                "$untagged painted view(s) left alone; sensor=${LightSourceController.status()}",
+        )
     }
 
     /** Registers a view with the shared backdrop for as long as it is on screen. */
@@ -136,4 +208,6 @@ object GlassInstaller {
 
     private fun dp(context: Context, value: Float): Float =
         value * context.resources.displayMetrics.density
+
+    private const val TAG = "GlassInstaller"
 }

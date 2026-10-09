@@ -51,6 +51,7 @@ import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
 import com.gan.spatialplayer.media.DecoderPolicy
 import com.gan.spatialplayer.ui.ChipFade
+import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.ui.ChipStrip
 import com.gan.spatialplayer.ui.AmbientSampler
 import com.gan.spatialplayer.ui.Haptics
@@ -323,6 +324,11 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.controlGlass.specularStrength = 1.0f
         binding.controlGlass.saturation = 1.06f
         applyGlassMaterial()
+
+        // The buttons and cards around the picture become the same material as the capsule. Their
+        // views exist by now, so the roles are set here and the walk runs after the first layout.
+        tagGlassSurfaces()
+        binding.root.post { GlassInstaller.apply(binding.root) }
 
         applySubtitleStyle()
     }
@@ -1903,6 +1909,30 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     /** The sheet itself, for a probe that has to read what it rendered. */
     internal fun sheetForTest() = inspectorSheet
+
+    /**
+     * The header and transport buttons wear the material, like every other surface in the app.
+     *
+     * Tagged in code, not in the layout: `android:tag="@id/..."` is stored as the string `"false"`,
+     * so an XML tag is invisible to [com.gan.spatialplayer.ui.GlassInstaller]. These views are here
+     * rather than in the installer because the installer cannot see what a view *is* - see its class
+     * comment.
+     */
+    private fun tagGlassSurfaces() {
+        val button = R.id.glass_role_button
+        for (id in intArrayOf(
+            R.id.buttonBack,
+            R.id.buttonInspect,
+            R.id.buttonMetadata,
+            R.id.buttonPlayPause,
+            R.id.buttonMore,
+            R.id.centerPlayPause,
+        )) {
+            findViewById<View>(id)?.tag = button
+        }
+        findViewById<View>(R.id.seekFeedback)?.tag = R.id.glass_role_panel
+        findViewById<View>(R.id.errorCard)?.tag = R.id.glass_role_panel
+    }
 
     /** Reveals the chrome with its idle countdown, the same call every interaction makes. */
     internal fun showControlsTemporarilyForTest() = showControlsTemporarily()

@@ -6,6 +6,8 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.PowerManager
+import android.os.SystemClock
+import android.util.Log
 import android.view.Surface
 import android.view.View
 import kotlin.math.abs
@@ -70,6 +72,7 @@ object LightSourceController : SensorEventListener {
     private var registered = false
     private var lastNotifiedX = DEFAULT_X
     private var lastNotifiedY = DEFAULT_Y
+    private var lastLoggedAt = 0L
 
     /** The current direction, or `null` when this device cannot track the light. */
     fun lightDirection(): Pair<Float, Float>? {
@@ -95,14 +98,31 @@ object LightSourceController : SensorEventListener {
             if (!listeners.add(view)) return
             if (registered) return
             val manager = view.context.applicationContext
-                .getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+                .getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+            if (manager == null) {
+                Log.w(TAG, "no SensorManager; the light will stay fixed")
+                return
+            }
             val found = manager.getDefaultSensor(Sensor.TYPE_GRAVITY)
                 ?: manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-                ?: return
+            if (found == null) {
+                Log.w(TAG, "no gravity or accelerometer; the light will stay fixed")
+                return
+            }
             manager.registerListener(this, found, SensorManager.SENSOR_DELAY_GAME)
             sensorManager = manager
             sensor = found
             registered = true
+            Log.i(TAG, "sensor light registered on ${found.name}")
+        }
+    }
+
+    /** One line for a log: whether the light is live, and how many panes are listening. */
+    fun status(): String = synchronized(listeners) {
+        if (!registered) {
+            "off (${listeners.size} pane(s) waiting)"
+        } else {
+            "live on ${sensor?.name} for ${listeners.size} pane(s)"
         }
     }
 
@@ -198,10 +218,20 @@ object LightSourceController : SensorEventListener {
         }
         lastNotifiedX = nx
         lastNotifiedY = ny
+        // Logged, throttled, because the direction is the one thing about this feature that cannot be
+        // photographed on a desk: proving the light tracks the device needs the device to be moved, and
+        // the number is what says whether the sensor actually reached the shader.
+        val now = SystemClock.uptimeMillis()
+        if (now - lastLoggedAt > 1_000L) {
+            lastLoggedAt = now
+            Log.i(TAG, "light dir ${"%.3f".format(nx)}, ${"%.3f".format(ny)} tilt=${"%.2f".format(tilt)}")
+        }
         synchronized(listeners) { listeners.toList() }.forEach { it.postInvalidateOnAnimation() }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+    private const val TAG = "LightSource"
 
     /**
      * Whether the system is set to remove animations.

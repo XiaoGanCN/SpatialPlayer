@@ -156,7 +156,7 @@ class MainActivity : AppCompatActivity() {
         restoreFolderGrant()
         playIntro()
         requestNotificationPermission()
-        binding.root.post { GlassInstaller.apply(binding.root) }
+        installGlass()
 
         // An explicit VIEW intent means the user chose a file elsewhere; honour that first.
         if (!handleViewIntent(intent)) {
@@ -267,6 +267,25 @@ class MainActivity : AppCompatActivity() {
         binding.fileList.layoutManager = LinearLayoutManager(this)
         binding.fileList.adapter = adapter
         binding.fileList.itemAnimator = null
+    }
+
+    /**
+     * Tags every surface that should wear the real material, then installs it.
+     *
+     * Tagged in code rather than in the layout because `android:tag="@id/..."` does not survive as a
+     * reference: the framework stores it as the *string* `"false"` (measured - every tagged
+     * ImageButton came back `tag=String:false`), so the installer saw no role and left all nine
+     * painted views alone. A tag set here is an `Int`, which is what `GlassInstaller` reads.
+     */
+    private fun installGlass() {
+        binding.buttonSettings.tag = R.id.glass_role_button
+        binding.buttonSpatialStatus.tag = R.id.glass_role_button
+        binding.buttonRefresh.tag = R.id.glass_role_button
+        binding.actionBar.tag = R.id.glass_role_bar
+        binding.buttonOpenFile.tag = R.id.glass_role_button_active
+        binding.buttonPoweramp.tag = R.id.glass_role_button
+        binding.buttonLibrary.tag = R.id.glass_role_button
+        binding.root.post { GlassInstaller.apply(binding.root) }
     }
 
     private fun setUpActions() {

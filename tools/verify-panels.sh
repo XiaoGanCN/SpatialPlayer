@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Verifies that every inspector panel renders its rows however it was reached.
+# Verifies that every inspector panel renders its rows however it was reached, and that the glass is
+# actually installed on the screens those panels appear over.
 #
 # The bug this guards against: the tab strip lives inside the sheet, so switching a panel by tab
 # never went through the activity's populate methods. Decoder, Subtitles, Audio, Scaling, Speed and
@@ -58,6 +59,16 @@ else
   exit 1
 fi
 
+# Read the player's glass line now, before the panel probe clears logcat - the installer logs once,
+# when the activity is set up, and `logcat -c` below would take it away. This was measured: the first
+# version of this check read the log after the probe and found the library's line instead.
+GLASS_PLAYER=$(adb_ logcat -d -s GlassInstaller 2>/dev/null | grep -oE "installed on [0-9]+ pane" | tail -1 | grep -oE "[0-9]+")
+if [ "${GLASS_PLAYER:-0}" -ge 1 ] 2>/dev/null; then
+  pass "glass installed on the player ($GLASS_PLAYER pane(s))"
+else
+  fail "glass installed on 0 panes on the player - the installer is matching nothing again"
+fi
+
 say "probe every panel"
 sh_ logcat -c
 sh_ am start -n "$ACT_PROBE" --es probe panel > /dev/null
@@ -108,6 +119,28 @@ if printf '%s' "$REPORT" | grep -q "closed=yes"; then
   pass "the probe dismissed the sheet"
 else
   fail "the sheet was still open when the probe finished ($REPORT)"
+fi
+
+say "the glass is installed, not just declared"
+# The bug this guards against is invisible by construction. `GlassInstaller` used to recognise a
+# surface by loading its background resource and comparing `constantState`, which can never match for
+# a `RippleDrawable` - every `getDrawable` call builds a fresh one. The result was that every
+# XML-declared glass surface in the app kept its flat gradient stand-in while the code said glass was
+# everywhere, and nothing failed: the player still played, the panels still rendered, and the only
+# symptom was a user saying the UI looked unchanged.
+#
+# So the assertion is the installer's own count. It is the one line that separates "installed" from
+# "declared", and it caught the real thing: the main screen reported 0 panes against 9 painted views.
+sh_ am force-stop "$PKG"
+sleep 1
+adb_ logcat -c
+sh_ am start -n "$PKG/com.gan.spatialplayer.MainActivity" > /dev/null
+sleep 4
+GLASS_LIB=$(adb_ logcat -d -s GlassInstaller 2>/dev/null | grep -oE "installed on [0-9]+ pane" | tail -1 | grep -oE "[0-9]+")
+if [ "${GLASS_LIB:-0}" -ge 1 ] 2>/dev/null; then
+  pass "glass installed on the library ($GLASS_LIB pane(s))"
+else
+  fail "glass installed on 0 panes on the library - flat stand-ins are back"
 fi
 
 say "cleanup"
