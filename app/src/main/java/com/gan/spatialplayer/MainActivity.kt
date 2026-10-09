@@ -376,6 +376,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = poweramp.readLibrary()
             showToast(result.status)
+            Log.i(tag, "poweramp read: entries=${result.entries.size} status=${result.status}")
             powerampEntries = result.entries
             // `runCatching` inside the reader turns a provider failure into an empty list, so an empty
             // result is "could not read", not "no music". Latching `true` on it is what made the chip
@@ -461,7 +462,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showFold(expanded: Boolean, animate: Boolean) {
-        adapter.submit(visibleEntries())
+        val submitted = visibleEntries()
+        adapter.submit(submitted)
+        Log.i(tag, "showFold expanded=$expanded submitted=${submitted.size} fold=$folded")
         updateEmptyState()
         updateLibrarySummary()
 
@@ -470,11 +473,12 @@ class MainActivity : AppCompatActivity() {
         val settle = dp(LIST_SETTLE_DP).toFloat()
 
         if (!animate) {
-            params.weight = if (expanded) 1f else 0f
-            body.layoutParams = params
-            body.visibility = if (expanded) View.VISIBLE else View.GONE
-            body.alpha = if (expanded) 1f else 0f
-            body.translationY = 0f
+            // The launch path: the persisted fold is opened before the first frame. Its final state is
+            // applied here and re-asserted once after layout, because a row list whose visibility and
+            // weight are only ever set in this one pass has no way back if that pass does not take.
+            // That is what a "the list only appears after I rotate" report looks like from the inside.
+            applyFoldBodyRestingState(body, params, expanded)
+            settleFoldBody(body, params, expanded)
             return
         }
 
@@ -510,6 +514,48 @@ class MainActivity : AppCompatActivity() {
                 }
             })
             start()
+        }
+    }
+
+    /**
+     * Puts the fold's body into its resting state without animating.
+     *
+     * The one place that decides what "open" and "closed" mean for the list itself, so the animated
+     * path and the launch path cannot drift apart.
+     */
+    private fun applyFoldBodyRestingState(
+        body: View,
+        params: LinearLayout.LayoutParams,
+        expanded: Boolean,
+    ) {
+        params.weight = if (expanded) 1f else 0f
+        body.layoutParams = params
+        body.visibility = if (expanded) View.VISIBLE else View.GONE
+        body.alpha = if (expanded) 1f else 0f
+        body.translationY = 0f
+    }
+
+    /**
+     * Re-applies the resting state once, after the first layout pass.
+     *
+     * The launch path opens the persisted fold before anything has been measured, and a weight only
+     * takes effect in the parent's next layout pass. If that pass does not happen - or happens before
+     * the rows arrive - the body sits at zero height with `GONE` children and nothing re-tries, which
+     * is "the list only appears after I rotate" from the inside. This costs one frame and does
+     * nothing when the state is already right.
+     */
+    private fun settleFoldBody(
+        body: View,
+        params: LinearLayout.LayoutParams,
+        expanded: Boolean,
+    ) {
+        body.post {
+            if (isFinishing || isDestroyed) return@post
+            val wrongWeight = params.weight != (if (expanded) 1f else 0f)
+            val wrongVisibility = body.visibility != (if (expanded) View.VISIBLE else View.GONE)
+            if (!wrongWeight && !wrongVisibility) return@post
+            Log.i(tag, "fold body had not settled; re-applying (expanded=$expanded)")
+            applyFoldBodyRestingState(body, params, expanded)
         }
     }
 
