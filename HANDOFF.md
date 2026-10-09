@@ -518,6 +518,10 @@ displaces black onto black - §4.9 again. `PanelProbeActivity --es probe press` 
 3 s so a host screenshot can catch it; do not try to aim a scripted tap at a pane that is being
 hidden by the chrome's idle countdown, which is what the two failed attempts did.
 
+**What the press *looks like* in the library is a big white bloom on the pane's right-hand end**, which
+is not a highlight: it is the frost bending the high-contrast list content at the rim, and it is what
+made a reviewer ask whether the light was too strong. It is the refraction, not the specular term.
+
 ### 4.21 A `Drawable` cannot be identified by its resource, and glass hid behind that
 
 `GlassInstaller` recognised a surface by loading its background resource and comparing
@@ -1016,9 +1020,10 @@ Work that is wanted but not started, or that works and is not right yet.
          installer was matching drawables by `constantState`, which cannot work for a ripple. Fixed by
          tagging each surface with its role; asserted now in `verify-panels.sh`. Full account in §4.21.
       2. The user was then asked whether to give the non-player screens a backdrop to refract, and
-         chose **flat** - so the dark UI stays pure black, deliberately, and a pane there still reads as
-         a grey capsule. That is a decision on record, not an unfinished item: do not "fix" it without
-         asking again.
+         chose **flat** - so the dark UI stays pure black. That is a decision on record, not an unfinished
+         item: do not "fix" it without asking again. It matters less than it sounded once (1) was fixed,
+         because the refraction of the list content and the artwork *inside* a pane is enough to read as
+         glass: a screenshot of the fixed library shows every chip and segment with a bent, bloomed rim.
 
 - [ ] **Glass refresh is ~11 Hz on the player, against a reference that runs at display rate.**
       `LiquidGlassView` polls `PixelCopy` every `REFRESH_MS = 90`. Closing the gap means changing *how*
