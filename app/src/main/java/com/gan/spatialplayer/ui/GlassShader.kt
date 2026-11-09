@@ -92,10 +92,11 @@ internal object GlassShader {
 
                 // Outward normal of the rounded rect, from the same distance field the silhouette
                 // uses, so refraction and rim light cannot disagree about where the edge is.
-                float2 n = normalize(float2(
+                float2 gradient = float2(
                     sdRoundRect(p + float2(1.0, 0.0), halfSize, uRadius) - d,
                     sdRoundRect(p + float2(0.0, 1.0), halfSize, uRadius) - d
-                ));
+                );
+                float2 n = gradient / max(length(gradient), 0.001);
 
                 // Bevel profile: everything happens in the last uBevel pixels, concentrated outward.
                 float edge = clamp(-d / max(uBevel, 1.0), 0.0, 1.0);
@@ -110,9 +111,9 @@ internal object GlassShader {
                 // the finger, so the backdrop magnifies exactly where the finger is - and it is
                 // weighted by uTouchAmp, which is zero unless that finger is down.
                 if (uTouchAmp > 0.001) {
-                    float2 tp = p - uTouchPos;
+                    float2 tp = coord - uTouchPos;
                     float tr = length(tp);
-                    float sigma = max(max(halfSize.x, halfSize.y), 1.0);
+                    float sigma = max(min(halfSize.x, halfSize.y) * 1.8, 1.0);
                     float bump = uTouchAmp * exp(-(tr * tr) / (sigma * sigma * 0.30));
                     bend += bump * uRefract * uPressBulge;
                 }
@@ -129,8 +130,8 @@ internal object GlassShader {
                 // Dispersion: red and blue bend slightly more and less than green.
                 float2 cR = coord - n * bend * (1.0 + uDispersion);
                 float2 cB = coord - n * bend * (1.0 - uDispersion);
-                half r = frost((cR - uBackdropOrigin) * uBackdropScale, frostRadius).r;
-                half b = frost((cB - uBackdropOrigin) * uBackdropScale, frostRadius).b;
+                half r = mix(base.r, backdropAt((cR - uBackdropOrigin) * uBackdropScale).r, half(uDispersion));
+                half b = mix(base.b, backdropAt((cB - uBackdropOrigin) * uBackdropScale).b, half(uDispersion));
                 half3 refracted = half3(r, base.g, b);
 
                 // Vibrance.
@@ -150,8 +151,8 @@ internal object GlassShader {
                 float ndl = dot(n, normalize(uLightDir));
                 float lit = pow(max(ndl, 0.0), 4.5 + 1.6 * uPress);
                 float shadow = pow(max(-ndl, 0.0), 4.5);
-                float rim = (lit - shadow * 0.55) * uSpec * (1.0 - 0.35 * uPress) * profile;
-                float inner = lit * 0.25 * uSpec * pow(edge, 0.6);
+                float rim = (lit - shadow * 0.55) * uSpec * (1.0 - 0.35 * uPress) * (1.0 - profile);
+                float inner = lit * 0.12 * uSpec * exp(-max(-d, 0.0) / max(uBevel, 1.0));
                 col += half3(half(max(rim, 0.0) + max(inner, 0.0)));
 
                 // A hairline on the silhouette, and a straight-alpha edge for antialiasing.

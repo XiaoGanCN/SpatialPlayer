@@ -184,6 +184,9 @@ class PlayerEngine(
     /** Invoked after [build] replaces the player, so a media session can re-point at the new one. */
     var onPlayerChanged: (() -> Unit)? = null
 
+    private var stereoProcessor: StereoUpmixProcessor? = null
+    val isStereoUpmixActive: Boolean get() = stereoProcessor?.isActive() == true
+
     fun build() {
         release()
 
@@ -227,6 +230,7 @@ class PlayerEngine(
         exo.addListener(playerListener)
         exo.addAnalyticsListener(analyticsListener)
         exo.setTrackSelectionParameters(buildTrackSelectionParameters())
+        stereoProcessor = (renderersFactory as? SpatialRenderersFactory)?.upmixProcessor
         player = exo
         onPlayerChanged?.invoke()
     }
@@ -426,6 +430,9 @@ class PlayerEngine(
             it.release()
         }
         player = null
+        stereoProcessor = null
+        actualVideoDecoder = "—"
+        actualAudioDecoder = "—"
     }
 
     /**
@@ -608,6 +615,7 @@ class PlayerEngine(
         val audioFormat = exo.audioFormat
         val audioCounters = exo.audioDecoderCounters
         val videoCounters = exo.videoDecoderCounters
+        videoCounters?.ensureUpdated()
 
         return PlayerSample(
             state = exo.playbackState,
@@ -616,8 +624,8 @@ class PlayerEngine(
             bufferedMs = exo.bufferedPosition,
             isPlaying = exo.isPlaying,
             playbackSpeed = exo.playbackParameters.speed,
-            videoCodecName = videoFormat?.sampleMimeType?.let { DecoderPolicy.describeRoute(it, decoderProfile) } ?: "—",
-            audioCodecName = audioFormat?.sampleMimeType?.let { DecoderPolicy.describeRoute(it, decoderProfile) } ?: "—",
+            videoCodecName = actualVideoDecoder,
+            audioCodecName = actualAudioDecoder,
             videoMime = videoFormat?.sampleMimeType ?: "—",
             audioMime = audioFormat?.sampleMimeType ?: "—",
             audioChannelCount = audioFormat?.channelCount ?: 0,
@@ -868,7 +876,19 @@ class PlayerEngine(
         }
     }
 
+    private var actualVideoDecoder = "—"
+    private var actualAudioDecoder = "—"
+
     private val analyticsListener = object : AnalyticsListener {
+        override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+            actualVideoDecoder = decoderName
+            Log.i(TAG, "actual video decoder: $decoderName")
+        }
+        override fun onAudioDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+            actualAudioDecoder = decoderName
+            Log.i(TAG, "actual audio decoder: $decoderName")
+        }
+
         override fun onAudioUnderrun(
             eventTime: AnalyticsListener.EventTime,
             bufferSize: Int,

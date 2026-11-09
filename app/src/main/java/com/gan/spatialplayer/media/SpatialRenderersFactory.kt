@@ -93,6 +93,9 @@ class SpatialRenderersFactory(
      * Speed changes are unaffected either way: `setEnableAudioTrackPlaybackParams(true)` hands
      * `PlaybackParameters` to `AudioTrack` itself rather than to `SonicAudioProcessor`.
      */
+    var upmixProcessor: StereoUpmixProcessor? = null
+        private set
+
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
@@ -114,7 +117,7 @@ class SpatialRenderersFactory(
                         canRenderSixChannels = { sampleRate ->
                             AudioOutputCapability.canOpenTrack(6, sampleRate)
                         },
-                    ),
+                    ).also { upmixProcessor = it },
                 ),
             )
             // Off, for the reason above - not a preference.
@@ -146,7 +149,13 @@ class SpatialRenderersFactory(
 
         Log.i(TAG, "audio renderers as built: ${out.map { it.javaClass.simpleName }}")
 
-        if (!profile.prefersFfmpegAudioFirst()) return
+        if (profile == DecoderProfile.HARDWARE_ONLY) out.removeAll { it is FfmpegAudioRenderer }
+        if (!profile.prefersFfmpegAudioFirst()) {
+            val software = out.filterIsInstance<FfmpegAudioRenderer>()
+            out.removeAll(software.toSet())
+            out.addAll(software)
+            return
+        }
 
         // Move the FFmpeg audio renderer to the front so it gets first refusal on the tracks it
         // handles. If the build did not include one, the list is left exactly as it was.
@@ -184,6 +193,14 @@ class SpatialRenderersFactory(
             out,
         )
 
+        if (profile == DecoderProfile.HARDWARE_ONLY) {
+            out.removeAll { it is FfmpegVideoRenderer }
+        } else if (!profile.prefersFfmpegVideoFirst()) {
+            val software = out.filterIsInstance<FfmpegVideoRenderer>()
+            out.removeAll(software.toSet())
+            out.addAll(software)
+        }
+        Log.i(TAG, "video renderers in priority order: ${out.map { it.javaClass.simpleName }}")
         if (!profile.prefersFfmpegVideoFirst()) return
 
         val index = out.indexOfFirst { it is FfmpegVideoRenderer }

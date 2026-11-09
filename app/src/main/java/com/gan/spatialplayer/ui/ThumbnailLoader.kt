@@ -17,29 +17,23 @@ import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Loads small previews for the library list: a frame for a video, album art for a recording.
- *
- * ## Why not decode at row size
- *
- * `getFrameAtTime()` returns a full-resolution frame - 4K for a modern film, which is roughly 35 MB
- * as an `ARGB_8888` bitmap. Sixteen of those in a row cache would exhaust the heap, and the decode
- * itself would stutter the list. [MediaMetadataRetriever.getScaledFrameAtTime] does the scaling
- * inside the decoder, so only the thumbnail is ever allocated.
- *
- * ## Why the retriever is not cached
- *
- * A `MediaMetadataRetriever` holds an open file descriptor and native decoder state. Keeping one per
- * row leaks descriptors as the user scrolls and can trip the "too many open files" limit. One is
- * created per decode and released in a `finally`, which is slower but bounded.
- *
- * Everything is best-effort: a format without a decodable video track, an unreadable URI, or a
- * failure to allocate simply leaves the caller's placeholder in place. Browsing must never fail
- * because a preview could not be produced.
+ * Bounded, best-effort library previews. Video uses provider-cached thumbnails so browsing does not
+ * reserve the playback decoder. Embedded album art is downsampled and its retriever released.
  */
 class ThumbnailLoader(context: Context) {
 
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    @Volatile private var paused = false
+    private val generation = AtomicInteger(0)
+    fun pause() {
+        paused = true
+        generation.incrementAndGet()
+        inFlight.values.forEach { it.cancel(true) }
+        inFlight.clear()
+    }
+    fun resume() { paused = false }
 
     /**
      * Decodes run on a small fixed pool. More threads would contend for the single hardware video
@@ -52,7 +46,7 @@ class ThumbnailLoader(context: Context) {
     /** In-flight decodes, so a fast scroll does not queue the same work repeatedly. */
     private val inFlight = ConcurrentHashMap<String, Future<*>>()
 
-    /** Approximate byte budget; the entry count is what matters, but size guards 4K frames. */
+    /** Bound decoded preview memory by bytes. */
     private val cache = object : LruCache<String, Bitmap>(CACHE_BYTES) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
@@ -61,7 +55,7 @@ class ThumbnailLoader(context: Context) {
     private val pendingTag = AtomicInteger(0)
 
     /**
-     * Loads a preview for [entry] into [target], or installs [fallbackRes] when there is none.
+     * Loads a preview for [uri] into [target], or installs [fallbackRes] when there is none.
      *
      * [target] is tagged with the request so a result arriving after the row has been recycled for a
      * different file is discarded rather than shown against the wrong title.
@@ -77,6 +71,8 @@ class ThumbnailLoader(context: Context) {
         target: ImageView,
         fallbackRes: Int,
     ) {
+        if (paused) return
+        val epoch = generation.get()
         val key = uri.toString()
         val token = pendingTag.incrementAndGet()
         target.tag = token
@@ -99,8 +95,12 @@ class ThumbnailLoader(context: Context) {
         if (inFlight.containsKey(key)) return
 
         val task = executor.submit {
-            val bitmap = decode(uri)
+            if (paused || generation.get() != epoch) return@submit
+            val bitmap = runCatching { decode(uri)?.let {
+                if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it
+            } }.getOrNull()
             mainHandler.post {
+                if (paused || generation.get() != epoch) return@post
                 inFlight.remove(key)
                 if (bitmap == null) return@post
                 cache.put(key, bitmap)
@@ -111,55 +111,13 @@ class ThumbnailLoader(context: Context) {
         inFlight[key] = task
     }
 
-    /**
-     * Grabs one representative frame.
-     *
-     * The very first frame is a poor choice: plenty of encodes open on black, a slate or a fade, so
-     * a thumbnail taken at zero reads as "this file is broken". A few timestamps are tried in order
-     * and the first one that yields a frame which is not almost entirely black wins. The darkness
-     * test is what stops a black lead-in from being accepted just because a frame exists.
-     */
-    private fun decodeFrame(uri: Uri): Bitmap? {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(appContext, uri)
+    /** Provider-cached previews avoid competing with foreground video decode. */
+    private fun decodeFrame(uri: Uri): Bitmap? = runCatching {
+        // Let the provider use its cached thumbnail. App-owned retrievers can reserve the same
+        // hardware HEVC decoder the foreground HDR player needs, even after a Future is cancelled.
+        appContext.contentResolver.loadThumbnail(uri, Size(THUMB_WIDTH, THUMB_HEIGHT), null)
+    }.getOrNull()
 
-            var best: Bitmap? = null
-            for (offsetUs in FRAME_CANDIDATES_US) {
-                val frame = retriever.getScaledFrameAtTime(
-                    offsetUs,
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                    THUMB_WIDTH,
-                    THUMB_HEIGHT,
-                ) ?: continue
-                if (!isMostlyBlack(frame)) return scaleDown(frame)
-
-                // Keep the first frame as a fallback in case every candidate is dark, so a genuinely
-                // dark film still gets a preview rather than the placeholder icon.
-                if (best == null) best = frame else frame.recycle()
-            }
-            best?.let { scaleDown(it) }
-        } catch (_: Exception) {
-            // Includes RuntimeException from failed setDataSource and allocation failures; a missing
-            // preview is never worth surfacing to the user.
-            null
-        } finally {
-            runCatching { retriever.release() }
-        }
-    }
-
-    /**
-     * Cover art for a recording.
-     *
-     * Two sources, in order of preference. `loadThumbnail` is the cheap one: it is the system's own
-     * audio thumbnailer, already cached per album, and it also covers the case where the art lives on
-     * the album rather than inside the file. Embedded art is the fallback for anything the media
-     * store does not index - a file from a user-granted folder, or a Poweramp row whose URI the store
-     * no longer knows.
-     *
-     * Without this the audio rows are the only ones in the list with an empty frame, which is exactly
-     * what "the Poweramp page has no cover art" looks like from the outside.
-     */
     private fun decodeAlbumArt(uri: Uri): Bitmap? {
         runCatching {
             appContext.contentResolver.loadThumbnail(uri, Size(ART_SIZE, ART_SIZE), null)
@@ -169,46 +127,17 @@ class ThumbnailLoader(context: Context) {
         return try {
             retriever.setDataSource(appContext, uri)
             val embedded = retriever.embeddedPicture ?: return null
-            BitmapFactory.decodeByteArray(embedded, 0, embedded.size)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(embedded, 0, embedded.size, bounds)
+            val options = BitmapFactory.Options()
+            while (bounds.outWidth / options.inSampleSize > ART_SIZE * 2 ||
+                bounds.outHeight / options.inSampleSize > ART_SIZE * 2) options.inSampleSize *= 2
+            BitmapFactory.decodeByteArray(embedded, 0, embedded.size, options)
         } catch (_: Exception) {
             null
         } finally {
             runCatching { retriever.release() }
         }
-    }
-
-    /**
-     * True when a frame carries almost no information.
-     *
-     * Samples a sparse grid rather than every pixel: at thumbnail scale the difference never
-     * matters and this runs on the decode thread for every list row.
-     */
-    private fun isMostlyBlack(bitmap: Bitmap): Boolean {
-        val stepX = (bitmap.width / 16).coerceAtLeast(1)
-        val stepY = (bitmap.height / 9).coerceAtLeast(1)
-        var lit = 0
-        var total = 0
-        var y = 0
-        while (y < bitmap.height) {
-            var x = 0
-            while (x < bitmap.width) {
-                val pixel = bitmap.getPixel(x, y)
-                val luma = ((pixel shr 16 and 0xFF) + (pixel shr 8 and 0xFF) + (pixel and 0xFF)) / 3
-                if (luma > BLACK_LUMA) lit++
-                total++
-                x += stepX
-            }
-            y += stepY
-        }
-        return total == 0 || lit * 100 / total < LIT_PERCENT
-    }
-
-    /** Scales a decoder result down when it ignored the requested size. */
-    private fun scaleDown(frame: Bitmap): Bitmap {
-        if (frame.width <= THUMB_WIDTH * 2 && frame.height <= THUMB_HEIGHT * 2) return frame
-        val scaled = Bitmap.createScaledBitmap(frame, THUMB_WIDTH, THUMB_HEIGHT, true)
-        if (scaled != frame) frame.recycle()
-        return scaled
     }
 
     /** Drops queued work. Call when the screen goes away. */
@@ -226,31 +155,8 @@ class ThumbnailLoader(context: Context) {
         private const val THUMB_WIDTH = 256
         private const val THUMB_HEIGHT = 144
 
-        /**
-         * Cover art is square, and the row slot is 16:9, so art is drawn inside the slot rather than
-         * cropped to a band of it. 256 px is comfortably above the ~34 dp it is shown at.
-         */
+        /** Square album art stays sharp at the library row size. */
         private const val ART_SIZE = 256
-
-        /**
-         * Timestamps tried in order, in microseconds.
-         *
-         * Early ones keep the thumbnail representative of the opening; later ones rescue files whose
-         * first few seconds are black or are a studio slate.
-         */
-        private val FRAME_CANDIDATES_US = longArrayOf(
-            1_000_000L,
-            3_000_000L,
-            8_000_000L,
-            20_000_000L,
-            45_000_000L,
-        )
-
-        /** Luma below which a sampled pixel counts as unlit. */
-        private const val BLACK_LUMA = 24
-
-        /** A frame with less than this share of lit samples is rejected as a lead-in. */
-        private const val LIT_PERCENT = 4
 
         /** Placeholder while nothing is loaded. */
         val PLACEHOLDER_VIDEO = R.drawable.ic_aspect

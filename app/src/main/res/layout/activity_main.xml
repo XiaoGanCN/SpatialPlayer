@@ -1,315 +1,171 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg_deep">
-
-    <!-- Ambient wash, driven by the most recently opened file. -->
     <com.gan.spatialplayer.ui.AmbientGlowView
         android:id="@+id/ambientScrim"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
+        android:layout_height="match_parent"
+        android:visibility="gone" />
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
-
-        <!-- Header -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="20dp"
-            android:paddingEnd="20dp"
-            android:paddingTop="28dp"
-            android:paddingBottom="14dp">
-
+            android:padding="20dp"
+            android:gravity="center_vertical">
             <LinearLayout
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:layout_height="wrap_content"
                 android:orientation="vertical">
-
                 <TextView
                     android:id="@+id/headerTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.22"
-                    android:text="@string/app_name"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:includeFontPadding="false" />
-
+                    android:text="Library"
+                    android:textSize="30sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary" />
                 <TextView
                     android:id="@+id/headerSubtitle"
-                    style="@style/Text.Label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
-                    android:text="" />
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginTop="4dp" />
             </LinearLayout>
-
             <ImageButton
                 android:id="@+id/buttonSettings"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:background="@drawable/bg_glass_button"
-                android:contentDescription="@string/settings"
-                android:padding="9dp"
+                android:padding="12dp"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_settings" />
-
-            <ImageButton
-                android:id="@+id/buttonSpatialStatus"
-                android:layout_marginStart="10dp"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@drawable/bg_glass_button"
-                android:contentDescription="@string/audio_settings"
-                android:padding="9dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_spatial" />
-
+                android:src="@drawable/ic_settings"
+                android:contentDescription="@string/settings" />
             <ImageButton
                 android:id="@+id/buttonRefresh"
-                android:layout_marginStart="10dp"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:background="@drawable/bg_glass_button"
-                android:contentDescription="@string/refresh"
-                android:padding="9dp"
+                android:padding="12dp"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_refresh" />
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="@string/refresh" />
+            <ImageButton
+                android:id="@+id/buttonSpatialStatus"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone"
+                android:contentDescription="@string/audio_settings" />
         </LinearLayout>
-
-        <!--
-          Device and stream facts as scannable pills rather than a sentence. Wrapped in a
-          horizontal scroller so a long set of chips (or a large font scale) stays reachable
-          instead of being clipped off the right edge.
-
-          The fading edge is what stops a chip that runs past the edge from looking like a broken
-          pill: it dissolves the last one into the background, which is the only cue that the strip
-          scrolls. Without it the strip simply ends mid-label with no affordance at all.
-        -->
         <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content">
-
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone">
             <HorizontalScrollView
                 android:id="@+id/chipScroll"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:paddingBottom="10dp"
-                android:clipToPadding="false"
-                android:scrollbars="none"
-                android:fillViewport="false">
-
+                android:layout_height="wrap_content">
                 <com.gan.spatialplayer.ui.ChipStrip
                     android:id="@+id/chipStrip"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content" />
             </HorizontalScrollView>
-
             <View
                 android:id="@+id/chipFade"
-                android:layout_width="@dimen/chip_fade_length"
-                android:layout_height="match_parent"
-                android:layout_gravity="end"
-                android:background="@drawable/chip_fade_right"
-                android:importantForAccessibility="no" />
+                android:layout_width="0dp"
+                android:layout_height="0dp" />
         </FrameLayout>
-
-        <!--
-          The list itself.
-
-          The disclosure header that used to sit above it is gone: the Library segment of the action
-          chip below is now the only control, so there is one place to look instead of a chip at the
-          bottom and a second copy of the same idea at the top. What it used to say is in the
-          header subtitle.
-        -->
+        <LinearLayout
+            android:id="@+id/actionBar"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginHorizontal="16dp"
+            android:padding="5dp"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_glass_bar">
+            <LinearLayout
+                android:id="@+id/buttonLibrary"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:background="@drawable/bg_glass_button">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Videos"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+                <ImageView
+                    android:id="@+id/libraryChevron"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/buttonPoweramp"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:background="@drawable/bg_glass_button">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Music"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp" />
+                <ImageView
+                    android:id="@+id/powerampChevron"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp" />
+            </LinearLayout>
+            <TextView
+                android:id="@+id/buttonOpenFile"
+                android:layout_width="64dp"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="Open"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:background="@drawable/bg_glass_button" />
+        </LinearLayout>
+        <ProgressBar
+            android:id="@+id/scanProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:indeterminate="true"
+            android:layout_marginTop="12dp" />
         <FrameLayout
             android:id="@+id/libraryBody"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:visibility="gone">
-
+            android:layout_weight="1">
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/fileList"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:clipToPadding="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="120dp"
-                android:scrollbars="none" />
-
-            <LinearLayout
+                android:paddingHorizontal="12dp"
+                android:paddingBottom="20dp"
+                android:clipToPadding="false" />
+            <TextView
                 android:id="@+id/emptyState"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center"
-                android:orientation="vertical"
-                android:paddingStart="48dp"
-                android:paddingEnd="48dp"
-                android:visibility="gone">
-
-                <ImageView
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:alpha="0.5"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_folder" />
-
-                <TextView
-                    android:id="@+id/emptyTitle"
-                    style="@style/Text.Title"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="18dp"
-                    android:gravity="center"
-                    android:text="@string/no_video_found" />
-
-                <TextView
-                    android:id="@+id/emptyBody"
-                    style="@style/Text.Label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:gravity="center"
-                    android:lineSpacingMultiplier="1.3"
-                    android:text="@string/empty_hint" />
-            </LinearLayout>
-
-            <ProgressBar
-                android:id="@+id/scanProgress"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_gravity="center"
-                android:indeterminateTint="@color/accent"
-                android:visibility="gone" />
+                android:padding="32dp"
+                android:text="Open a file or choose a folder to get started."
+                android:textSize="17sp"
+                android:textColor="@color/text_secondary" />
         </FrameLayout>
-    </LinearLayout>
-
-    <!--
-      The action chip: one bar, three actions.
-
-      These were three separate entry points - an "Open file" button and a "Poweramp" button in a bar
-      at the bottom, plus a "Library" disclosure row of its own further up the screen - which asked
-      the user to learn two different patterns for the same kind of thing. They are now segments of a
-      single control, ordered by how likely they are to be wanted: opening a file first and given the
-      most room, then the Poweramp library, then the file list.
-
-      It floats at the bottom of the window. When the list is open it is not left sitting on top of
-      the rows: it moves up to just under the status chips and the list starts below it (see
-      MainActivity.dockActionBar).
-    -->
-    <LinearLayout
-        android:id="@+id/actionBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:layout_marginStart="12dp"
-        android:layout_marginEnd="12dp"
-        android:layout_marginBottom="30dp"
-        android:background="@drawable/bg_glass_bar"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="6dp">
-
-        <!--
-          Every segment is exactly CHIP_HEIGHT tall and centres its content, so the three read as one
-          control. They used to size to their own content, and the result was three different heights
-          in a row (105 px, 83 px, 89 px measured on device) with the labels sitting at three
-          different baselines.
-        -->
-        <TextView
-            android:id="@+id/buttonOpenFile"
-            style="@style/GlassButton"
-            android:layout_width="0dp"
-            android:layout_height="@dimen/chip_segment_height"
-            android:layout_weight="1.5"
-            android:background="@drawable/bg_glass_button_active"
-            android:drawableStart="@drawable/ic_folder"
-            android:drawablePadding="8dp"
-            android:drawableTint="@color/text_primary"
-            android:gravity="center"
-            android:text="@string/open_file" />
-
-        <!--
-          The two libraries fold: Poweramp is the music, Library is everything else. They are built
-          identically on purpose - same height, same label, same chevron - because they are the same
-          kind of control, and the only thing that tells them apart should be the word on them.
-        -->
-        <LinearLayout
-            android:id="@+id/buttonPoweramp"
-            android:layout_width="0dp"
-            android:layout_height="@dimen/chip_segment_height"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_glass_button"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center"
-            android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="8dp">
-
-            <TextView
-                android:id="@+id/powerampLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="sans-serif"
-                android:text="@string/poweramp_library"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <ImageView
-                android:id="@+id/powerampChevron"
-                android:layout_width="18dp"
-                android:layout_height="18dp"
-                android:layout_marginStart="4dp"
-                android:alpha="0.8"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_chevron_down" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/buttonLibrary"
-            android:layout_width="0dp"
-            android:layout_height="@dimen/chip_segment_height"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_glass_button"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center"
-            android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="8dp">
-
-            <TextView
-                android:id="@+id/libraryLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="sans-serif"
-                android:text="@string/library"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <ImageView
-                android:id="@+id/libraryChevron"
-                android:layout_width="18dp"
-                android:layout_height="18dp"
-                android:layout_marginStart="4dp"
-                android:alpha="0.8"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_chevron_down" />
-        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

@@ -30,7 +30,7 @@ internal class PlayerPanels(
     private fun getString(id: Int, vararg args: Any): String = context.getString(id, *args)
 
     fun populateSpeedPanel(current: Float) {
-        val choices = SPEED_OPTIONS.map { speed ->
+        val choices = (SPEED_OPTIONS.toList() + current).distinct().sorted().map { speed ->
             InspectorSheet.Choice(
                 panel = InspectorSheet.Panel.SPEED,
                 value = speed.toString(),
@@ -54,17 +54,7 @@ internal class PlayerPanels(
                 panel = InspectorSheet.Panel.DECODER,
                 value = profile.name,
                 title = profile.label,
-                subtitle = buildString {
-                    append(profile.detail)
-                    append("\nvideo: ")
-                    append(
-                        com.gan.spatialplayer.media.DecoderPolicy.describeRoute(videoMime, profile),
-                    )
-                    append("   audio: ")
-                    append(
-                        com.gan.spatialplayer.media.DecoderPolicy.describeRoute(audioMime, profile),
-                    )
-                },
+                subtitle = profile.detail,
                 selected = profile == engine.decoderProfile,
                 enabled = true,
                 section = if (profile == DecoderProfile.entries.first()) "Policy" else null,
@@ -82,18 +72,7 @@ internal class PlayerPanels(
             panel = InspectorSheet.Panel.AUDIO,
             value = "spatial_on",
             title = getString(R.string.spatial_audio),
-            subtitle = buildString {
-                append("spatializer ")
-                append(if (spatial.available) "available" else "unavailable")
-                append(" · enabled ").append(spatial.enabled)
-                append(" · level ").append(spatial.immersiveLevelLabel)
-                append("\nhead tracker: ").append(spatial.headTrackerAvailable)
-                append(" · output spatializes: ").append(spatial.outputCanSpatialize)
-                append("\noutput: ").append(spatial.outputDeviceName ?: "—")
-                if (!spatial.headTrackerAvailable || !spatial.enabled) {
-                    append("\n").append(getString(R.string.head_tracking_how))
-                }
-            },
+            subtitle = if (spatial.headTrackerAvailable && spatial.enabled) "Head tracking available" else "Connect a compatible spatial headset",
             selected = engine.spatialAudioEnabled,
             enabled = true,
             section = "Spatial",
@@ -123,7 +102,12 @@ internal class PlayerPanels(
             panel = InspectorSheet.Panel.AUDIO,
             value = VALUE_UPMIX_HEADER,
             title = getString(R.string.settings_upmix),
-            subtitle = "How stereo is spread across 5.1, for music. Now: $currentUpmix",
+            subtitle = when {
+                engine.isStereoUpmixActive -> "Stereo → 5.1 · $currentUpmix"
+                (engine.player?.audioFormat?.channelCount ?: 0) > 2 -> "Original surround · upmix bypassed"
+                !engine.spatialAudioEnabled -> "Upmix off"
+                else -> "Stereo only · original surround passes through"
+            },
             selected = false,
             enabled = false,
             section = "Upmix",

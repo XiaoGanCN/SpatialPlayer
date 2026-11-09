@@ -146,4 +146,5 @@
     <string name="copy_detail">Copy detail</string>
     <string name="double_tap_jump">Double-tap jump length</string>
     <string name="resuming_at">Resuming at %1$s</string>
+    <string name="more">More controls</string>
 </resources>

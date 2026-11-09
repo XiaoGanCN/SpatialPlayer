@@ -5,127 +5,94 @@ import android.graphics.Canvas
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewTreeObserver
+import java.util.IdentityHashMap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/**
- * The window's own content, captured small, for glass that is not over the video.
- *
- * `LiquidGlassView` reads its backdrop from a `SurfaceView` with `PixelCopy`, which is the only way to
- * see the picture. Everything else in the app - the library, the settings screen, every chip and
- * button - has only the window's own drawing behind it, and that cannot be read back with `PixelCopy`
- * without asking the compositor for the very buffer being drawn into.
- *
- * It *can* be re-rendered: the view tree is asked to draw itself into a small bitmap, exactly as the
- * framework does for a screenshot. The one thing that would ruin it is recursion - the glass draws
- * over the backdrop it is sampling - so [capturing] is raised while the tree is drawn and every glass
- * surface draws nothing at that moment. The capture therefore contains the wallpaper, the ambient
- * wash, the list, the artwork: everything except glass, which is precisely what glass should refract.
- *
- * The capture is throttled and only happens while a glass surface is on screen. It costs a software
- * re-render of the hierarchy at reduced resolution, not a frame of GPU work.
- */
+/** One SDR backdrop per window. Video remains on its independent native HDR surface. */
 object GlassBackdrop {
-
-    /** Longest edge of the captured bitmap. Above this the frost has detail it cannot show. */
-    private const val CAPTURE_MAX = 768
-
-    /** Minimum gap between captures. Screens change at human speed; this is not a frame loop. */
-    private const val MIN_INTERVAL_MS = 80L
-
-    /** True while the tree is being drawn into the capture, so glass can stand down. */
-    @Volatile
-    var capturing: Boolean = false
+    data class Frame(val image: Bitmap, val scale: Float, val originX: Int, val originY: Int)
+    private class Scene(val root: View) {
+        val views = java.util.Collections.newSetFromMap(IdentityHashMap<View, Boolean>())
+        var frame: Frame? = null
+        var lastCapture = 0L
+        var dirty = true
+        lateinit var draw: ViewTreeObserver.OnPreDrawListener
+        lateinit var scroll: ViewTreeObserver.OnScrollChangedListener
+        lateinit var layout: ViewTreeObserver.OnGlobalLayoutListener
+    }
+    private val scenes = IdentityHashMap<View, Scene>()
+    private val owners = IdentityHashMap<View, Scene>()
+    private var latest: Frame? = null
+    var capturing = false
         private set
-
-    private var bitmap: Bitmap? = null
-    private var scale = 1f
-    private var rootLeft = 0
-    private var rootTop = 0
-    private var lastCaptureAt = 0L
-    private var root: View? = null
-    private var watchers = 0
-    private var listener: ViewTreeObserver.OnPreDrawListener? = null
-
-    val image: Bitmap? get() = bitmap
-    val imageScale: Float get() = scale
-    val originX: Int get() = rootLeft
-    val originY: Int get() = rootTop
-
-    /** Called by each glass surface as it appears; the capture runs while at least one is attached. */
+    val image: Bitmap? get() = latest?.image
+    fun frameFor(view: View): Frame? = owners[view]?.frame
     fun watch(view: View) {
-        watchers++
-        val decor = view.rootView
-        if (root !== decor) {
-            detachListener()
-            root = decor
-            rootLeft = 0
-            rootTop = 0
+        if (owners.containsKey(view)) return
+        val root = view.rootView
+        val scene = scenes[root] ?: Scene(root).also { s ->
+            scenes[root] = s
+            s.draw = ViewTreeObserver.OnPreDrawListener { capture(s, false); true }
+            s.scroll = ViewTreeObserver.OnScrollChangedListener { s.dirty = true }
+            s.layout = ViewTreeObserver.OnGlobalLayoutListener { s.dirty = true }
+            root.viewTreeObserver.addOnPreDrawListener(s.draw)
+            root.viewTreeObserver.addOnScrollChangedListener(s.scroll)
+            root.viewTreeObserver.addOnGlobalLayoutListener(s.layout)
         }
-        attachListener()
-        requestCapture(force = true)
+        owners[view] = scene
+        scene.views.add(view)
+        scene.dirty = true
     }
-
     fun unwatch(view: View) {
-        watchers = max(0, watchers - 1)
-        if (watchers == 0) detachListener()
-    }
-
-    private fun attachListener() {
-        val target = root ?: return
-        if (listener != null) return
-        val created = ViewTreeObserver.OnPreDrawListener {
-            // Before the frame is drawn, so the capture reflects this frame's layout. At most every
-            // MIN_INTERVAL_MS, which is what keeps a scrolling list from re-rendering per frame.
-            requestCapture(force = false)
-            true
+        val scene = owners.remove(view) ?: return
+        scene.views.remove(view)
+        if (scene.views.isNotEmpty()) return
+        val observer = scene.root.viewTreeObserver
+        if (observer.isAlive) {
+            observer.removeOnPreDrawListener(scene.draw)
+            observer.removeOnScrollChangedListener(scene.scroll)
+            observer.removeOnGlobalLayoutListener(scene.layout)
         }
-        listener = created
-        target.viewTreeObserver.addOnPreDrawListener(created)
+        scenes.remove(scene.root)
+        // Display lists can still reference a previous frame. Let the bitmap be reclaimed safely.
+        if (latest === scene.frame) latest = null
     }
-
-    private fun detachListener() {
-        val target = root
-        val created = listener
-        if (target != null && created != null && target.viewTreeObserver.isAlive) {
-            target.viewTreeObserver.removeOnPreDrawListener(created)
-        }
-        listener = null
-    }
-
-    /** Renders the tree into [bitmap]. Safe to call from anywhere on the main thread. */
-    fun requestCapture(force: Boolean) {
-        val target = root ?: return
-        if (target.width <= 0 || target.height <= 0) return
+    fun requestCapture(force: Boolean) { scenes.values.toList().forEach { capture(it, force) } }
+    private fun capture(scene: Scene, force: Boolean) {
+        val root = scene.root
+        if (capturing || root.width <= 0 || root.height <= 0 || !root.isShown) return
         val now = SystemClock.uptimeMillis()
-        if (!force && now - lastCaptureAt < MIN_INTERVAL_MS) return
-        lastCaptureAt = now
-
-        val w = target.width
-        val h = target.height
-        val s = (CAPTURE_MAX.toFloat() / max(w, h)).coerceAtMost(1f)
-        val bw = (w * s).roundToInt().coerceAtLeast(2)
-        val bh = (h * s).roundToInt().coerceAtLeast(2)
-
-        val current = bitmap
-        val target2 = if (current != null && current.width == bw && current.height == bh) {
-            current
-        } else {
-            current?.recycle()
-            Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { bitmap = it }
-        }
-
+        if (!force && (now - scene.lastCapture < 48L || (!scene.dirty && now - scene.lastCapture < 500L))) return
+        val scale = (640f / max(root.width, root.height)).coerceAtMost(1f)
+        val w = (root.width * scale).roundToInt().coerceAtLeast(2)
+        val h = (root.height * scale).roundToInt().coerceAtLeast(2)
+        val previous = scene.frame?.image
+        val bitmap = if (previous != null && previous.width == w && previous.height == h) previous
+            else Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val hidden = scene.views.map { it to it.alpha }
         capturing = true
         try {
-            val canvas = Canvas(target2)
-            canvas.scale(bw.toFloat() / w, bh.toFloat() / h)
-            target.draw(canvas)
-        } catch (_: Throwable) {
-            // A capture that fails leaves the previous one in place, which is still the right
-            // backdrop a frame out of date.
+            // Exclude each pane's entire subtree, not only its background: otherwise a pane
+            // refracts its own labels and creates a blurred double image beneath the real text.
+            hidden.forEach { (view, _) -> view.alpha = 0f }
+            bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
+            val canvas = Canvas(bitmap)
+            canvas.scale(scale, scale)
+            root.draw(canvas)
+            val location = IntArray(2)
+            root.getLocationInWindow(location)
+            val frame = Frame(bitmap, scale, location[0], location[1])
+            scene.frame = frame
+            latest = frame
+            scene.lastCapture = now
+            scene.dirty = false
+        } catch (error: IllegalArgumentException) {
+            android.util.Log.w("GlassBackdrop", "Backdrop capture unavailable", error)
+            scene.lastCapture = now
         } finally {
+            hidden.forEach { (view, alpha) -> view.alpha = alpha }
             capturing = false
         }
-        scale = bw.toFloat() / w
     }
 }

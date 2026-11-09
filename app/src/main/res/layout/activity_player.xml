@@ -1,46 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/playerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black">
-
-    <!--
-      Draw order matters. The ambient wash is declared *after* the PlayerView so it composites on
-      top of it; it only paints in the letterbox/pillarbox bands, leaving the picture untouched.
-    -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/playerView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        app:surface_type="surface_view"
         app:resize_mode="fit"
-        app:shutter_background_color="@android:color/black"
-        app:use_controller="false" />
-
+        app:use_controller="false"
+        app:shutter_background_color="@android:color/black" />
     <com.gan.spatialplayer.ui.AmbientGlowView
         android:id="@+id/ambientGlow"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
-    <!--
-      Gesture layer.
-
-      Kept as an anchor for the haptic feedback target and for measuring, but NOT touchable: the
-      controls overlay is a full-size sibling declared after it, so whenever the chrome is visible
-      this view would receive no touches at all. Gestures are dispatched from the activity instead
-      (see PlayerActivity.dispatchTouchEvent), which also lets a touch that lands on a button go to
-      that button while everything else becomes a gesture.
-    -->
+        android:layout_height="match_parent"
+        android:visibility="gone" />
     <View
         android:id="@+id/gestureLayer"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/transparent"
-        android:clickable="false"
-        android:focusable="false" />
-
-    <!-- Double-tap seek feedback -->
+        android:layout_height="match_parent" />
     <TextView
         android:id="@+id/seekFeedback"
         android:layout_width="wrap_content"
@@ -48,268 +30,183 @@
         android:layout_gravity="center"
         android:alpha="0"
         android:background="@drawable/bg_glass_panel"
-        android:fontFamily="monospace"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp"
+        android:padding="20dp"
         android:textColor="@color/text_primary"
-        android:textSize="15sp" />
-
-    <!--
-      Centre play/pause, shown briefly.
-
-      `invisible`, not just `alpha="0"`: alpha does not affect hit-testing, so a transparent
-      clickable view still takes the touch. This one sits *below* `controlsOverlay` in the draw
-      order, so once the overlay parks itself at `INVISIBLE` (see `PlayerActivity.hideControls`)
-      this would be the next thing to catch a tap aimed at the capsule - and with the chrome hidden
-      that would toggle play/pause out of nowhere.
-    -->
+        android:textSize="18sp" />
     <ImageButton
         android:id="@+id/centerPlayPause"
-        android:layout_width="66dp"
-        android:layout_height="66dp"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
         android:layout_gravity="center"
-        android:alpha="0"
         android:visibility="invisible"
         android:background="@drawable/bg_glass_button"
-        android:contentDescription="@string/play"
-        android:padding="17dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/ic_play" />
-
-    <!-- Controls overlay -->
-    <LinearLayout
+        android:src="@drawable/ic_play"
+        android:contentDescription="@string/play" />
+    <FrameLayout
         android:id="@+id/controlsOverlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical">
-
-        <!-- Top bar -->
+        android:layout_height="match_parent">
         <LinearLayout
+            android:id="@+id/playerHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_scrim_top"
+            android:layout_gravity="top"
+            android:layout_margin="16dp"
             android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="18dp">
-
+            android:orientation="horizontal">
             <ImageButton
                 android:id="@+id/buttonBack"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:background="@drawable/bg_glass_button"
-                android:contentDescription="@string/close"
-                android:padding="10dp"
+                android:padding="12dp"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_arrow_up" />
-
-            <LinearLayout
+                android:src="@drawable/ic_close"
+                android:contentDescription="@string/close" />
+            <TextView
+                android:id="@+id/mediaTitle"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
                 android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/mediaTitle"
-                    style="@style/Text.Body"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="middle"
-                    android:maxLines="1"
-                    android:shadowColor="#99000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp" />
-
-                <!--
-                  Scrollable so a long chip set never has to compress: inside a weighted parent a
-                  plain ChipStrip gets squeezed and single-line labels such as "5.1" end up
-                  truncated to "5.".
-
-                  The end padding is what keeps the fading edge off the chips: the fade is drawn over
-                  the last fadingEdgeLength of the view, so without room after the last chip the
-                  decoder pill is rendered *through* the gradient - which reads as a broken chip
-                  rather than as "there is more here, scroll".
-                -->
-                <FrameLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp">
-
-                    <HorizontalScrollView
-                        android:id="@+id/playerChipScroll"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:clipToPadding="false"
-                        android:scrollbars="none">
-
-                        <com.gan.spatialplayer.ui.ChipStrip
-                            android:id="@+id/playerChips"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" />
-                    </HorizontalScrollView>
-
-                    <View
-                        android:id="@+id/playerChipFade"
-                        android:layout_width="@dimen/chip_fade_length"
-                        android:layout_height="match_parent"
-                        android:layout_gravity="end"
-                        android:background="@drawable/chip_fade_right"
-                        android:importantForAccessibility="no" />
-                </FrameLayout>
-            </LinearLayout>
-
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="14dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="@color/text_primary"
+                android:textSize="17sp" />
             <ImageButton
                 android:id="@+id/buttonInspect"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="6dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:background="@drawable/bg_glass_button"
-                android:contentDescription="@string/inspection"
-                android:padding="9dp"
+                android:padding="12dp"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_inspect" />
-
+                android:src="@drawable/ic_inspect"
+                android:contentDescription="@string/inspection" />
             <ImageButton
                 android:id="@+id/buttonMetadata"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="6dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:background="@drawable/bg_glass_button"
-                android:contentDescription="@string/metadata"
-                android:padding="9dp"
+                android:padding="12dp"
                 android:scaleType="fitCenter"
-                android:src="@drawable/ic_info" />
+                android:src="@drawable/ic_info"
+                android:contentDescription="@string/metadata" />
+            <HorizontalScrollView
+                android:id="@+id/playerChipScroll"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone">
+                <com.gan.spatialplayer.ui.ChipStrip
+                    android:id="@+id/playerChips"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </HorizontalScrollView>
+            <View
+                android:id="@+id/playerChipFade"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
         </LinearLayout>
-
-        <Space
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
-
-        <!-- Bottom control cluster.
-             The bottom margin is rewritten at runtime so the capsule floats just inside the bottom
-             edge of the picture - over the frame, not in the letterbox below it, because the glass
-             has nothing to refract over black bars. The margin below is only what is used before the
-             first measurement.
-
-             Padding is tight because the capsule is a single row now: the row's tallest child is the
-             play button, so anything more than a few dp around it is dead glass. -->
         <com.gan.spatialplayer.ui.LiquidGlassView
             android:id="@+id/controlGlass"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginBottom="14dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginBottom="16dp"
             android:orientation="vertical"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp">
-
-            <!--
-              The capsule is ONE row.
-
-              It was three stacked rows - a timecode row, the seek bar, then a transport row that
-              spread nine controls across the full width with a void between the transport keys and
-              the settings keys. The reference layout is a single row, and a single row is what makes
-              it read as one object instead of a panel with three shelves.
-
-              Speed, scaling, subtitles and audio do not fit and are behind the overflow button; each
-              of them shows its current value inside that sheet, so nothing is lost by not having
-              them permanently on screen.
-            -->
+            android:padding="14dp">
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <ImageButton
-                    android:id="@+id/buttonRewind"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:background="?android:attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/seek_back"
-                    android:padding="9dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_back10" />
-
-                <ImageButton
-                    android:id="@+id/buttonPlayPause"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginStart="2dp"
-                    android:background="@drawable/bg_glass_button"
-                    android:contentDescription="@string/play"
-                    android:padding="13dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_play" />
-
-                <ImageButton
-                    android:id="@+id/buttonForward"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="2dp"
-                    android:background="?android:attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/seek_forward"
-                    android:padding="9dp"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/ic_forward10" />
-
+                android:layout_height="32dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
                 <TextView
                     android:id="@+id/timeCurrent"
-                    style="@style/Text.Mono.Time"
-                    android:layout_width="wrap_content"
+                    android:layout_width="48dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="10dp"
-                    android:text="0:00" />
-
+                    android:text="0:00"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
                 <com.gan.spatialplayer.ui.SeekBarView
                     android:id="@+id/seekBar"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="10dp"
-                    android:layout_marginEnd="10dp"
-                    android:layout_weight="1" />
-
+                    android:layout_weight="1"
+                    android:layout_height="32dp"
+                    android:minWidth="80dp" />
                 <TextView
                     android:id="@+id/timeRemaining"
-                    style="@style/Text.Mono.Time"
-                    android:layout_width="wrap_content"
+                    android:layout_width="52dp"
                     android:layout_height="wrap_content"
-                    android:text="0:00" />
-
+                    android:gravity="end"
+                    android:text="0:00"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <TextView
+                    android:id="@+id/buttonSpeed"
+                    android:layout_width="48dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="1×"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:background="@drawable/bg_glass_button"
+                    android:contentDescription="@string/speed" />
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+                <ImageButton
+                    android:id="@+id/buttonRewind"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="@drawable/bg_glass_button"
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_back10"
+                    android:contentDescription="@string/seek_back" />
+                <ImageButton
+                    android:id="@+id/buttonPlayPause"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:background="@drawable/bg_glass_button"
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_play"
+                    android:contentDescription="@string/play" />
+                <ImageButton
+                    android:id="@+id/buttonForward"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="@drawable/bg_glass_button"
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_forward10"
+                    android:contentDescription="@string/seek_forward" />
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
                 <ImageButton
                     android:id="@+id/buttonMore"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="4dp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
                     android:background="@drawable/bg_glass_button"
-                    android:contentDescription="@string/more_controls"
-                    android:padding="10dp"
+                    android:padding="12dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/ic_more" />
+                    android:src="@drawable/ic_more"
+                    android:contentDescription="@string/more" />
             </LinearLayout>
         </com.gan.spatialplayer.ui.LiquidGlassView>
-    </LinearLayout>
-
-    <!--
-      Transient error card.
-
-      Anchored to the TOP, not the bottom. It was previously bottom-aligned with an 18dp margin,
-      which put it directly on top of the control capsule and the progress bar (the card is declared
-      after the controls, so it also drew over them) - the error was unreadable and the controls
-      unreachable at the same time. Sitting under the title row keeps both visible.
-    -->
+    </FrameLayout>
     <LinearLayout
         android:id="@+id/errorCard"
         android:layout_width="match_parent"
@@ -322,35 +219,30 @@
         android:orientation="vertical"
         android:padding="18dp"
         android:visibility="gone">
-
         <TextView
             style="@style/Text.Title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/error_playback"
             android:textColor="@color/bad" />
-
         <TextView
             android:id="@+id/errorText"
             style="@style/Text.Mono"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp" />
-
         <!-- Actions. Copy exists because the exact error text is what makes a bug report useful. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
             android:orientation="horizontal">
-
             <TextView
                 android:id="@+id/buttonDismissError"
                 style="@style/GlassButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/close" />
-
             <TextView
                 android:id="@+id/buttonCopyError"
                 style="@style/GlassButton"

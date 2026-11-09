@@ -143,7 +143,8 @@ class GlassDrawable(
             return
         }
 
-        val bitmap = GlassBackdrop.image
+        val frame = GlassBackdrop.frameFor(owner)
+        val bitmap = frame?.image
         val shader = sharedShader()
         if (bitmap == null || shader == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             drawFallback(canvas)
@@ -152,10 +153,10 @@ class GlassDrawable(
 
         owner.getLocationInWindow(location)
         // Where this pane sits in the captured image, and how many texels a view pixel is.
-        val x0 = (location[0] - GlassBackdrop.originX) * GlassBackdrop.imageScale
-        val y0 = (location[1] - GlassBackdrop.originY) * GlassBackdrop.imageScale
-        val texW = bounds.width() * GlassBackdrop.imageScale
-        val texH = bounds.height() * GlassBackdrop.imageScale
+        val x0 = (location[0] - (frame?.originX ?: 0)) * (frame?.scale ?: 1f)
+        val y0 = (location[1] - (frame?.originY ?: 0)) * (frame?.scale ?: 1f)
+        val texW = bounds.width() * (frame?.scale ?: 1f)
+        val texH = bounds.height() * (frame?.scale ?: 1f)
 
         val w = bounds.width().toFloat()
         val h = bounds.height().toFloat()
@@ -188,7 +189,7 @@ class GlassDrawable(
         shader.setFloatUniform("uTouchAmp", touchAmp)
         shader.setFloatUniform("uPressBulge", pressBulgeStrength)
         shader.setFloatUniform("uBackdropOrigin", x0, y0)
-        shader.setFloatUniform("uBackdropScale", GlassBackdrop.imageScale, GlassBackdrop.imageScale)
+        shader.setFloatUniform("uBackdropScale", (frame?.scale ?: 1f), (frame?.scale ?: 1f))
         shader.setFloatUniform(
             "uBackdropTexSize",
             bitmap.width.toFloat(),

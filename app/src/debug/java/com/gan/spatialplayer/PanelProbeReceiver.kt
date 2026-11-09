@@ -34,6 +34,17 @@ import com.gan.spatialplayer.ui.InspectorSheet
 class PanelProbeReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == UiStateProbe.PLAYER) {
+            PlayerActivity.instance?.let {
+                if (intent.hasExtra("controls")) {
+                    if (intent.getBooleanExtra("controls", true)) it.showControlsTemporarilyForTest()
+                    else it.hideControlsForTest()
+                }
+                UiStateProbe.report(it, intent)
+            }
+            return
+        }
+
         if (intent.action == ACTION_GLASS_CAPTURE) {
             val activity = PlayerActivity.instance ?: return
             com.gan.spatialplayer.media.PlaybackEngine.peek()?.pause()

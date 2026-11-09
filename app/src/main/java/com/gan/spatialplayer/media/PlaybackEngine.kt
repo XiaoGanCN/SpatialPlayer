@@ -13,9 +13,8 @@ import android.content.Context
  *
  * ## Lifetime
  *
- * The rule is deliberately boring: the engine is released only when nothing is playing. A screen
- * going away calls [releaseIfIdle], which is a no-op while audio is coming out of the speaker, so
- * ordinary cleanup can be written without having to ask whether background playback is in progress.
+ * Release requires the same engine that requested cleanup, no screen listener, and no active or
+ * buffering playback. Old activity/service teardown cannot release a newly opened player.
  */
 object PlaybackEngine {
 
@@ -44,15 +43,19 @@ object PlaybackEngine {
     fun peek(): PlayerEngine? = instance
 
     /**
-     * Frees the engine unless audio is still playing.
-     *
-     * The activity calls this on the way out, and so does the service: whichever happens last, the
-     * engine survives exactly as long as it is producing sound.
+     * Frees [expected] only if it is still current and has no screen or pending playback.
      */
     @Synchronized
-    fun releaseIfIdle() {
+    fun releaseIfIdle(expected: PlayerEngine? = instance) {
         val engine = instance ?: return
-        if (engine.player?.isPlaying == true) return
+        if (engine !== expected) return
+        // An old service can stop after another screen has acquired a fresh player. Paused or
+        // buffering is not idle while a screen owns it, and playWhenReady covers startup buffering.
+        val player = engine.player
+        val awaitingPlayback = player?.playWhenReady == true &&
+            (player.playbackState == androidx.media3.common.Player.STATE_BUFFERING ||
+                player.playbackState == androidx.media3.common.Player.STATE_READY)
+        if (engine.listener != null || player?.isPlaying == true || awaitingPlayback) return
         engine.release()
         instance = null
     }

@@ -154,12 +154,15 @@ def main():
         print("  FAIL the mapping is offset - the peak is not at zero")
         failures += 1
 
-    # Pillarbox columns: nothing behind the pane there, so no tracking.
+    # The redesigned transport is width-capped and does not overlap the pillarbox.
+    # Those pixels must stay untouched; correlation there is undefined for solid black.
     far = (4, y0 + 6, min(90, raw.w - 1), y1 - 6)
-    box_r = correlation(raw, glass, far)
-    print("pane over pillarbox                 r=%.4f  (want < %.2f)" % (box_r, MAX_BOX_CORRELATION))
-    if not (math.isnan(box_r) or box_r < MAX_BOX_CORRELATION):
-        print("  FAIL the glass is smearing the picture into the letterbox")
+    samples = [abs(raw.luma(x, y) - glass.luma(x, y))
+               for y in range(far[1], far[3], 4) for x in range(far[0], far[2], 4)]
+    outside_diff = sum(samples) / max(len(samples), 1)
+    print("outside transport mean difference   %.4f (want < 1.0)" % outside_diff)
+    if outside_diff >= 1.0:
+        print("  FAIL glass changed pixels outside the transport")
         failures += 1
 
     print("checks failed: %d" % failures)

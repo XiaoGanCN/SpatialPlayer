@@ -26,6 +26,11 @@ import android.util.Log
 class LibraryProbeReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == UiStateProbe.LIBRARY) {
+            MainActivity.instance?.let { UiStateProbe.report(it, intent) }
+            return
+        }
+
         if (intent.action != ACTION) return
         val activity = MainActivity.instance
         if (activity == null) {

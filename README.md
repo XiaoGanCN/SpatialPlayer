@@ -25,3 +25,5 @@ Enable spatial audio in Android settings and connect a compatible headset. Head 
 recentering are controlled by Android and the headset.
 
 App source: MIT ([LICENSE](LICENSE)). Distributed builds bundle GPL-3.0 nextlib and are GPL-3.0.
+
+Inter typeface is distributed under the SIL Open Font License; its license is bundled in the app.

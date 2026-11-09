@@ -46,6 +46,15 @@ import com.gan.spatialplayer.ui.SliderReading
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var settings: SettingsStore
+    private val upmixHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val applyMatrix = Runnable { applyUpmixNow() }
+
+    override fun onStop() {
+        upmixHandler.removeCallbacks(applyMatrix)
+        if (::settings.isInitialized) applyUpmixNow()
+        super.onStop()
+    }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,8 +84,17 @@ class SettingsActivity : AppCompatActivity() {
         buildDecoding(column)
         buildGestures(column)
         buildAppearance(column)
-        buildDevice(column)
-        buildDiagnostics(column)
+        column.addView(infoRow("Playback diagnostics", "Device, decoder and output details").apply {
+            setOnClickListener {
+                val details = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
+                buildDevice(details)
+                buildDiagnostics(details)
+                val dialog = android.app.Dialog(this@SettingsActivity)
+                dialog.setContentView(ScrollView(this@SettingsActivity).apply { setPadding(dp(18), dp(18), dp(18), dp(18)); addView(details) })
+                dialog.show()
+                com.gan.spatialplayer.ui.GlassTheme.configureSheet(dialog, (resources.displayMetrics.heightPixels * .75f).toInt())
+            }
+        })
 
         setContentView(root)
         GlassInstaller.apply(root)
@@ -107,8 +125,8 @@ class SettingsActivity : AppCompatActivity() {
         addView(
             TextView(this@SettingsActivity).apply {
                 text = getString(R.string.settings)
-                typeface = Typeface.SANS_SERIF
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                typeface = com.gan.spatialplayer.ui.UiTypography.body(this@SettingsActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
                 setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_primary))
                 setPadding(dp(14), 0, 0, 0)
             },
@@ -124,23 +142,15 @@ class SettingsActivity : AppCompatActivity() {
         column.addView(
             toggleRow(
                 title = getString(R.string.spatial_audio),
-                subtitle = getString(R.string.spatial_audio_hint),
+                subtitle = "Head tracking with a compatible headset",
                 value = settings.spatialEnabled,
             ) { settings.spatialEnabled = it },
         )
 
         column.addView(
             toggleRow(
-                title = getString(R.string.ambient_glow),
-                subtitle = "Tints the letterbox with the colours of the picture",
-                value = settings.ambientEnabled,
-            ) { settings.ambientEnabled = it },
-        )
-
-        column.addView(
-            toggleRow(
                 title = getString(R.string.settings_background_audio),
-                subtitle = getString(R.string.settings_background_audio_hint),
+                subtitle = null,
                 value = settings.backgroundAudio,
             ) { settings.backgroundAudio = it },
         )
@@ -148,52 +158,14 @@ class SettingsActivity : AppCompatActivity() {
         column.addView(
             toggleRow(
                 title = getString(R.string.settings_background_video),
-                subtitle = getString(R.string.settings_background_video_hint),
+                subtitle = null,
                 value = settings.backgroundVideo,
             ) { settings.backgroundVideo = it },
         )
 
-        // Simple or advanced. Switching rebuilds the page rather than showing and hiding rows in
-        // place: the two editors share nothing, and a page that is rebuilt cannot end up with a row
-        // left over from the other one.
-        column.addView(
-            segmentedRow(
-                title = getString(R.string.settings_upmix_mode),
-                options = listOf(
-                    getString(R.string.settings_upmix_simple) to "simple",
-                    getString(R.string.settings_upmix_advanced) to "advanced",
-                ),
-                selected = if (settings.upmixAdvanced) "advanced" else "simple",
-            ) {
-                settings.upmixAdvanced = it == "advanced"
-                applyUpmixNow()
-                recreate()
-            },
-        )
-
-        if (settings.upmixAdvanced) {
-            buildAdvancedUpmix(column)
-        } else {
-            // The options and their explanation are one card: the explanation says what the selected
-            // option *does*, so splitting it into a separate row below made it read as a caption for
-            // the section rather than for the choice - and it went stale the moment a different
-            // option was tapped, because only the segments were rebuilt.
-            column.addView(
-                segmentedRow(
-                    title = getString(R.string.settings_upmix),
-                    options = listOf(
-                        getString(R.string.upmix_surround) to UpmixMode.SURROUND.name,
-                        getString(R.string.upmix_wide) to UpmixMode.WIDE.name,
-                        getString(R.string.upmix_front) to UpmixMode.FRONT.name,
-                    ),
-                    selected = settings.upmixMode,
-                    hint = ::upmixHint,
-                ) {
-                    settings.upmixMode = it
-                    applyUpmixNow()
-                },
-            )
-        }
+        column.addView(infoRow("Stereo stage", "Presets and a six-channel matrix · stereo only").apply {
+            setOnClickListener { showUpmixEditor() }
+        })
 
         column.addView(
             sliderRow(
@@ -220,6 +192,43 @@ class SettingsActivity : AppCompatActivity() {
         )
     }
 
+    private fun showUpmixEditor() {
+        val dialog = android.app.Dialog(this, R.style.Theme_SpatialPlayer_Glass)
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(20))
+        }
+        column.addView(TextView(this).apply {
+            text = "Stereo stage"
+            textSize = 24f
+            setTextColor(android.graphics.Color.WHITE)
+            setPadding(dp(6), 0, 0, dp(12))
+        })
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun renderEditor() {
+            content.removeAllViews()
+            if (settings.upmixAdvanced) buildAdvancedUpmix(content)
+            else content.addView(segmentedRow("Sound field", listOf(
+                "Surround" to UpmixMode.SURROUND.name, "Wide" to UpmixMode.WIDE.name,
+                "Front" to UpmixMode.FRONT.name), settings.upmixMode, ::upmixHint) {
+                settings.upmixMode = it; applyUpmixNow()
+            })
+            GlassInstaller.apply(content)
+        }
+        column.addView(segmentedRow("", listOf("Presets" to "simple", "Matrix" to "advanced"),
+            if (settings.upmixAdvanced) "advanced" else "simple") {
+            settings.upmixAdvanced = it == "advanced"
+            applyUpmixNow()
+            renderEditor()
+        })
+        column.addView(content)
+        renderEditor()
+        dialog.setContentView(ScrollView(this).apply { addView(column) })
+        dialog.show()
+        com.gan.spatialplayer.ui.GlassTheme.configureSheet(dialog, minOf(dp(680), (resources.displayMetrics.heightPixels * .82f).toInt()))
+        GlassInstaller.apply(column)
+    }
+
     /** What the selected preset actually does; shown inside the same card as the options. */
     private fun upmixHint(mode: String): CharSequence = when (mode) {
         UpmixMode.WIDE.name -> getString(R.string.upmix_wide_hint)
@@ -236,48 +245,62 @@ class SettingsActivity : AppCompatActivity() {
      * have.
      */
     private fun buildAdvancedUpmix(column: LinearLayout) {
-        val labels = listOf(
-            R.string.upmix_channel_fl,
-            R.string.upmix_channel_fr,
-            R.string.upmix_channel_c,
-            R.string.upmix_channel_lfe,
-            R.string.upmix_channel_bl,
-            R.string.upmix_channel_br,
-        )
-
         var matrix = UpmixMatrix.decode(settings.upmixMatrix)
-
-        for ((index, labelRes) in labels.withIndex()) {
-            val gains = matrix.gains[index]
-            column.addView(
-                matrixRow(
-                    title = "${getString(labelRes)}  ·  ${UpmixMatrix.CHANNEL_IDS[index]}",
-                    fromLeft = gains.first,
-                    fromRight = gains.second,
-                    defaults = UpmixMatrix.DEFAULT_GAINS[index],
-                ) { left, right ->
-                    matrix = matrix.withChannel(index, left, right)
-                    settings.upmixMatrix = matrix.encode()
-                    applyUpmixNow()
-                },
-            )
+        var selected = 0
+        val editor = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val channelButtons = ArrayList<TextView>()
+        fun save() {
+            settings.upmixMatrix = matrix.encode()
+            upmixHandler.removeCallbacks(applyMatrix)
+            upmixHandler.postDelayed(applyMatrix, 250L)
+        }
+        fun render() {
+            editor.removeAllViews()
+            channelButtons.forEachIndexed { index, view ->
+                view.background = com.gan.spatialplayer.ui.GlassTheme.control(this, index == selected)
+            }
+            val sources = listOf("Left" to (100 to 0), "Right" to (0 to 100),
+                "Both" to (50 to 50), "Difference" to (100 to -100), "Mute" to (0 to 0))
+            editor.addView(segmentedRow("Source", sources.map { it.first to it.first }, "") { label ->
+                val gains = sources.first { it.first == label }.second
+                matrix = matrix.withChannel(selected, gains.first, gains.second)
+                save()
+                render()
+            })
+            val gains = matrix.gains[selected]
+            editor.addView(matrixRow(
+                title = "Input mix",
+                fromLeft = gains.first, fromRight = gains.second,
+                defaults = UpmixMatrix.DEFAULT_GAINS[selected],
+            ) { left, right -> matrix = matrix.withChannel(selected, left, right); save() })
+            GlassInstaller.apply(editor)
         }
 
-        column.addView(
-            toggleRow(
-                title = getString(R.string.settings_sub_lowpass),
-                subtitle = getString(R.string.settings_sub_lowpass_hint),
-                value = matrix.subwooferLowPass,
-            ) {
-                matrix = matrix.copy(subwooferLowPass = it)
-                settings.upmixMatrix = matrix.encode()
-                applyUpmixNow()
-            },
-        )
-
-        column.addView(
-            infoRow(getString(R.string.settings_upmix), getString(R.string.upmix_advanced_hint)),
-        )
+        val names = listOf("Front L", "Front R", "Centre", "Sub", "Rear L", "Rear R")
+        for (group in listOf(0..2, 3..5)) {
+            val row = LinearLayout(this)
+            for (index in group) {
+                val button = TextView(this).apply {
+                    text = names[index]
+                    textSize = 14f
+                    gravity = Gravity.CENTER
+                    setTextColor(android.graphics.Color.WHITE)
+                    background = com.gan.spatialplayer.ui.GlassTheme.control(this@SettingsActivity, index == selected)
+                    setOnClickListener { selected = index; render() }
+                }
+                channelButtons += button
+                row.addView(button, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+            }
+            column.addView(row)
+        }
+        column.addView(editor)
+        render()
+        column.addView(toggleRow("Subwoofer low-pass", "Keep bass below 120 Hz", matrix.subwooferLowPass) {
+            matrix = matrix.copy(subwooferLowPass = it); save()
+        })
+        column.addView(infoRow("Reset matrix", "Restore the original six-channel mapping").apply {
+            setOnClickListener { matrix = UpmixMatrix.DEFAULT.copy(subwooferLowPass = matrix.subwooferLowPass); save(); render() }
+        })
     }
 
     /**
@@ -302,6 +325,8 @@ class SettingsActivity : AppCompatActivity() {
 
         fun bar(initial: Int, reading: TextView, onValue: (Int) -> Unit): SeekBar =
             SeekBar(this).apply {
+                progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+                thumbTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
                 max = UpmixMatrix.MAX_GAIN - UpmixMatrix.MIN_GAIN
                 progress = initial - UpmixMatrix.MIN_GAIN
                 setPadding(0, dp(4), 0, 0)
@@ -533,10 +558,10 @@ class SettingsActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ rows
 
     private fun sectionHeader(res: Int): View = TextView(this).apply {
-        text = getString(res).uppercase()
+        text = getString(res)
         typeface = Typeface.MONOSPACE
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        letterSpacing = 0.18f
+        letterSpacing = 0.03f
         setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_tertiary))
         setPadding(dp(6), dp(22), 0, dp(8))
     }
@@ -559,7 +584,7 @@ class SettingsActivity : AppCompatActivity() {
         titleRow.addView(
             TextView(this).apply {
                 text = title
-                typeface = Typeface.SANS_SERIF
+                typeface = com.gan.spatialplayer.ui.UiTypography.body(this@SettingsActivity)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_primary))
             },
@@ -572,7 +597,7 @@ class SettingsActivity : AppCompatActivity() {
             row.addView(
                 TextView(this).apply {
                     text = it
-                    typeface = Typeface.SANS_SERIF
+                    typeface = com.gan.spatialplayer.ui.UiTypography.body(this@SettingsActivity)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_tertiary))
                     setPadding(0, dp(5), 0, 0)
@@ -582,27 +607,27 @@ class SettingsActivity : AppCompatActivity() {
         return row
     }
 
-    private fun toggleRow(
-        title: String,
-        subtitle: String?,
-        value: Boolean,
-        onChange: (Boolean) -> Unit,
-    ): View {
-        val state = booleanArrayOf(value)
-        val pill = valuePill(if (value) "On" else "Off", value)
-        val row = rowShell(title, subtitle, pill)
-        row.isClickable = true
-        row.isFocusable = true
-        row.setOnClickListener {
-            state[0] = !state[0]
-            Haptics.touch(row)
-            val next = valuePill(if (state[0]) "On" else "Off", state[0])
-            // Replace the trailing pill in place; rebuilding the row would lose the click target.
-            (row.getChildAt(0) as LinearLayout).removeViewAt(1)
-            (row.getChildAt(0) as LinearLayout).addView(next)
-            onChange(state[0])
+    private fun toggleRow(title: String, subtitle: String?, value: Boolean, onChange: (Boolean) -> Unit): View {
+        val toggle = android.widget.Switch(this).apply {
+            isChecked = value
+            showText = false
+            splitTrack = false
+            thumbDrawable = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(android.graphics.Color.WHITE)
+                setSize(dp(26), dp(26))
+            }
+            trackDrawable = android.graphics.drawable.StateListDrawable().apply {
+                fun track(color: Int) = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(18).toFloat(); setColor(color); setSize(dp(48), dp(30))
+                }
+                addState(intArrayOf(android.R.attr.state_checked), track(0xFF30B86C.toInt()))
+                addState(intArrayOf(), track(0xFF46484E.toInt()))
+            }
         }
-        Haptics.attachTo(row)
+        val row = rowShell(title, subtitle, toggle)
+        row.setOnClickListener { toggle.toggle() }
+        toggle.setOnCheckedChangeListener { _, checked -> Haptics.touch(row); onChange(checked) }
         return row
     }
 
@@ -636,7 +661,7 @@ class SettingsActivity : AppCompatActivity() {
         val hintView = hint?.let { provider ->
             TextView(this).apply {
                 text = provider(selected)
-                typeface = Typeface.SANS_SERIF
+                typeface = com.gan.spatialplayer.ui.UiTypography.body(this@SettingsActivity)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_tertiary))
                 setPadding(0, dp(9), 0, 0)
@@ -654,7 +679,7 @@ class SettingsActivity : AppCompatActivity() {
             val button = TextView(this).apply {
                 setBackgroundResource(R.drawable.bg_glass_button)
                 text = label
-                typeface = Typeface.SANS_SERIF
+                typeface = com.gan.spatialplayer.ui.UiTypography.body(this@SettingsActivity)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 gravity = Gravity.CENTER
                 setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.text_primary))
@@ -700,6 +725,8 @@ class SettingsActivity : AppCompatActivity() {
         val label = valuePill(reading(value), false)
 
         val bar = SeekBar(this).apply {
+                progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+                thumbTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
             max = steps
             progress = ((value - from) / step).toInt().coerceIn(0, steps)
             setPadding(0, dp(6), 0, 0)

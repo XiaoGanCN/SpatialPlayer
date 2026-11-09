@@ -16,6 +16,7 @@ import android.util.Rational
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -234,6 +235,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // than being constructed here. See PlaybackEngine.
         engine = PlaybackEngine.acquire(this, this)
         if (engine.player == null) engine.build()
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("smoke_muted", false)) engine.player?.volume = 0f
 
         binding.playerView.player = engine.player
         configurePlayerView()
@@ -326,8 +328,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.controlGlass.bevelWidthPx = density * CONTROL_GLASS_BEVEL_DP
         binding.controlGlass.refractionPx = density * CONTROL_GLASS_REFRACT_DP
         binding.controlGlass.refractionFalloff = 1.6f
-        binding.controlGlass.dispersionStrength = 0.10f
-        binding.controlGlass.specularStrength = 1.0f
+        binding.controlGlass.dispersionStrength = 0.025f
+        binding.controlGlass.specularStrength = 0.32f
+        binding.controlGlass.blurTexels = 5f
         binding.controlGlass.saturation = 1.06f
         applyGlassMaterial()
 
@@ -340,6 +343,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun setUpControls() {
+        binding.buttonSpeed.setOnClickListener { showInspector(InspectorSheet.Panel.SPEED) }
         binding.buttonBack.setOnClickListener {
             if (inspectorSheet.isOpen) inspectorSheet.hide() else finish()
         }
@@ -440,7 +444,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            binding.controlsOverlay.setPadding(0, 0, 0, 0)
+            positionChrome()
             insets
         }
     }
@@ -644,7 +648,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun handleSpeedChoice(choice: InspectorSheet.Choice) {
         val speed = choice.value.toFloatOrNull() ?: return
         engine.player?.setPlaybackSpeed(speed)
-        populateSpeedPanel()
+        binding.buttonSpeed.text = String.format(Locale.US, "%.2g×", speed)
     }
 
     /** The current scaling mode's label; also what the overflow row shows. */
@@ -786,6 +790,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * controls overlay is a full-size sibling drawn above that layer and swallows its touches, so
      * gestures stopped working entirely whenever the chrome was visible.
      */
+    private var touchOnControl = false
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (!gesturesReady) return super.dispatchTouchEvent(ev)
 
@@ -797,7 +803,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // volume or scrubbed instead of scrolling them - which left the last chips unreachable and
         // permanently half under the fading edge, since a fade that never moves off a chip reads as
         // a broken pill rather than as "scroll for more".
-        val inside = isInsideControls(ev.rawX, ev.rawY) || isInsideChips(ev.rawX, ev.rawY)
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            touchOnControl = isInsideControls(ev.rawX, ev.rawY) || isInsideChips(ev.rawX, ev.rawY)
+        }
+        val inside = touchOnControl
         if (!inside) {
             if (gestures.onTouchEvent(ev)) return true
         }
@@ -849,6 +858,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun capsuleControls(): List<View> = listOf(
+        binding.buttonBack,
+        binding.buttonInspect,
+        binding.buttonMetadata,
+        binding.buttonSpeed,
         binding.buttonRewind,
         binding.buttonPlayPause,
         binding.buttonForward,
@@ -970,31 +983,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun startAmbientSampling() {
-        // Idempotent: onResume and onRenderedFirstFrame both call this, and rebuilding the sampler
-        // would discard the picture geometry it has already been told about, which makes the wash
-        // sample the wrong part of the frame.
-        if (ambientSampler != null) {
-            ambientSampler?.start()
-            return
-        }
-
-        val surface = binding.playerView.videoSurfaceView as? android.view.SurfaceView ?: return
-        ambientSampler = AmbientSampler(
-            surfaceView = surface,
-            onColors = { top, bottom, left, right ->
-                binding.ambientGlow.setEdgeColors(top, bottom, left, right)
-            },
-            onUnavailable = {
-                // PixelCopy against a video surface is not guaranteed on every device. If it is
-                // refused, stop burning attempts and say so once rather than silently leaving a
-                // black screen where a glow was promised.
-                binding.ambientGlow.glowEnabled = false
-                Log.i(TAG, "ambient glow unavailable on this device; disabled")
-            },
-        ).also { it.start() }
-
-        // Hand the new sampler the current geometry before it takes its first sample.
-        updateVideoRect()
+        ambientSampler?.stop()
+        binding.ambientGlow.visibility = View.GONE
     }
 
     /**
@@ -1029,58 +1019,24 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // set to the frame size. PixelCopy addresses that rectangle in buffer pixels, so the glass
         // cannot work out where the pane sits in the picture without it.
         binding.controlGlass.setBackdropFrameSize(width, height)
-        positionChromeOverPicture(rect)
+        positionChrome()
     }
 
-    /**
-     * Slides the control capsule so it floats just inside the bottom of the picture.
-     *
-     * The capsule is driven by a bottom margin rather than by translation because the gesture layer
-     * hit-tests the capsule through its real bounds: a translated view still reports its untranslated
-     * frame to `getLocationOnScreen`, which would leave the buttons and the gestures disagreeing
-     * about where the chrome is. A margin moves the frame itself.
-     *
-     * The margin is the distance from the bottom of the overlay to the bottom edge of the capsule, so
-     * placing the capsule [CHROME_VIDEO_INSET_DP] above the bottom of the picture is simply "how far
-     * the picture's bottom edge is above the overlay's, plus the inset". In landscape, where the
-     * picture already reaches the bottom of the window, that reduces to the inset; in portrait it
-     * lifts the capsule a long way up, off the letterbox and onto the frame, which is the whole point
-     * - glass refracts what is behind it, and behind the letterbox there is nothing.
-     *
-     * The pass is posted because the capsule may not be measured yet on the first call - it re-enters
-     * this method with the same picture geometry, which terminates immediately.
-     */
-    private fun positionChromeOverPicture(rect: Rect) {
-        val capsule = binding.controlGlass
+    /** Keep controls within stable system-bar and cutout insets in either orientation. */
+    private fun positionChrome() {
         val overlay = binding.controlsOverlay
         overlay.post {
-            val height = overlay.height
-            val capsuleHeight = capsule.height
-            if (height <= 0 || capsuleHeight <= 0) return@post
-
-            // Everything here is in the overlay's own coordinates, and the overlay fills the
-            // *window* - which is taller than the display on this device because the app draws
-            // behind the navigation bar (measured: window 2560 against a display of 2497). Laying
-            // the capsule out against the window's bottom edge therefore put its lower 63 px under
-            // the navigation bar, where it cannot be touched; reported as the chrome being "out of
-            // bounds". The bars are measured rather than assumed, because the inset changes with
-            // rotation and with the bars being hidden or shown.
-            val bars = ViewCompat.getRootWindowInsets(overlay)
-                ?.getInsets(WindowInsetsCompat.Type.systemBars())
-            val barTop = bars?.top ?: 0
-            val barBottom = bars?.bottom ?: 0
-            val usable = (height - barTop - barBottom).coerceAtLeast(capsuleHeight)
-
-            // Room left between the top of the usable area and the top of the capsule, so a picture
-            // that sits high on the screen cannot push the chrome out through the status bar.
-            val headroom = (usable - capsuleHeight).coerceAtLeast(0)
-            val below = (usable - barTop - rect.bottom).coerceAtLeast(0)
-            val target = (below + dp(CHROME_VIDEO_INSET_DP)).coerceIn(0, headroom)
-
-            val lp = capsule.layoutParams as? ViewGroup.MarginLayoutParams ?: return@post
-            if (lp.bottomMargin == target) return@post
-            lp.bottomMargin = target
-            capsule.layoutParams = lp
+            if (isDestroyed) return@post
+            val bars = ViewCompat.getRootWindowInsets(overlay)?.getInsetsIgnoringVisibility(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            overlay.setPadding(bars?.left ?: 0, bars?.top ?: 0, bars?.right ?: 0, bars?.bottom ?: 0)
+            val params = binding.controlGlass.layoutParams as FrameLayout.LayoutParams
+            val width = minOf(overlay.width - overlay.paddingLeft - overlay.paddingRight - dp(32f), dp(640f)).coerceAtLeast(dp(240f))
+            if (params.width != width || params.bottomMargin != dp(16f)) {
+                params.width = width
+                params.bottomMargin = dp(16f)
+                binding.controlGlass.layoutParams = params
+            }
         }
     }
 
@@ -1279,8 +1235,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         panelProbeReceiver = null
         // Detach before letting go: background audio keeps the engine alive, and it must not keep a
         // destroyed activity (and its whole view tree) alive with it.
-        engine.listener = null
-        PlaybackEngine.releaseIfIdle()
+        if (engine.listener === this) engine.listener = null
+        PlaybackEngine.releaseIfIdle(engine)
         // Nothing is playing, so there is nothing for the session to publish; leaving the service
         // started would keep an idle notification slot claimed for as long as the process lives.
         // When audio *is* playing the engine survives and the service stays with it.
@@ -1326,7 +1282,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         binding.controlsOverlay.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
-        binding.ambientGlow.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+        binding.ambientGlow.visibility = View.GONE
     }
 
     // ------------------------------------------------------------------ engine callbacks
@@ -1458,7 +1414,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             binding.timeRemaining.text =
                 "-" + TextSpans.timecode((sample.durationMs - sample.positionMs).coerceAtLeast(0L))
         }
-        updateStreamChips()
+        binding.buttonSpeed.text = String.format(Locale.US, "%.2g×", sample.playbackSpeed)
     }
 
     private fun updateDuration() {
@@ -1611,6 +1567,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             R.id.buttonMetadata,
             R.id.buttonPlayPause,
             R.id.buttonMore,
+            R.id.buttonSpeed,
             R.id.centerPlayPause,
         )) {
             findViewById<View>(id)?.tag = button
@@ -1713,11 +1670,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         // "[0,972][1096,1588]" got the numbers wrong once already, and a wrong parser here reports a
         // failure that is not there.
         val rectSize = actual?.let { "${it.width()}x${it.height()}" } ?: "none"
-        // The capsule is positioned from the same rect (`positionChromeOverPicture`), and "out of
-        // bounds" describes it at least as well as the wash: it is lifted to sit just inside the
-        // picture's bottom edge, so a rect that is still the old orientation's puts it somewhere
-        // else entirely. Its bounds and the top bar's are reported so the suite can check what
-        // "inside the window" means for both.
+        // Report the independent transport and header bounds for viewport checks.
         val capsuleLoc = IntArray(2)
         binding.controlGlass.getLocationOnScreen(capsuleLoc)
         val capsule = "capsule=${capsuleLoc[0]},${capsuleLoc[1]}," +
@@ -2127,17 +2080,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val GLASS_CLEAR_BODY = 0x33000000
         private const val GLASS_CLEAR_DIM = 0.22f
 
-        private const val CONTROL_GLASS_BEVEL_DP = 16f
-        private const val CONTROL_GLASS_REFRACT_DP = 12f
-
-        /**
-         * How far the bottom of the capsule sits above the bottom edge of the picture, in dp.
-         *
-         * The chrome is deliberately placed *over* the frame rather than in the letterbox below it:
-         * the glass refracts whatever is behind it, so over black bars it has nothing to show and
-         * reads as a flat tinted rectangle.
-         */
-        private const val CHROME_VIDEO_INSET_DP = 16f
+        private const val CONTROL_GLASS_BEVEL_DP = 8f
+        private const val CONTROL_GLASS_REFRACT_DP = 3f
 
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f

@@ -93,15 +93,15 @@ object SliderReading {
             inputType = InputType.TYPE_CLASS_NUMBER or
                 InputType.TYPE_NUMBER_FLAG_DECIMAL or
                 InputType.TYPE_NUMBER_FLAG_SIGNED
-            // The bar's reading, not the raw float, so the field starts from what is on screen.
-            text = android.text.Editable.Factory.getInstance().newEditable(format(current))
+            // Keep units outside the numeric input so the initial value can be submitted unchanged.
+            text = android.text.Editable.Factory.getInstance().newEditable(current.toString())
             setSelection(text.length)
             // Numbers without chrome: the range is printed below the field instead.
             background = null
             setPadding(0, context.resources.displayMetrics.density.toInt() * 12, 0, 0)
         }
 
-        AlertDialog.Builder(context)
+        val dialog = AlertDialog.Builder(context)
             .setTitle(R.string.slider_edit_value)
             .setView(input)
             .setMessage(
@@ -120,7 +120,12 @@ object SliderReading {
                 apply(view, typed, range, step, onSet)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        dialog.show()
+        input.requestFocus()
+        input.selectAll()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+        GlassTheme.configureSheet(dialog, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
         Haptics.touch(view)
     }
 }

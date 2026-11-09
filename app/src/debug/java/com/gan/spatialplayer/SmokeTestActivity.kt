@@ -23,6 +23,7 @@ class SmokeTestActivity : AppCompatActivity() {
         }
         startActivity(
             android.content.Intent(this, PlayerActivity::class.java)
+                .putExtra("smoke_muted", intent.getBooleanExtra("smoke_muted", false))
                 .setAction(android.content.Intent.ACTION_VIEW)
                 .setData(android.net.Uri.parse("file://$path"))
                 .putExtra(PlayerActivity.EXTRA_DISPLAY_NAME, path.substringAfterLast('/'))

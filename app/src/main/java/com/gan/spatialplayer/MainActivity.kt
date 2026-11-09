@@ -1,9 +1,6 @@
 package com.gan.spatialplayer
 
 import android.Manifest
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,9 +10,6 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.View
-import android.view.animation.DecelerateInterpolator
-import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -72,14 +66,6 @@ class MainActivity : AppCompatActivity() {
      */
     internal enum class Fold { NONE, LIBRARY, POWERAMP }
 
-    /**
-     * True while the action chip is animating between the bottom and the dock.
-     *
-     * The dock position is recomputed from the layout, and expanding the list changes the layout on
-     * every frame of its animation. Without this the recompute would snap the chip to its
-     * destination on the first frame and the movement would never be seen.
-     */
-    private var actionBarDocking = false
     private val prefs by lazy { getSharedPreferences("spatial_player", MODE_PRIVATE) }
     private val settings by lazy { SettingsStore(this) }
 
@@ -198,6 +184,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (::adapter.isInitialized) adapter.resumePreviews()
         // Debug builds only: lets `tools/verify-poweramp.sh` drive this instance's Poweramp fold and
         // refresh, because the bug it guards lived in the wiring between the two and a probe with a
         // list of its own would test a copy of the code that was wrong. Same shape as the player's
@@ -207,6 +194,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         instance = this
+    }
+
+    override fun onStop() {
+        if (::adapter.isInitialized) adapter.pausePreviews()
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -280,11 +272,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyWindowInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            binding.root.setPadding(0, bars.top, 0, 0)
-            val params = binding.actionBar.layoutParams as FrameLayout.LayoutParams
-            params.bottomMargin = bars.bottom + dp(22)
-            binding.actionBar.layoutParams = params
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            binding.root.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
     }
@@ -425,7 +414,7 @@ class MainActivity : AppCompatActivity() {
         setScanning(true)
         lifecycleScope.launch {
             val result = poweramp.readLibrary()
-            showToast(result.status)
+            if (result.entries.isEmpty()) showToast(result.status)
             Log.i(tag, "poweramp read: entries=${result.entries.size} status=${result.status}")
             powerampEntries = result.entries
             // `runCatching` inside the reader turns a provider failure into an empty list, so an empty
@@ -449,14 +438,14 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setUpLibraryDisclosure() {
         binding.buttonLibrary.setOnClickListener {
-            setFold(if (folded == Fold.LIBRARY) Fold.NONE else Fold.LIBRARY, animate = true)
+            setFold(Fold.LIBRARY, animate = true)
         }
 
         binding.buttonPoweramp.setOnClickListener {
             // Poweramp is read lazily: its provider costs a query and the audio permission may not
             // have been granted yet, so the fold opens first and fills in when the read lands.
             if (folded == Fold.POWERAMP) {
-                setFold(Fold.NONE, animate = true)
+                setFold(Fold.POWERAMP, animate = true)
             } else {
                 setFold(Fold.POWERAMP, animate = true)
                 // Re-reads even when it is already loaded. It used to skip the read on the theory
@@ -469,19 +458,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val restored = prefs.getString(KEY_FOLDED, null)
-        val initialFold = runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.NONE)
+        val initialFold = runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.LIBRARY)
         setFold(initialFold, animate = false)
         // A fold that was left open comes back open, so it also has to come back *filled*: the
         // restore used to call `setFold` alone, so a fresh process opened onto an empty Poweramp
         // fold that only a tap-away-and-back would populate.
         if (initialFold == Fold.POWERAMP) loadPowerampLibrary()
 
-        // Where the chip docks depends on where the status chips ended up, which is only known after
-        // a layout pass - and it changes again on rotation or a font-scale change. Recompute from the
-        // layout instead of caching it.
-        binding.root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            if (folded != Fold.NONE && !actionBarDocking) dockActionBar(animate = false)
-        }
+
     }
 
     /**
@@ -493,179 +477,25 @@ class MainActivity : AppCompatActivity() {
      * rather than up front.
      */
     private fun setFold(target: Fold, animate: Boolean) {
-        folded = target
-        prefs.edit().putString(KEY_FOLDED, target.name).apply()
-
-        val duration = if (animate) MOTION_MS else 0L
-        binding.libraryChevron.animate()
-            .rotation(if (target == Fold.LIBRARY) 180f else 0f)
-            .setDuration(duration)
-            .start()
-        binding.powerampChevron.animate()
-            .rotation(if (target == Fold.POWERAMP) 180f else 0f)
-            .setDuration(duration)
-            .start()
-
-        val expanded = target != Fold.NONE
-        showFold(expanded, animate)
-        dockActionBar(animate)
-    }
-
-    private fun showFold(expanded: Boolean, animate: Boolean) {
-        val submitted = visibleEntries()
-        adapter.submit(submitted)
-        Log.i(tag, "showFold expanded=$expanded submitted=${submitted.size} fold=$folded")
+        folded = if (target == Fold.NONE) Fold.LIBRARY else target
+        prefs.edit().putString(KEY_FOLDED, folded.name).apply()
+        binding.buttonLibrary.tag = if (folded == Fold.LIBRARY) R.id.glass_role_button_active else R.id.glass_role_button
+        binding.buttonPoweramp.tag = if (folded == Fold.POWERAMP) R.id.glass_role_button_active else R.id.glass_role_button
+        GlassInstaller.apply(binding.actionBar)
+        adapter.submit(visibleEntries())
+        binding.libraryBody.apply {
+            visibility = View.VISIBLE
+            alpha = 1f
+            translationY = 0f
+            requestLayout()
+        }
+        if (animate) {
+            binding.fileList.animate().cancel()
+            binding.fileList.alpha = 0.45f
+            binding.fileList.animate().alpha(1f).setDuration(180L).start()
+        }
         updateEmptyState()
         updateLibrarySummary()
-
-        val body = binding.libraryBody
-        val params = body.layoutParams as LinearLayout.LayoutParams
-        val settle = dp(LIST_SETTLE_DP).toFloat()
-
-        if (!animate) {
-            // The launch path: the persisted fold is opened before the first frame. Its final state is
-            // applied here and re-asserted once after layout, because a row list whose visibility and
-            // weight are only ever set in this one pass has no way back if that pass does not take.
-            // That is what a "the list only appears after I rotate" report looks like from the inside.
-            applyFoldBodyRestingState(body, params, expanded)
-            settleFoldBody(body, params, expanded)
-            return
-        }
-
-        if (expanded) {
-            body.visibility = View.VISIBLE
-            // Start slightly high and settle down, which is the direction the panel is unfolding.
-            // Sliding up from below would put the rows outside the parent for the duration and the
-            // default clipChildren would cut them off.
-            body.translationY = -settle
-            body.alpha = 0f
-        }
-        body.animate().cancel()
-        body.animate()
-            .alpha(if (expanded) 1f else 0f)
-            .translationY(if (expanded) 0f else -settle)
-            .setDuration(MOTION_MS)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
-
-        // The height has to be animated separately: the body's height comes from `layout_weight`, and
-        // a weight is not a property a ViewPropertyAnimator can drive.
-        ValueAnimator.ofFloat(params.weight, if (expanded) 1f else 0f).apply {
-            duration = MOTION_MS
-            interpolator = DecelerateInterpolator()
-            addUpdateListener { animator ->
-                params.weight = animator.animatedValue as Float
-                body.layoutParams = params
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    // Collapsing to exactly zero removes the body from the layout entirely.
-                    if (!expanded) body.visibility = View.GONE
-                }
-            })
-            start()
-        }
-    }
-
-    /**
-     * Puts the fold's body into its resting state without animating.
-     *
-     * The one place that decides what "open" and "closed" mean for the list itself, so the animated
-     * path and the launch path cannot drift apart.
-     */
-    private fun applyFoldBodyRestingState(
-        body: View,
-        params: LinearLayout.LayoutParams,
-        expanded: Boolean,
-    ) {
-        params.weight = if (expanded) 1f else 0f
-        body.layoutParams = params
-        body.visibility = if (expanded) View.VISIBLE else View.GONE
-        body.alpha = if (expanded) 1f else 0f
-        body.translationY = 0f
-    }
-
-    /**
-     * Re-applies the resting state once, after the first layout pass.
-     *
-     * The launch path opens the persisted fold before anything has been measured, and a weight only
-     * takes effect in the parent's next layout pass. If that pass does not happen - or happens before
-     * the rows arrive - the body sits at zero height with `GONE` children and nothing re-tries, which
-     * is "the list only appears after I rotate" from the inside. This costs one frame and does
-     * nothing when the state is already right.
-     */
-    private fun settleFoldBody(
-        body: View,
-        params: LinearLayout.LayoutParams,
-        expanded: Boolean,
-    ) {
-        body.post {
-            if (isFinishing || isDestroyed) return@post
-            val wrongWeight = params.weight != (if (expanded) 1f else 0f)
-            val wrongVisibility = body.visibility != (if (expanded) View.VISIBLE else View.GONE)
-            if (!wrongWeight && !wrongVisibility) return@post
-            Log.i(tag, "fold body had not settled; re-applying (expanded=$expanded)")
-            applyFoldBodyRestingState(body, params, expanded)
-        }
-    }
-
-    /** Where the action chip sits when the list is open: directly below the status chips. */
-    private fun dockTranslation(): Float {
-        val bar = binding.actionBar
-        val chips = binding.chipStrip
-        if (bar.height == 0 || chips.height == 0) return 0f
-
-        val barLocation = IntArray(2)
-        bar.getLocationInWindow(barLocation)
-        val chipsLocation = IntArray(2)
-        chips.getLocationInWindow(chipsLocation)
-
-        // getLocationInWindow already includes whatever translation is applied, so take it back out
-        // to recover the position gravity alone would have given the bar.
-        val restingTop = barLocation[1] - bar.translationY
-        val dockedTop = chipsLocation[1] + chips.height + dp(DOCK_GAP_DP)
-        return dockedTop - restingTop
-    }
-
-    /**
-     * Moves the chip between its resting place at the bottom of the window and the dock under the
-     * status chips, and reserves room for it in the list.
-     *
-     * The two have to move together. The chip is a floating overlay, so while it is docked the list
-     * must start below it or the first row ends up underneath the glass.
-     *
-     * The chip used to sit at the bottom permanently, which put it on top of the last rows of the
-     * list - the one place the user is most likely to be reaching for when they have just finished
-     * scrolling.
-     */
-    private fun dockActionBar(animate: Boolean) {
-        val bar = binding.actionBar
-
-        val listInset = if (folded != Fold.NONE) bar.height + dp(DOCK_GAP_DP) else 0
-        if (binding.fileList.paddingTop != listInset) {
-            binding.fileList.setPaddingRelative(
-                binding.fileList.paddingStart,
-                listInset,
-                binding.fileList.paddingEnd,
-                binding.fileList.paddingBottom,
-            )
-        }
-
-        val target = if (folded != Fold.NONE) dockTranslation() else 0f
-        if (kotlin.math.abs(bar.translationY - target) < 0.5f) return
-
-        if (!animate) {
-            bar.translationY = target
-            return
-        }
-
-        actionBarDocking = true
-        bar.animate()
-            .translationY(target)
-            .setDuration(MOTION_MS)
-            .setInterpolator(DecelerateInterpolator())
-            .withEndAction { actionBarDocking = false }
-            .start()
     }
 
     private fun publish(list: List<FileEntry>) {
@@ -682,28 +512,11 @@ class MainActivity : AppCompatActivity() {
         updateLibrarySummary()
     }
 
-    /**
-     * One line telling the first screen what is in the library.
-     *
-     * Counts whichever set the user is looking at: "461 · 2 folders" while everything is folded away
-     * would be a lie the moment they open the music, which holds a different number.
-     */
+    /** Count only the selected media source. */
     private fun updateLibrarySummary() {
-        // With nothing folded open the line describes the whole collection, not the empty set the
-        // filter would return - "empty" on a screen holding 461 files is simply wrong.
-        val showing = if (folded == Fold.NONE) entries else visibleEntries()
-        val count = showing.size
-        val folders = showing.mapNotNull { it.uri.path?.substringBeforeLast('/') }.distinct().size
-        val suffix = when {
-            folded == Fold.POWERAMP -> " " + getString(R.string.poweramp_library)
-            folded == Fold.LIBRARY -> " " + getString(R.string.library)
-            else -> ""
-        }
-        binding.headerSubtitle.text = when {
-            count == 0 -> getString(R.string.library_empty)
-            folders > 0 -> "$count · $folders folders$suffix"
-            else -> "$count$suffix"
-        }
+        val count = visibleEntries().size
+        binding.headerSubtitle.text = if (count == 0) getString(R.string.library_empty)
+            else "$count ${if (folded == Fold.POWERAMP) "songs" else "videos"}"
     }
 
     /**
@@ -862,13 +675,5 @@ class MainActivity : AppCompatActivity() {
 
         const val KEY_FOLDED = "folded_library"
 
-        /** Disclosure animation length; a spring would overshoot the weighted height. */
-        const val MOTION_MS = 280L
-
-        /** How far the list settles into place as a fold opens, in dp. */
-        const val LIST_SETTLE_DP = 12
-
-        /** Gap between the docked action chip and the bottom of the status chips. */
-        const val DOCK_GAP_DP = 10
     }
 }

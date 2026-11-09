@@ -534,6 +534,7 @@ class LiquidGlassView @JvmOverloads constructor(
     // ------------------------------------------------------------------ drawing
 
     override fun onDraw(canvas: Canvas) {
+        if (GlassBackdrop.capturing) return
         val bitmap = backBuffer
         val active = shader
 

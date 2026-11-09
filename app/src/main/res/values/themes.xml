@@ -14,7 +14,7 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <!-- System default (Roboto) for everything that is not technical. -->
-        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:fontFamily">@font/inter</item>
         <item name="materialAlertDialogTheme">@style/Theme.SpatialPlayer.Dialog</item>
     </style>
 
@@ -25,9 +25,20 @@
     </style>
 
     <style name="Theme.SpatialPlayer.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowIsTranslucent">true</item>
         <item name="colorSurface">@color/bg_raised</item>
         <item name="colorOnSurface">@color/text_primary</item>
-        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:fontFamily">@font/inter</item>
+    </style>
+
+    <style name="Theme.SpatialPlayer.Glass" parent="Theme.SpatialPlayer">
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
     </style>
 
     <!-- Technical readouts: fixed-width, tabular so columns line up. -->
@@ -73,7 +84,7 @@
 
     <!-- Human-facing copy: system default font, quiet hierarchy. -->
     <style name="Text.Body" parent="">
-        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:fontFamily">@font/inter</item>
         <item name="android:textColor">@color/text_primary</item>
         <item name="android:textSize">14sp</item>
         <item name="android:includeFontPadding">false</item>
@@ -99,7 +110,7 @@
     <style name="GlassButton" parent="">
         <item name="android:background">@drawable/bg_glass_button</item>
         <item name="android:textColor">@color/text_primary</item>
-        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:fontFamily">@font/inter</item>
         <item name="android:textSize">13sp</item>
         <item name="android:minWidth">0dp</item>
         <item name="android:minHeight">0dp</item>

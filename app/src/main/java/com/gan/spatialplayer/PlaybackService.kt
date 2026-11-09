@@ -7,6 +7,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.gan.spatialplayer.media.PlaybackEngine
+import com.gan.spatialplayer.media.PlayerEngine
 
 /**
  * Publishes the player to the system, which is what puts it in the media centre and in the
@@ -29,6 +30,13 @@ import com.gan.spatialplayer.media.PlaybackEngine
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null
+    private var attachedEngine: PlayerEngine? = null
+    private val playerChanged: () -> Unit = { attach() }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        attach()
+        return super.onStartCommand(intent, flags, startId)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +56,7 @@ class PlaybackService : MediaSessionService() {
     private fun attach() {
         val engine = PlaybackEngine.acquire(this)
         val player = engine.player ?: return
+        attachedEngine = engine
         // One session for the service's lifetime, re-pointed at each new player rather than replaced.
         // Replacing it released a session and added another, and the notification from the released
         // one could outlive it - which is how the media centre came to show a track that had finished
@@ -55,7 +64,7 @@ class PlaybackService : MediaSessionService() {
         session?.let { existing ->
             val moved = runCatching { existing.setPlayer(player) }
             if (moved.isSuccess) {
-                engine.onPlayerChanged = { attach() }
+                engine.onPlayerChanged = playerChanged
                 return
             }
             Log.w(TAG, "could not re-point the session; rebuilding it", moved.exceptionOrNull())
@@ -93,7 +102,7 @@ class PlaybackService : MediaSessionService() {
         runCatching { addSession(built) }
             .onFailure { Log.w(TAG, "could not add the session", it) }
         session = built
-        engine.onPlayerChanged = { attach() }
+        engine.onPlayerChanged = playerChanged
     }
 
     /** Tapping the notification returns to the player, not merely to the app. */
@@ -133,11 +142,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        PlaybackEngine.peek()?.onPlayerChanged = null
+        val engine = attachedEngine
+        if (engine?.onPlayerChanged === playerChanged) engine.onPlayerChanged = null
+        attachedEngine = null
         session?.release()
         session = null
         // Frees the engine unless it is still producing sound for someone else.
-        PlaybackEngine.releaseIfIdle()
+        PlaybackEngine.releaseIfIdle(engine)
         super.onDestroy()
     }
 }

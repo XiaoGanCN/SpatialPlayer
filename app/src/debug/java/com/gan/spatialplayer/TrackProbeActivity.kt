@@ -108,7 +108,12 @@ class TrackProbeActivity : AppCompatActivity() {
         }
         schedule(2_000) { snapshot("t+2s") }
         schedule(6_000) { snapshot("t+6s") }
-        schedule(7_000) {
+        val duration = intent.getLongExtra("track_probe_duration_ms", 7_000L).coerceIn(7_000L, 60_000L)
+        if (duration > 7_000L) {
+            schedule(8_000) { snapshot("t+8s") }
+            schedule(duration - 1_000) { snapshot("final") }
+        }
+        schedule(duration) {
             line("result", "done")
             finish()
         }
@@ -123,6 +128,8 @@ class TrackProbeActivity : AppCompatActivity() {
                 "buffered=${player.bufferedPosition} duration=${player.duration} " +
                 "videoSize=${player.videoSize.width}x${player.videoSize.height}",
         )
+        val sample = engine.sample()
+        line("performance", "$whenLabel decoder=${sample.videoCodecName} rendered=${sample.renderedFrames} dropped=${sample.droppedFrames} underruns=${sample.audioUnderruns} upmix=${engine.isStereoUpmixActive} channels=${sample.audioChannelCount}")
         line(
             "media",
             "item=${player.currentMediaItem?.localConfiguration?.uri} " +

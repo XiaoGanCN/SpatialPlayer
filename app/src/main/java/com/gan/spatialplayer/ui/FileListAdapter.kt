@@ -33,6 +33,9 @@ class FileListAdapter(
         if (previous != items.size) notifyDataSetChanged() else notifyItemRangeChanged(0, items.size)
     }
 
+    fun pausePreviews() { thumbnails?.pause() }
+    fun resumePreviews() { thumbnails?.resume(); notifyDataSetChanged() }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_file, parent, false)
@@ -70,34 +73,15 @@ class FileListAdapter(
             // as a typo rather than as "unknown" - and the sources that leave it empty are the ones
             // that also supply the artist, so it was the most visible line in the row.
             val duration = if (entry.durationMs > 0) TextSpans.timecode(entry.durationMs) else null
-            val size = if (entry.sizeBytes > 0) TextSpans.bytes(entry.sizeBytes) else null
-            val source = when (entry.source) {
-                FileEntry.Source.MEDIA_STORE -> "mediastore"
-                FileEntry.Source.FOLDER -> "folder"
-                FileEntry.Source.POWERAMP -> "poweramp"
-                FileEntry.Source.EXTERNAL -> "file"
-            }
-            val metaParts = listOfNotNull(duration, size, source)
-            meta.text = mixed(
-                metaParts.joinToString("  ·  "),
-                *listOfNotNull(duration, size).toTypedArray(),
-            )
+            val metaParts = if (!entry.artist.isNullOrBlank()) listOfNotNull(entry.artist, entry.album) else listOfNotNull(duration)
+            meta.text = metaParts.joinToString(" · ")
 
             val isAudio = entry.mimeType?.startsWith("audio/") == true ||
                 entry.extension in AUDIO_EXTENSIONS
 
             // Artist and album only when the source actually supplied them; an empty row of
             // separators would be worse than nothing.
-            val tagLine = listOfNotNull(
-                entry.artist?.takeIf { it.isNotBlank() },
-                entry.album?.takeIf { it.isNotBlank() },
-            )
-            if (tagLine.isEmpty()) {
-                tags.visibility = View.GONE
-            } else {
-                tags.visibility = View.VISIBLE
-                tags.text = tagLine.joinToString("  ·  ")
-            }
+            tags.visibility = View.GONE
 
             val placeholder = if (isAudio) {
                 ThumbnailLoader.PLACEHOLDER_AUDIO
@@ -119,7 +103,7 @@ class FileListAdapter(
                     params.width = (AUDIO_ART_DP * density).toInt()
                     params.height = (AUDIO_ART_DP * density).toInt()
                     (params as? ViewGroup.MarginLayoutParams)?.marginEnd =
-                        ((VIDEO_SLOT_DP - AUDIO_ART_DP) * density).toInt()
+                        0
                     icon.scaleType = ImageView.ScaleType.CENTER_CROP
                 } else {
                     params.width = (VIDEO_SLOT_DP * density).toInt()
@@ -158,13 +142,13 @@ class FileListAdapter(
             )
 
             /** Width of a video row's 16:9 thumbnail slot, in dp. Matches `item_file.xml`. */
-            const val VIDEO_SLOT_DP = 58
+            const val VIDEO_SLOT_DP = 80
 
             /** Height of a video row's thumbnail slot, in dp. */
-            const val VIDEO_SLOT_HEIGHT_DP = 34
+            const val VIDEO_SLOT_HEIGHT_DP = 46
 
             /** Cover art is square; this is also the height of an audio row's art. */
-            const val AUDIO_ART_DP = 40
+            const val AUDIO_ART_DP = 46
         }
     }
 }

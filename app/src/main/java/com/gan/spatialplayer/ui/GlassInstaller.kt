@@ -48,22 +48,22 @@ object GlassInstaller {
      */
     private fun roles(context: Context): Map<Int, Role> = mapOf(
         R.id.glass_role_button to Role { ctx ->
-            GlassStyle(cornerRadiusPx = dp(ctx, 18f), fallbackFill = 0x2BFFFFFF)
+            GlassStyle(cornerRadiusPx = dp(ctx, 22f), fallbackFill = 0x2BFFFFFF)
         },
         R.id.glass_role_button_active to Role { ctx ->
             GlassStyle(
-                cornerRadiusPx = dp(ctx, 18f),
-                tint = 0x598AB4F8.toInt(),
-                body = 0x1F8AB4F8,
-                specularStrength = 1.15f,
-                fallbackFill = 0x4D8AB4F8,
+                cornerRadiusPx = dp(ctx, 22f),
+                tint = 0x32FFFFFF,
+                body = 0x12FFFFFF,
+                specularStrength = 0.35f,
+                fallbackFill = 0x32FFFFFF,
             )
         },
         R.id.glass_role_bar to Role { ctx ->
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 30f),
-                bevelWidthPx = dp(ctx, 12f),
-                refractionPx = dp(ctx, 6f),
+                bevelWidthPx = dp(ctx, 8f),
+                refractionPx = dp(ctx, 3f),
                 blurTexels = 8f,
                 tint = 0x1AFFFFFF,
                 fallbackFill = 0x2BFFFFFF,
@@ -73,8 +73,8 @@ object GlassInstaller {
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 26f),
                 blurTexels = 9f,
-                bevelWidthPx = dp(ctx, 18f),
-                refractionPx = dp(ctx, 8f),
+                bevelWidthPx = dp(ctx, 8f),
+                refractionPx = dp(ctx, 3f),
                 tint = 0x1AFFFFFF,
                 fallbackFill = 0x24FFFFFF,
             )
