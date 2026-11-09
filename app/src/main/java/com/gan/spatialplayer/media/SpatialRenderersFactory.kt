@@ -3,12 +3,12 @@ package com.gan.spatialplayer.media
 import android.content.Context
 import android.os.Handler
 import android.util.Log
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
-import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegAudioRenderer
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegVideoRenderer
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
@@ -34,6 +34,7 @@ import java.util.ArrayList
  * So this class subclasses `NextRenderersFactory` purely to reorder what it already built. It adds
  * no new renderer types and no new decoding behaviour - only priority.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class SpatialRenderersFactory(
     context: Context,
     private val profile: DecoderProfile,

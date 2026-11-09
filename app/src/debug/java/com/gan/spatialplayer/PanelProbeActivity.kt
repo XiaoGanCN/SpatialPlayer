@@ -20,17 +20,24 @@ import androidx.appcompat.app.AppCompatActivity
  * | `chrome` | [PanelProbeReceiver.ACTION_CHROME_TOUCH] | the chrome's touch routing, shown and timed out |
  * | `geometry` | [PanelProbeReceiver.ACTION_GEOMETRY] | the picture rect the wash is drawing with |
  * | `press` | [PanelProbeReceiver.ACTION_GLASS_PRESS] | holds the capsule in a press for 3 s |
+ * | `library` | [LibraryProbeReceiver.ACTION] | the running library's Poweramp fold across a refresh |
  *
  * The choice matters: all of them report through the same log tag, so firing more than one and then
  * grepping for "the last line" reads whichever happened to land last - which is how `verify-panels.sh`
  * began failing against a geometry line that had nothing to do with panels. Omitting the extra fires
- * all three, which is only useful when looking at the device by hand.
+ * all three, which is only useful when looking at the device by hand. `library` reports on the
+ * `LibraryProbe` tag instead, but the same discipline applies.
  */
 class PanelProbeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val wanted = intent.getStringExtra(EXTRA_PROBE)
+        if (wanted == "settings") {
+            startActivity(Intent(this, SettingsActivity::class.java))
+            finish()
+            return
+        }
         if (wanted.isNullOrBlank()) {
             fire(PanelProbeReceiver.ACTION)
             fire(PanelProbeReceiver.ACTION_CHROME_TOUCH)
@@ -41,6 +48,7 @@ class PanelProbeActivity : AppCompatActivity() {
                     PROBE_CHROME -> PanelProbeReceiver.ACTION_CHROME_TOUCH
                     PROBE_GEOMETRY -> PanelProbeReceiver.ACTION_GEOMETRY
                     PROBE_PRESS -> PanelProbeReceiver.ACTION_GLASS_PRESS
+                    PROBE_LIBRARY -> LibraryProbeReceiver.ACTION
                     else -> PanelProbeReceiver.ACTION
                 },
             )
@@ -60,5 +68,6 @@ class PanelProbeActivity : AppCompatActivity() {
         const val PROBE_CHROME = "chrome"
         const val PROBE_GEOMETRY = "geometry"
         const val PROBE_PRESS = "press"
+        const val PROBE_LIBRARY = "library"
     }
 }

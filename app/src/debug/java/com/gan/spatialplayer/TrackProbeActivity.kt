@@ -25,6 +25,7 @@ import com.gan.spatialplayer.media.PlayerEngine
  * adb shell am start -n <pkg>/com.gan.spatialplayer.TrackProbeActivity -d <content-uri>
  * ```
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class TrackProbeActivity : AppCompatActivity() {
 
     private lateinit var engine: PlayerEngine
@@ -41,6 +42,7 @@ class TrackProbeActivity : AppCompatActivity() {
 
         engine = PlayerEngine(this, null)
         engine.build()
+        if (intent.getBooleanExtra("track_probe_mute", false)) engine.player?.volume = 0f
 
         // A real SurfaceView, because a video renderer given no output does not report a failure -
         // it simply never enables, and the probe would see nothing and conclude nothing.
@@ -99,6 +101,11 @@ class TrackProbeActivity : AppCompatActivity() {
         line("setup", "prepared")
         line("profile", engine.decoderProfile.name)
 
+        val seekMs = intent.getLongExtra("track_probe_seek_ms", -1L)
+        if (seekMs >= 0L) schedule(3_500) {
+            engine.player?.seekTo(seekMs)
+            line("seekRequested", seekMs.toString())
+        }
         schedule(2_000) { snapshot("t+2s") }
         schedule(6_000) { snapshot("t+6s") }
         schedule(7_000) {
@@ -163,7 +170,8 @@ class TrackProbeActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        engine.release()
+        if (::engine.isInitialized) engine.release()
+        line("released", "true")
         super.onDestroy()
     }
 

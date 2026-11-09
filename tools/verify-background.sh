@@ -10,7 +10,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG_DEBUG="com.gan.spatialplayer.debug"
+PKG_DEBUG="org.spatialplayer.debug"
 ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
 DIR="/sdcard/Movies/SpatialPlayerTest"
 AUDIO_CLIP="$DIR/stems_51.mkv"       # audio only: six channels, no video track
@@ -31,11 +31,11 @@ sh_()  { "$ADB" shell "$@" 2>/dev/null | tr -d '\r'; }
 # failure against a player that had correctly paused. `PLAYING(3)` keeps the numeric state, because
 # stripping it made the audio checks fail on a correct player rather than the reverse.
 session_state() {
-  sh_ dumpsys media_session | awk '
+  sh_ dumpsys media_session | awk -v pkg="$PKG_DEBUG" '
     # Anchored on the session package line itself. Matching the package name anywhere caught an
     # earlier mention of it and then reported the next state in the dump - which belonged to a stale
     # Bluetooth session carrying "Bluetooth audio disconnected", i.e. ERROR(7).
-    /^[[:space:]]*package=com\.gan\.spatialplayer\.debug[[:space:]]*$/ { ours = 1; n = 0; next }
+    $1 == ("package=" pkg) { ours = 1; n = 0; next }
     ours { n++ }
     ours && n < 12 && /state=PlaybackState/ {
       line = $0
@@ -48,8 +48,8 @@ session_state() {
 }
 
 session_position() {
-  sh_ dumpsys media_session | awk '
-    /^[[:space:]]*package=com\.gan\.spatialplayer\.debug[[:space:]]*$/ { ours = 1; n = 0; next }
+  sh_ dumpsys media_session | awk -v pkg="$PKG_DEBUG" '
+    $1 == ("package=" pkg) { ours = 1; n = 0; next }
     ours { n++ }
     ours && n < 12 && /state=PlaybackState/ {
       line = $0
@@ -87,13 +87,21 @@ focused_window() {
 # phone wakes onto its lock screen, the shade holds `mCurrentFocus`, and an app started underneath it
 # never becomes visible - so the video is launched, `onStop` runs, and the check reports "video was
 # not playing while visible". That was read as an app bug twice before the window dump showed what
-# was actually in front. `cmd statusbar collapse` and a swipe-up are both attempted because neither
-# works on its own in every state, and the loop fails loudly rather than silently testing nothing.
+# was actually in front. `cmd statusbar collapse`, a swipe-up, the menu key and `wm dismiss-keyguard`
+# are all attempted because none of them works in every state - dismiss-keyguard clears an *insecure*
+# keyguard and nothing else, and on this phone it works about as often as it does not.
+#
+# When none of them land, the shade is the phone asking for a credential, and no shell command can
+# give it one. The remaining move is a physical touch, which the standing instructions say to ask
+# for on the Mac with a modal dialog and a sound. `ASK_TOUCH=0` turns the prompt off for headless
+# runs; `wake_visible` then fails loudly rather than silently testing nothing.
 wake_visible() {
   local focus i
   for ((i = 0; i < 8; i++)); do
     sh_ input keyevent KEYCODE_WAKEUP > /dev/null 2>&1
     sh_ cmd statusbar collapse > /dev/null 2>&1
+    sh_ wm dismiss-keyguard > /dev/null 2>&1
+    sh_ input keyevent 82 > /dev/null 2>&1
     sh_ input swipe 548 2200 548 600 300 > /dev/null 2>&1
     sleep 1
     focus=$(focused_window)
@@ -102,6 +110,28 @@ wake_visible() {
       *) info "woke onto: ${focus}"; return 0 ;;
     esac
   done
+
+  # `wm dismiss-keyguard` can briefly drop the adb transport while it works, so the state is read
+  # once more before declaring defeat - the dump above may have raced it.
+  sleep 2
+  focus=$(focused_window)
+  case "$focus" in
+    *NotificationShade*|"") ;;
+    *) info "woke onto: ${focus}"; return 0 ;;
+  esac
+
+  if [ "${ASK_TOUCH:-1}" = "1" ] && command -v osascript > /dev/null 2>&1; then
+    osascript -e 'display dialog "A Spatial Player test run needs the phone, and its lock screen is holding window focus - adb cannot dismiss it. Please swipe up on the phone (PIN if it asks), then click OK." with title "Phone needs a touch" buttons {"OK"} default button 1 with icon caution' > /dev/null 2>&1
+    focus=$(focused_window)
+    case "$focus" in
+      *NotificationShade*|"")
+        info "the notification shade still holds focus after asking; a background assertion now would be meaningless"
+        return 1
+        ;;
+      *) info "woke onto: ${focus} (after a touch)"; return 0 ;;
+    esac
+  fi
+
   info "the notification shade still holds focus (${focus:-unknown}); a background assertion now would be meaningless"
   return 1
 }

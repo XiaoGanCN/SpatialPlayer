@@ -1,10 +1,10 @@
 package com.gan.spatialplayer
 
 import android.content.Context
-import com.gan.spatialplayer.media.UpmixMatrix
-import com.gan.spatialplayer.media.UpmixMode
 import android.content.SharedPreferences
 import com.gan.spatialplayer.media.DecoderProfile
+import com.gan.spatialplayer.media.UpmixMatrix
+import com.gan.spatialplayer.media.UpmixMode
 
 /**
  * Every persisted preference, in one place.
@@ -22,18 +22,6 @@ class SettingsStore(context: Context) {
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-
-    // ------------------------------------------------------------------ library
-
-    /** The folder the user granted, if any. A URI, stored as text. */
-    var folderUri: String?
-        get() = prefs.getString(KEY_FOLDER_URI, null)
-        set(value) = prefs.edit().putString(KEY_FOLDER_URI, value).apply()
-
-    /** Which library is folded open on the main screen; see MainActivity.Fold. */
-    var foldedLibrary: String
-        get() = prefs.getString(KEY_FOLDED, FOLD_NONE) ?: FOLD_NONE
-        set(value) = prefs.edit().putString(KEY_FOLDED, value).apply()
 
     // ------------------------------------------------------------------ playback
 
@@ -179,8 +167,6 @@ class SettingsStore(context: Context) {
     companion object {
         const val FILE = "spatial_player"
 
-        const val KEY_FOLDER_URI = "scoped_folder_uri"
-        const val KEY_FOLDED = "folded_library"
         const val KEY_JUMP_MS = "double_tap_jump_ms"
         const val KEY_DECODER_PROFILE = "decoder_profile"
         const val KEY_SPATIAL = "spatial_enabled"
@@ -200,8 +186,6 @@ class SettingsStore(context: Context) {
         const val KEY_BACKGROUND_VIDEO = "background_video"
 
         const val KEY_GLASS_MATERIAL = "glass_material"
-
-        const val FOLD_NONE = "NONE"
 
         const val GLASS_REGULAR = "REGULAR"
         const val GLASS_CLEAR = "CLEAR"

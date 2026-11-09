@@ -51,10 +51,10 @@ class SeekBarView @JvmOverloads constructor(
 
     // Monochrome by design: a white played portion on a faint white track, with a white thumb.
     // Colour here would compete with the picture and the ambient wash.
-    @ColorInt private var trackColor: Int = Color.argb(48, 255, 255, 255)
-    @ColorInt private var playedColor: Int = Color.argb(242, 255, 255, 255)
-    @ColorInt private var bufferedColor: Int = Color.argb(92, 255, 255, 255)
-    @ColorInt private var thumbColor: Int = Color.argb(255, 255, 255, 255)
+    @ColorInt private val trackColor: Int = Color.argb(48, 255, 255, 255)
+    @ColorInt private val playedColor: Int = Color.argb(242, 255, 255, 255)
+    @ColorInt private val bufferedColor: Int = Color.argb(92, 255, 255, 255)
+    @ColorInt private val thumbColor: Int = Color.argb(255, 255, 255, 255)
 
     /** 0..1, the value actually drawn. */
     private var progress = 0f
@@ -96,18 +96,6 @@ class SeekBarView @JvmOverloads constructor(
 
         isClickable = true
         isFocusable = true
-    }
-
-    fun setColors(@ColorInt played: Int, @ColorInt track: Int, @ColorInt bufferedBar: Int, @ColorInt thumb: Int) {
-        playedColor = played
-        trackColor = track
-        bufferedColor = bufferedBar
-        thumbColor = thumb
-        playedPaint.color = played
-        trackPaint.color = track
-        bufferedPaint.color = bufferedBar
-        thumbPaint.color = thumb
-        invalidate()
     }
 
     /**
@@ -291,9 +279,6 @@ class SeekBarView @JvmOverloads constructor(
             start()
         }
     }
-
-    /** Fraction currently under the finger, for live timecode display. */
-    fun currentScrubFraction(): Float = hoverFraction
 
     override fun onDetachedFromWindow() {
         thumbAnimator?.cancel()

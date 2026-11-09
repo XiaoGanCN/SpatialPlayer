@@ -64,6 +64,7 @@ import androidx.media3.extractor.mkv.MatroskaExtractor
  * Not a preference and not a profile: this is a correctness fallback, and it does nothing at all on
  * a device with a Dolby Vision decoder.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 object DolbyVisionFallback {
 
     /** `video/dolby-vision` decoder names, if the platform has any. Cheap enough to ask once. */

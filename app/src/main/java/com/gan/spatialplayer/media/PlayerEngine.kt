@@ -1,10 +1,7 @@
 package com.gan.spatialplayer.media
 
-import com.gan.spatialplayer.SettingsStore
-
 import android.content.Context
 import android.media.AudioDeviceInfo
-import android.media.AudioManager
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.AudioAttributes
@@ -20,10 +17,10 @@ import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.audio.AudioCapabilities
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import com.gan.spatialplayer.SettingsStore
 
 /**
  * Owns the ExoPlayer instance and everything that has to agree with it: decoder policy, buffer
@@ -34,6 +31,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
  * policy - which needs a whole new renderer stack - is an atomic rebuild here rather than a
  * scattered mutation across the UI.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlayerEngine(
     private val context: Context,
     listener: Listener?,
@@ -183,21 +181,6 @@ class PlayerEngine(
     var maxAudioChannelCount: Int = AudioOutputCapability.MAX_CHANNELS
         private set
 
-    /**
-     * Re-reads the output capability and applies it.
-     *
-     * Called at build time and whenever the output device changes. The channel cap has to be right
-     * *before* the sink is created, because a sink that refuses a channel count fails the whole
-     * playback - the 7.1-over-Bluetooth case.
-     */
-    fun refreshOutputCapability() {
-        val channels = AudioOutputCapability.verifiedMaxChannels(context)
-        if (channels == maxAudioChannelCount) return
-        maxAudioChannelCount = channels
-        // The selector reads this at prepare time, so a running player needs its parameters updated.
-        player?.trackSelectionParameters = buildTrackSelectionParameters()
-    }
-
     /** Invoked after [build] replaces the player, so a media session can re-point at the new one. */
     var onPlayerChanged: (() -> Unit)? = null
 
@@ -222,6 +205,8 @@ class PlayerEngine(
         val loadControl = buildLoadControl()
 
         val exo = ExoPlayer.Builder(context, renderersFactory)
+            // The 4K HEVC + TrueHD remux exceeds Media3's 500 ms teardown budget on this device.
+            .setReleaseTimeoutMs(5_000L)
             .setTrackSelector(trackSelector)
             // Dolby Vision films carry a valid HDR10 base layer, but Media3 relabels the track
             // `video/dolby-vision` and this device has no decoder for that type - so the track is
@@ -455,36 +440,6 @@ class PlayerEngine(
     }
 
     /**
-     * Asks the platform to spatialise, or not to.
-     *
-     * This sets `SPATIALIZATION_BEHAVIOR_AUTO` / `SPATIALIZATION_BEHAVIOR_NEVER` on the audio
-     * attributes, which requires rebuilding the player because Media3 fixes the attribute set at
-     * construction.
-     *
-     * **It is a request, not a command.** Measured on the reference device: with `NEVER` set and the
-     * player rebuilt, `dumpsys audio` still reports `isSpatialized=true` for the 5.1 track. That is
-     * expected - Android exposes no way for an app to turn platform spatialisation off. `Spatializer`
-     * has only read-only members (`isEnabled`, `isAvailable`, `canBeSpatialized`, listeners); the
-     * decision belongs to the system and the connected headset. The toggle therefore changes what
-     * the app asks for, and the live platform state is shown next to it so the two are never
-     * confused.
-     */
-    /**
-     * Changes the stereo mapping.
-     *
-     * The mode is read when the sink is built, so this rebuilds - the same cost as the spatial
-     * toggle, and for the same reason.
-     */
-    fun switchUpmixMode(mode: UpmixMode) {
-        if (mode == upmixMode && !upmixAdvanced && player != null) return
-        upmixMode = mode
-        upmixAdvanced = false
-        settings.upmixMode = mode.name
-        settings.upmixAdvanced = false
-        rebuildPreservingState()
-    }
-
-    /**
      * Re-reads the mapping from settings and applies it.
      *
      * Called by the settings screen itself, not only when the player resumes: the engine is one
@@ -517,6 +472,21 @@ class PlayerEngine(
         rebuildPreservingState()
     }
 
+    /**
+     * Asks the platform to spatialise, or not to.
+     *
+     * This sets `SPATIALIZATION_BEHAVIOR_AUTO` / `SPATIALIZATION_BEHAVIOR_NEVER` on the audio
+     * attributes, which requires rebuilding the player because Media3 fixes the attribute set at
+     * construction.
+     *
+     * **It is a request, not a command.** Measured on the reference device: with `NEVER` set and the
+     * player rebuilt, `dumpsys audio` still reports `isSpatialized=true` for the 5.1 track. That is
+     * expected - Android exposes no way for an app to turn platform spatialisation off. `Spatializer`
+     * has only read-only members (`isEnabled`, `isAvailable`, `canBeSpatialized`, listeners); the
+     * decision belongs to the system and the connected headset. The toggle therefore changes what
+     * the app asks for, and the live platform state is shown next to it so the two are never
+     * confused.
+     */
     fun setSpatialAudioEnabled(enabled: Boolean) {
         if (enabled == spatialAudioEnabled) return
         spatialAudioEnabled = enabled
@@ -978,6 +948,7 @@ class PlayerEngine(
 }
 
 /** Immutable readout of engine state for the inspection overlay. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 data class PlayerSample(
     val state: Int,
     val positionMs: Long,

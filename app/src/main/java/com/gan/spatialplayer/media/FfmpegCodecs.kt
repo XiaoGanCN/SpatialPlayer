@@ -15,6 +15,7 @@ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegLibrary
  * The set that matters most for this player: ac3, eac3, dca (DTS), mlp, truehd. AV1 is absent from
  * this FFmpeg build, so AV1 playback relies on the platform hardware decoder instead.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 object FfmpegCodecs {
 
     /** Media3 MIME -> FFmpeg decoder name, for audio. */
@@ -63,10 +64,6 @@ object FfmpegCodecs {
         if (mime == null) return null
         return AUDIO_DECODERS[mime] ?: VIDEO_DECODERS[mime]
     }
-
-    /** Decoder names present in the bundled build, for display. */
-    fun bundledDecoderNames(): Set<String> =
-        (AUDIO_DECODERS.values + VIDEO_DECODERS.values).toSet()
 
     /** Version string reported by the bundled FFmpeg, or "unavailable". */
     fun version(): String {

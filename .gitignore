@@ -17,3 +17,6 @@ design/*.png
 __pycache__/
 *.pyc
 .gesture-state.png
+
+.kotlin/
+.verification/

@@ -62,6 +62,7 @@ import kotlin.math.sin
  * No static mutable state: one instance per audio sink, all filter and delay state owned by it, and
  * that state is cleared on `flush()` and `reset()` so a seek cannot click.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class StereoUpmixProcessor(
     /**
      * The manual mapping, used when [mode] is `ADVANCED`; see [UpmixMatrix].

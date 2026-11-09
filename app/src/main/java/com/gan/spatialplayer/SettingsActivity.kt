@@ -18,14 +18,15 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.gan.spatialplayer.media.DecoderPolicy
+import com.gan.spatialplayer.media.DecoderProfile
+import com.gan.spatialplayer.media.DeviceCapabilities
+import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.PlaybackEngine
 import com.gan.spatialplayer.media.UpmixMatrix
-import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.media.UpmixMode
-import com.gan.spatialplayer.media.DeviceCapabilities
-import com.gan.spatialplayer.media.DecoderProfile
-import com.gan.spatialplayer.media.FfmpegCodecs
+import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.ui.Haptics
+import com.gan.spatialplayer.ui.SliderReading
 
 /**
  * Everything the app remembers, in one place, plus the facts worth knowing about the device.
@@ -91,6 +92,7 @@ class SettingsActivity : AppCompatActivity() {
         addView(
             ImageButton(this@SettingsActivity).apply {
                 setBackgroundResource(R.drawable.bg_glass_button)
+                tag = R.id.glass_role_button
                 setImageResource(R.drawable.ic_arrow_up)
                 rotation = -90f
                 contentDescription = getString(R.string.close)
@@ -201,6 +203,7 @@ class SettingsActivity : AppCompatActivity() {
                 step = 0.5f,
                 value = settings.doubleTapJumpMs / 1000f,
                 reading = { getString(R.string.settings_seconds, it) },
+                default = SettingsStore.DEFAULT_JUMP_MS / 1000f,
             ) { settings.doubleTapJumpMs = (it * 1000f).toLong() },
         )
 
@@ -212,6 +215,7 @@ class SettingsActivity : AppCompatActivity() {
                 step = 1f,
                 value = settings.subtitleTrackLimit.toFloat(),
                 reading = { getString(R.string.settings_tracks, it.toInt()) },
+                default = SettingsStore.DEFAULT_SUBTITLE_TRACK_LIMIT.toFloat(),
             ) { settings.subtitleTrackLimit = it.toInt() },
         )
     }
@@ -250,6 +254,7 @@ class SettingsActivity : AppCompatActivity() {
                     title = "${getString(labelRes)}  ·  ${UpmixMatrix.CHANNEL_IDS[index]}",
                     fromLeft = gains.first,
                     fromRight = gains.second,
+                    defaults = UpmixMatrix.DEFAULT_GAINS[index],
                 ) { left, right ->
                     matrix = matrix.withChannel(index, left, right)
                     settings.upmixMatrix = matrix.encode()
@@ -286,6 +291,7 @@ class SettingsActivity : AppCompatActivity() {
         title: String,
         fromLeft: Int,
         fromRight: Int,
+        defaults: Pair<Int, Int>,
         onChange: (Int, Int) -> Unit,
     ): View {
         var left = fromLeft
@@ -314,11 +320,42 @@ class SettingsActivity : AppCompatActivity() {
                 })
             }
 
+        /**
+         * The pill between a matrix bar's label and the bar: type a percentage into it, or
+         * double-tap to put that channel back to the SURROUND preset's value for it - the
+         * starting point this editor was reached from, so "reset" means something specific.
+         */
+        fun editable(bar: SeekBar, reading: TextView, default: Int, onValue: (Int) -> Unit) {
+            SliderReading.attach(
+                view = reading,
+                current = { (bar.progress + UpmixMatrix.MIN_GAIN).toFloat() },
+                range = UpmixMatrix.MIN_GAIN.toFloat()..UpmixMatrix.MAX_GAIN.toFloat(),
+                step = 1f,
+                format = { percent(it.toInt()) },
+                default = default.toFloat(),
+            ) { applied ->
+                val snapped = applied.toInt().coerceIn(UpmixMatrix.MIN_GAIN, UpmixMatrix.MAX_GAIN)
+                bar.progress = snapped - UpmixMatrix.MIN_GAIN
+                reading.text = percent(snapped)
+                onValue(snapped)
+            }
+        }
+
+        val leftDefault = defaults.first
+        val rightDefault = defaults.second
         val leftBar = bar(fromLeft, leftReading) { value ->
             left = value
             onChange(left, right)
         }
         val rightBar = bar(fromRight, rightReading) { value ->
+            right = value
+            onChange(left, right)
+        }
+        editable(leftBar, leftReading, leftDefault) { value ->
+            left = value
+            onChange(left, right)
+        }
+        editable(rightBar, rightReading, rightDefault) { value ->
             right = value
             onChange(left, right)
         }
@@ -391,6 +428,7 @@ class SettingsActivity : AppCompatActivity() {
                 step = 0.01f,
                 value = settings.verticalGain,
                 reading = { "%.0f%%".format(it * 100f) },
+                default = SettingsStore.DEFAULT_VERTICAL_GAIN,
             ) { settings.verticalGain = it },
         )
 
@@ -508,6 +546,7 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(13), dp(16), dp(13))
             background = ContextCompat.getDrawable(this@SettingsActivity, R.drawable.bg_glass_button)
+            tag = R.id.glass_role_panel
         }
         row.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
             bottomMargin = dp(7)
@@ -606,16 +645,14 @@ class SettingsActivity : AppCompatActivity() {
 
         fun restyle(active: String) {
             for ((value, view) in buttons) {
-                view.background = ContextCompat.getDrawable(
-                    this@SettingsActivity,
-                    if (value == active) R.drawable.bg_glass_button_active
-                    else R.drawable.bg_glass_button,
-                )
+                view.tag = if (value == active) R.id.glass_role_button_active else R.id.glass_role_button
+                GlassInstaller.apply(view)
             }
         }
 
         for ((label, value) in options) {
             val button = TextView(this).apply {
+                setBackgroundResource(R.drawable.bg_glass_button)
                 text = label
                 typeface = Typeface.SANS_SERIF
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -656,6 +693,7 @@ class SettingsActivity : AppCompatActivity() {
         step: Float,
         value: Float,
         reading: (Float) -> String,
+        default: Float? = null,
         onChange: (Float) -> Unit,
     ): View {
         val steps = (((to - from) / step).toInt()).coerceAtLeast(1)
@@ -679,6 +717,22 @@ class SettingsActivity : AppCompatActivity() {
                     Haptics.tick(seekBar ?: return)
                 }
             })
+        }
+
+        // The pill is the value as well as its label: tap it to type an exact number, double-tap
+        // to put the setting back where it shipped.
+        SliderReading.attach(
+            view = label,
+            current = { from + bar.progress * step },
+            range = from..to,
+            step = step,
+            format = reading,
+            default = default,
+        ) { applied ->
+            val snapped = (from + ((applied - from) / step).toInt().coerceIn(0, steps) * step)
+            bar.progress = ((snapped - from) / step).toInt().coerceIn(0, steps)
+            label.text = reading(snapped)
+            onChange(snapped)
         }
 
         return rowShell(title, null, label).apply { addView(bar) }

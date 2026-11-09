@@ -126,5 +126,16 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.SpatialPlayer" />
 
+        <!--
+          Renders the launcher mark and the header icons at their real sizes into a PNG the host
+          pulls and looks at, because a vector source says nothing about what 22 dp does to it.
+        -->
+        <activity
+            android:name=".IconProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.SpatialPlayer" />
+
     </application>
 </manifest>

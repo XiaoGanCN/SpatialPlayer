@@ -87,14 +87,6 @@ object AudioOutputCapability {
     }
 
     /**
-     * Whether a 7.1 (8 channel) track can be sent to the sink as-is.
-     *
-     * Exposed so the UI can explain why a multichannel track is being downmixed instead of leaving
-     * the user to wonder why their Atmos disc sounds like stereo.
-     */
-    fun canCarry7Point1(context: Context): Boolean = maxChannels(context) >= 8
-
-    /**
      * Builds an [AudioTrack] to prove a channel count works, then releases it immediately.
      *
      * Used when the platform reports the capability but the sink still refuses, which is what

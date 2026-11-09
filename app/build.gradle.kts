@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.gan.spatialplayer"
+        applicationId = "org.spatialplayer"
         minSdk = 34
         targetSdk = 35
         versionCode = 1
@@ -64,7 +64,7 @@ android {
     }
 
     lint {
-        abortOnError = false
+        abortOnError = true
     }
 }
 
@@ -75,7 +75,6 @@ dependencies {
     implementation(libs.androidx.annotation)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime)
-    implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.material)
 

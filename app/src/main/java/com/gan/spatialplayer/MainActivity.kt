@@ -4,13 +4,14 @@ import android.Manifest
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -27,15 +28,15 @@ import androidx.media3.common.MimeTypes
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.gan.spatialplayer.databinding.ActivityMainBinding
 import com.gan.spatialplayer.media.DeviceCapabilities
-import com.gan.spatialplayer.ui.Haptics
 import com.gan.spatialplayer.media.FfmpegCodecs
 import com.gan.spatialplayer.media.FileEntry
 import com.gan.spatialplayer.media.MediaRepository
 import com.gan.spatialplayer.media.PowerampReader
 import com.gan.spatialplayer.ui.ChipFade
 import com.gan.spatialplayer.ui.ChipStrip
-import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.ui.FileListAdapter
+import com.gan.spatialplayer.ui.GlassInstaller
+import com.gan.spatialplayer.ui.Haptics
 import com.gan.spatialplayer.ui.ThumbnailLoader
 import kotlinx.coroutines.launch
 
@@ -53,6 +54,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var poweramp: PowerampReader
     private lateinit var adapter: FileListAdapter
 
+    /** Debug builds only: the library probe's hook into this instance. See [onResume]. */
+    private var libraryProbeReceiver: BroadcastReceiver? = null
+
     /**
      * Which library is folded open, if any; persisted so the choice sticks.
      *
@@ -62,7 +66,11 @@ class MainActivity : AppCompatActivity() {
      */
     private var folded = Fold.NONE
 
-    private enum class Fold { NONE, LIBRARY, POWERAMP }
+    /**
+     * `internal` rather than `private` only because the debug library probe reads and restores it;
+     * see [setFoldForTest].
+     */
+    internal enum class Fold { NONE, LIBRARY, POWERAMP }
 
     /**
      * True while the action chip is animating between the bottom and the dock.
@@ -186,6 +194,29 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleViewIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Debug builds only: lets `tools/verify-poweramp.sh` drive this instance's Poweramp fold and
+        // refresh, because the bug it guards lived in the wiring between the two and a probe with a
+        // list of its own would test a copy of the code that was wrong. Same shape as the player's
+        // panel probe; see PlayerActivity.onResume for the flag notes.
+        if (libraryProbeReceiver == null) {
+            libraryProbeReceiver = DebugProbes.registerLibrary(this)
+        }
+
+        instance = this
+    }
+
+    override fun onDestroy() {
+        // Unregistered here rather than in onPause for the same reason the player's probe is: a
+        // probe that briefly covers the library must not lose its hook, and a destroyed activity
+        // must not keep its view tree reachable through one.
+        libraryProbeReceiver?.let { runCatching { unregisterReceiver(it) } }
+        libraryProbeReceiver = null
+        if (instance === this) instance = null
+        super.onDestroy()
     }
 
     /**
@@ -785,7 +816,46 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private companion object {
+    // ------------------------------------------------------------------ debug library probe
+    //
+    // Hands `LibraryProbeReceiver` (debug variant only) the same controls a tap would press, so
+    // `tools/verify-poweramp.sh` can exercise the *running* library rather than a fresh process.
+    // The refresh bug it guards - `refresh()` clearing Poweramp's rows out of the merged list -
+    // was invisible to every probe that read the provider for itself, because the provider read
+    // was never the thing that was broken.
+
+    /** Opens the Poweramp fold exactly as the chip does, load and all. */
+    internal fun openPowerampFoldForTest() {
+        if (folded != Fold.POWERAMP) setFold(Fold.POWERAMP, animate = false)
+        loadPowerampLibrary()
+    }
+
+    /** Puts the fold back where the probe found it, so a diagnostic does not leave the screen moved. */
+    internal fun setFoldForTest(fold: Fold) {
+        setFold(fold, animate = false)
+    }
+
+    /** The fold as it is right now, for the probe to remember and restore. */
+    internal val foldForTest: Fold get() = folded
+
+    /** The fold's row count, as the list itself reports it - 0 while the load is still in flight. */
+    internal val powerampRowCountForTest: Int
+        get() = if (folded == Fold.POWERAMP) adapter.itemCount else -1
+
+    internal val powerampLoadedForTest: Boolean get() = powerampLoaded
+
+    internal val scanningForTest: Boolean get() = binding.scanProgress.visibility == View.VISIBLE
+
+    internal fun headerForTest(): CharSequence = binding.headerSubtitle.text
+
+    internal fun refreshForTest() = refresh()
+
+    /** The last, and only, instance: a broadcast can only ever reach the resumed one. */
+    companion object {
+        @JvmStatic
+        internal var instance: MainActivity? = null
+            private set
+
         const val REQUEST_NOTIFICATIONS = 1001
 
         const val PREF_FOLDER_URI = "scoped_folder_uri"

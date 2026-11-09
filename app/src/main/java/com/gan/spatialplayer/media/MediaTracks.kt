@@ -27,6 +27,7 @@ import java.util.HashMap
  *
  * [group] and [trackIndex] remain the real addressing for a [TrackSelectionOverride].
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 data class MediaTrack(
     val type: String,
     val label: String,
@@ -52,6 +53,7 @@ data class MediaTrack(
  * Built once per [Tracks] change and handed to the UI, so the panels never have to reason about
  * Media3's group/index structure themselves.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 data class MediaTracks(
     val all: List<MediaTrack>,
 ) {

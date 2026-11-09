@@ -13,6 +13,7 @@ import java.util.Locale
  * Kept apart from the UI so the formatting rules - which is exactly the part that has to stay
  * legible and honest - can be read and adjusted without touching view code.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 object PlaybackReport {
 
     /** The "is it actually working" panel. */

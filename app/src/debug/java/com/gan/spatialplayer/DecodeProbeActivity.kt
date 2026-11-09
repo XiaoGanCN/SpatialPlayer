@@ -28,6 +28,7 @@ import androidx.appcompat.app.AppCompatActivity
  *   -d content://media/external/video/media/1234
  * ```
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class DecodeProbeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -1,6 +1,5 @@
 package com.gan.spatialplayer.ui
 
-import android.graphics.Typeface
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.SpannableStringBuilder
@@ -60,9 +59,6 @@ object TextSpans {
             setSpan(TypefaceSpan("monospace"), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-    /** Convenience for building a bold-free monospace label. */
-    fun monoBold(text: CharSequence): CharSequence = text
-
     /** Human-readable byte count, e.g. `1.42 GB`. */
     fun bytes(size: Long): String {
         if (size <= 0L) return "—"
@@ -94,9 +90,4 @@ object TextSpans {
         return "$sign${Math.abs(ms) / 1000}s"
     }
 
-    /** Renders an arbitrary typeface name safely, falling back to the system face. */
-    fun typefaceFor(name: String): Typeface = when (name) {
-        "monospace" -> Typeface.MONOSPACE
-        else -> Typeface.SANS_SERIF
-    }
 }

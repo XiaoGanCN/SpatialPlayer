@@ -19,6 +19,7 @@ import com.gan.spatialplayer.media.PlayerEngine
  * (`dumpsys media.player`) cannot say anything about the bundled FFmpeg build - only the app can
  * report that, and it is exactly the part that makes TrueHD / AC3 / DTS work.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class SmokeProbeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,6 +115,7 @@ class SmokeProbeActivity : AppCompatActivity() {
  * This is what verifies subtitle handling, because "did a subtitle render" is not visible in
  * logcat - what is checkable is which text tracks exist and whether one is selected.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class SmokeTrackProbeActivity : AppCompatActivity() {
 
     private var engine: PlayerEngine? = null
@@ -171,12 +173,12 @@ class SmokeTrackProbeActivity : AppCompatActivity() {
             else -> Unit
         }
         engine.build()
-        val directUri = directUriArg
+        val directUri = directUriArg?.takeIf { it.isNotBlank() }
         if (directUri != null) {
             Log.i(SmokeProbeActivity.TAG, "source :: uri=$directUri")
             engine.setMedia(android.net.Uri.parse(directUri))
         } else {
-            val file = java.io.File(path)
+            val file = java.io.File(requireNotNull(path))
             Log.i(
                 SmokeProbeActivity.TAG,
                 "source :: exists=${file.exists()} readable=${file.canRead()} len=${file.length()}",

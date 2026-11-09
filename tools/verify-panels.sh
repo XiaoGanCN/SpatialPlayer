@@ -19,7 +19,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG="com.gan.spatialplayer.debug"
+PKG="org.spatialplayer.debug"
 ACT_SMOKE="$PKG/com.gan.spatialplayer.SmokeTestActivity"
 ACT_PROBE="$PKG/com.gan.spatialplayer.PanelProbeActivity"
 CLIP="${CLIP:-/sdcard/Movies/SpatialPlayerTest/yt_1080p_ac3_51.mkv}"
@@ -141,6 +141,17 @@ if [ "${GLASS_LIB:-0}" -ge 1 ] 2>/dev/null; then
   pass "glass installed on the library ($GLASS_LIB pane(s))"
 else
   fail "glass installed on 0 panes on the library - flat stand-ins are back"
+fi
+
+say "the settings controls also wear glass"
+adb_ logcat -c
+sh_ am start -n "$ACT_PROBE" --es probe settings >/dev/null
+sleep 3
+GLASS_SETTINGS=$(adb_ logcat -d -s GlassInstaller 2>/dev/null | grep -oE "installed on [0-9]+ pane" | tail -1 | grep -oE "[0-9]+")
+if [ "${GLASS_SETTINGS:-0}" -ge 5 ] 2>/dev/null; then
+  pass "glass installed on Settings ($GLASS_SETTINGS pane(s), plus segmented options)"
+else
+  fail "Settings kept its flat stand-ins (${GLASS_SETTINGS:-0} pane(s))"
 fi
 
 say "cleanup"

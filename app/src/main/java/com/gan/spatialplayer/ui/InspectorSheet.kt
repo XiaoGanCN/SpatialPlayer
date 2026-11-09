@@ -10,7 +10,6 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -92,9 +91,13 @@ class InspectorSheet @JvmOverloads constructor(
          * When set, the row renders as a slider the user can drag. [value] carries the current
          * reading and is echoed back through [Callback.onChoiceSelected] as it moves, so changes
          * apply live rather than on release.
+         *
+         * [defaultValue] is what a double tap on the reading restores; without it the reading is
+         * only typeable, not resettable.
          */
         val range: ClosedFloatingPointRange<Float>? = null,
         val stepSize: Float = 1f,
+        val defaultValue: Float? = null,
     )
 
     var callback: Callback? = null
@@ -508,7 +511,9 @@ class InspectorSheet @JvmOverloads constructor(
      * A labelled slider row.
      *
      * The reading is shown in monospace next to the title and updates while the finger is down, so
-     * the effect of a change can be judged without releasing.
+     * the effect of a change can be judged without releasing. It is also *editable*: one tap opens
+     * a field so an exact number can be typed, and a double tap restores the row's default - the
+     * two things a drag cannot express.
      */
     private fun sliderRow(choice: Choice): View {
         val range = choice.range ?: return optionRow(choice)
@@ -538,6 +543,10 @@ class InspectorSheet @JvmOverloads constructor(
             typeface = Typeface.MONOSPACE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(ContextCompat.getColor(context, R.color.text_mono))
+            // The reading is a touch target as well as a label: give it a body, or it is a 12 sp
+            // strip of digits that has to be hit exactly.
+            val pad = dp(7)
+            setPadding(pad, dp(3), pad, dp(3))
         }
         header.addView(reading)
         wrapper.addView(header)
@@ -548,6 +557,31 @@ class InspectorSheet @JvmOverloads constructor(
             max = steps
             progress = (((current - range.start) / choice.stepSize).toInt()).coerceIn(0, steps)
         }
+
+        /**
+         * Applies a value that arrived from somewhere other than the bar - typed, or a reset - and
+         * keeps the bar and the reading in step with it. `onChoiceSelected` is fired once with the
+         * snapped value, which is the same callback a drag uses, so the activity cannot tell the
+         * two apart and no second apply path exists.
+         */
+        fun applyFromElsewhere(value: Float) {
+            val snapped = snapToStep(value, range, steps, choice.stepSize)
+            slider.progress = ((snapped - range.start) / choice.stepSize).toInt().coerceIn(0, steps)
+            reading.text = formatReading(snapped)
+            callback?.onChoiceSelected(currentPanel, choice.copy(value = snapped.toString()))
+        }
+
+        SliderReading.attach(
+            view = reading,
+            current = {
+                snapToStep(choice.value.toFloatOrNull() ?: range.start, range, steps, choice.stepSize)
+            },
+            range = range,
+            step = choice.stepSize,
+            format = ::formatReading,
+            default = choice.defaultValue,
+        ) { value -> applyFromElsewhere(value) }
+
         slider.setOnSeekBarChangeListener(
             object : android.widget.SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(
@@ -579,6 +613,21 @@ class InspectorSheet @JvmOverloads constructor(
             LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
 
+        // A control nobody can see is a control nobody uses: the reading gives no sign that it is
+        // tappable, so the hint says it. Shown only while it can be true - a row with no default
+        // cannot be reset, and promising that would be a lie.
+        if (choice.defaultValue != null) {
+            wrapper.addView(
+                TextView(context).apply {
+                    text = context.getString(R.string.slider_hint)
+                    typeface = Typeface.SANS_SERIF
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextColor(ContextCompat.getColor(context, R.color.text_tertiary))
+                    setPadding(0, dp(2), 0, 0)
+                },
+            )
+        }
+
         wrapper.layoutParams = LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
@@ -590,6 +639,17 @@ class InspectorSheet @JvmOverloads constructor(
     private fun formatReading(value: Float): String =
         if (value == value.toInt().toFloat()) value.toInt().toString()
         else String.format(java.util.Locale.US, "%.1f", value)
+
+    /**
+     * Maps any value onto the bar's own grid, so a typed number can never leave the bar showing a
+     * position it cannot take.
+     */
+    private fun snapToStep(
+        value: Float,
+        range: ClosedFloatingPointRange<Float>,
+        steps: Int,
+        stepSize: Float,
+    ): Float = range.start + ((value - range.start) / stepSize).toInt().coerceIn(0, steps) * stepSize
 
     /**
      * Ids of what the content container is currently showing, for the debug panel probe.

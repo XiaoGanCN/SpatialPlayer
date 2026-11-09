@@ -2,6 +2,8 @@
 
 Everything learned while building this, so the next session does not have to rediscover it.
 
+**Current snapshot (2026-11-10):** Work is back in this original repository on `main`; debug installs as `org.spatialplayer.debug`. The refactor, glass port (including Settings), and film fallback are implemented. See the refactor entry in §8 for current validation and the two deferred screen-off checks.
+
 **Where to look first**
 
 | Section | What it is for |
@@ -24,7 +26,7 @@ cd "/Applications/deepseek-harness-dsh-v0.1.6-alpha.1/Wrokspaces/Spatial Player"
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 ADB=$HOME/Library/Android/sdk/platform-tools/adb
-PKG=com.gan.spatialplayer.debug          # debug package id; release is org.spatialplayer
+PKG=org.spatialplayer.debug          # debug package id; release is org.spatialplayer
 
 ./gradlew :app:assembleDebug --no-daemon 2>&1 | grep -E "^e:|BUILD" | head -6
 $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
@@ -915,6 +917,22 @@ Format: `- [ ] **What** — where it lives / how to tell it is done.`
 Struck-out items stay in place with the measurement that closed them, because the next person needs to
 know what was already tried and what the device actually did.
 
+### Refactor — 2026-11-10
+
+- The approved refactor is now applied to this original repository on `main`. The home-directory copy and patch are historical staging artifacts; continue work here.
+- Inspector row construction lives in `ui/PlayerPanels.kt`; `onPanelShown` still pulls fresh rows on every route. Choice tags live in `PlayerChoiceValues`.
+- `PlayerAnimation`, `VideoRectCalculator`, `GlassStyle`, `GlassShader`, `FileEntry`, and `DecoderProfile` have their own files. Removed dead UI classes, resources, helper APIs, imports, and the unused direct ViewModel dependency.
+- Application IDs are `org.spatialplayer` and `org.spatialplayer.debug`. Kotlin namespace stays `com.gan.spatialplayer`; exported probe component class names retain that namespace. Debug probe broadcast actions and all device harnesses use the new debug ID.
+- Settings glass was still missing: its header, cards, and segments now declare roles. Segment changes restyle the existing glass instead of replacing it with a flat background. Installation is idempotent and attached views unregister their backdrop/sensor listeners on detach.
+- The Dolby Vision HDR10-base-layer fallback was already implemented. The current film path is `/Volumes/Storage/Medias/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`. A 30-second stream-copy cut from 00:05:00 retains DV7 metadata, 4K HEVC, TrueHD 7.1, AC3 5.1, and subtitle streams. Only that cut is pushed to the phone.
+- The film rendered and sought correctly but exposed Media3's 500 ms release timeout. The engine now allows up to 5 s for teardown. `tools/verify-film.py` checks selected 4K HDR video, moving pixels, seek/resume, and completed teardown, with muted output.
+- `verify-glass-backdrop.sh` now freezes playback and sets chrome visibility through a debug broadcast, checking the resulting state. Coordinate taps could race the idle timeout and produce misleading screenshots. `verify-poweramp.sh` now parses the probe's `unchanged=true` correctly; `verify-background.sh` reads the configured package instead of an obsolete hardcoded regex.
+- Full debug/release builds and lint run successfully with JDK 21; lint now fails on errors and reports zero errors. Explicit Media3 opt-ins, the VIBRATE permission, and local file/content VIEW intent filters close the previous lint errors. Dependency versions remain pinned.
+- JDK 21 is bundled at `~/Downloads/Fiji/java/macos-arm64/zulu21.42.19-ca-jdk21.0.7-macosx_aarch64/zulu-21.jdk/Contents/Home`. Set `JAVA_HOME` explicitly: `/usr/libexec/java_home -v 21` currently falls back to JDK 26.
+- Host validation: `JAVA_HOME=<JDK 21> python3 tools/verify-host.py` passes 21 geometry, matrix preference, and chapter checks. Gradle's unit-test task currently has no source tests; the host harness is separate.
+
+**Device validation, 2026-11-10:** 131 passed checks across ten suites, zero failures: smoke 23, multichannel 25, Poweramp 14, spatial 13, gestures 11, glass 4, chapters 10, background 5, panels 14, rotation 12. Background's two screen-off checks were deliberately skipped (`SKIP_SCREEN_OFF=1`) because of §3.13. The film regression separately passes: 4K HDR10 base layer selected, 16.15% moving pixels between captures, playback advances after seeking, and teardown completes without error. Glass tracking is r=0.9345 with the peak at zero offset; Settings reports 18 installed panes plus its segmented options. Host checks: 21/21. Debug/release Gradle builds and lint succeeded; lint has zero errors (existing warnings remain). Evidence is under `smoke/out/`, including `test-summary.json`, `film/probe.txt`, glass captures, and the icon render. The final debug APK is installed; the old debug app/data is preserved. Device volume was restored to its original 10/30 and rotation settings restored by the suites. The full unmodified 73 GB film has not been copied or played on-device; the test used its short stream-copy cut.
+
 ### Known broken
 
 Things that do not work. Each says how to tell it is done.
@@ -980,22 +998,11 @@ Work that is wanted but not started, or that works and is not right yet.
       before and after a refresh, i.e. the non-Poweramp rows survive), but the fold chips did not
       respond to injected taps at their dumped coordinates, so the 140-row half is unproven.
 
-- [ ] **`tools/verify-poweramp.sh` should test the refresh path, not only a cold load.** It launches
-      `SmokePowerampProbeActivity`, which reads the provider in a fresh process and cannot see
-      `MainActivity`'s list state at all - which is why the refresh bug lived here unnoticed. The shape
-      that matches §6: a broadcast aimed at the *running* `MainActivity` that opens the Poweramp fold,
-      logs the header text, calls `refresh()`, and logs it again; then assert the count is unchanged.
-      Worth doing with it: find out why the fold chips ignored injected taps during this round while the
-      refresh button accepted them - the coordinates came from `uiautomator dump` and were correct.
+- [x] **Poweramp refresh is covered by the device harness.** `LibraryProbeReceiver` drives the running library, opens the fold, refreshes, compares its rows, and restores the original fold. Verified 2026-11-10: `verify-poweramp.sh` 14/14, `before=170 after=170 unchanged=true fold=open`. The earlier provider-only probe could not detect a UI refresh losing those rows.
 
-- [ ] **Setting icon at `ImageButton` need rework** The library header's gear reads as a smudge at
-      24 dp: three slider bars whose gaps are the knobs, so the bars vanish into the track. Replace
-      with something legible at 24 dp and look at it rendered, not as a vector source.
+- [x] **Library Settings icon replaced with a legible gear outline.** The previous three-slider glyph merged into a smudge at 22–24 dp. `IconProbeActivity` renders the replacement at those actual sizes for inspection; it is part of the approved changes.
 
-- [ ] **Add double click reset and editable values for sliders** Both editors build sliders in code
-      (`InspectorSheet.sliderRow`, and the Settings screen). A double tap should restore the default
-      and the reading should be typeable. `SliderRow` currently fires `onChoiceSelected` on every drag
-      frame, which is why the value cannot be edited in place.
+- [x] **Slider readings support typed values and double-tap reset.** `SliderReading` is shared by Settings (including the matrix gains) and `InspectorSheet`. Accepted values are snapped to the slider's range and step; each editor supplies its own default. Included in the approved changes and build; manual interaction feedback is still welcome.
 
 - [x] **Incorrect selected subtitle highlight** — fixed. Four `eng` tracks share one language tag, so
       the language preference kept for a rebuilt player could not say which one was chosen and a
@@ -1050,8 +1057,7 @@ Work that is wanted but not started, or that works and is not right yet.
       storage mounted for it. The change is in the container path, not the seek or buffer path, and the
       clips are cuts of the same mux - but that is an extrapolation and should be said as one.
 
-- [ ] **`README.md` must stay terse.** No excessive explanation. It is currently stale with respect to
-      the settings screen, the upmix matrix and the media session.
+- [x] **`README.md` stays terse.** Updated for Settings, the upmix matrix, background media controls, and local test commands (2026-11-10).
 
 ### Deliberately not doing
 

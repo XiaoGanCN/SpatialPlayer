@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG_DEBUG="com.gan.spatialplayer.debug"
+PKG_DEBUG="org.spatialplayer.debug"
 ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
 CLIP="/sdcard/Movies/SpatialPlayerTest/hdr10_hevc_720p.mkv"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -10,7 +10,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG_DEBUG="com.gan.spatialplayer.debug"
+PKG_DEBUG="org.spatialplayer.debug"
 ACT="$PKG_DEBUG/com.gan.spatialplayer.SmokePowerampProbeActivity"
 TAG="SpatialPlayerPoweramp"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -125,6 +125,64 @@ if grep -qE "FATAL EXCEPTION|E AndroidRuntime" "$LOG"; then
   grep -E "FATAL EXCEPTION|E AndroidRuntime" "$LOG" | head -3 | sed 's/^/      /'
 else
   pass "no exceptions"
+fi
+
+# ------------------------------------------------------------------ refresh path
+#
+# The checks above read the provider for themselves, which is exactly why they could not catch the
+# one real Poweramp bug: `refresh()` rebuilt the merged list from MediaStore and the granted folder
+# alone, so `publish`'s `entries.clear()` dropped all 140 music rows while the chip still believed
+# them loaded. A fresh-process probe sees the provider, never the list. So this section drives the
+# *running* library: open the Poweramp fold, count its rows, press refresh, count again.
+
+say "refresh keeps the Poweramp fold"
+# The broadcast only reaches an activity that is up, and a foreground library is also the state
+# the bug lived in - the fold was opened by hand and refresh pressed on the same screen.
+sh_ am start -n "$PKG_DEBUG/com.gan.spatialplayer.MainActivity" > /dev/null
+sleep 3
+
+LOG2="$OUT_DIR/poweramp-refresh.txt"
+adb_ logcat -c
+sh_ am start -n "$PKG_DEBUG/com.gan.spatialplayer.PanelProbeActivity" --es probe library > /dev/null
+
+# The load and the refresh are both async, so the probe polls the list and only logs when it has
+# settled; 20 s is well past any provider read. Without waiting for the marker, a log read a beat
+# too early reports a failure that never happened - this cost a whole round once.
+LINE=""
+for _ in $(seq 1 40); do
+  sleep 0.5
+  LINE=$(adb_ logcat -d -v time | grep "library probe :: poweramp" | tail -1)
+  [ -n "$LINE" ] && break
+done
+echo "$LINE" > "$LOG2"
+
+if echo "$LINE" | grep -q "error=no_activity"; then
+  fail "the library was not running; cannot test the refresh path"
+elif [ -z "$LINE" ]; then
+  fail "the probe never reported (load timed out or the broadcast did not land)"
+else
+  BEFORE=$(echo "$LINE" | grep -oE "before=[-0-9]+" | grep -oE "[-0-9]+")
+  AFTER=$(echo "$LINE" | grep -oE "after=[-0-9]+" | grep -oE "[-0-9]+")
+  UNCHANGED=$(echo "$LINE" | grep -oE "unchanged=true" | head -1)
+
+  if [ "${BEFORE:-0}" -gt 0 ] 2>/dev/null; then
+    pass "fold shows $BEFORE rows before the refresh"
+  else
+    fail "the fold had no rows before the refresh (${LINE#*poweramp })"
+  fi
+
+  if [ -n "$UNCHANGED" ] && [ "${BEFORE:-0}" = "${AFTER:-0}" ] 2>/dev/null; then
+    pass "refresh kept all $AFTER rows"
+  else
+    fail "refresh changed the fold: ${BEFORE:-?} -> ${AFTER:-?} (${LINE#*poweramp })"
+  fi
+
+  if echo "$LINE" | grep -q "fold=open"; then
+    pass "the fold itself survived the refresh"
+  else
+    fail "the fold was closed by the refresh"
+  fi
+  info "$(echo "$LINE" | grep -oE "header=.*" | sed 's/^ *//')"
 fi
 
 say "summary"

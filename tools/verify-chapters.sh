@@ -14,7 +14,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG_DEBUG="com.gan.spatialplayer.debug"
+PKG_DEBUG="org.spatialplayer.debug"
 ACT_PROBE="$PKG_DEBUG/com.gan.spatialplayer.SmokeChaptersProbeActivity"
 CLIP="/sdcard/Movies/SpatialPlayerTest/chapters_720p.mkv"
 HOST_CLIP="${HOST_CLIP:-/tmp/chapters_720p.mkv}"

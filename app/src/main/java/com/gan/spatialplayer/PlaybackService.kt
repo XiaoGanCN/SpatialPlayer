@@ -25,6 +25,7 @@ import com.gan.spatialplayer.media.PlaybackEngine
  * through a `MediaController` would be a much larger change for no behavioural gain in a
  * single-process app. This service's job is the session and the notification.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null

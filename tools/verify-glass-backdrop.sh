@@ -16,7 +16,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG_DEBUG="com.gan.spatialplayer.debug"
+PKG_DEBUG="org.spatialplayer.debug"
 ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
 CLIP="/sdcard/Movies/SpatialPlayerTest/grid_720p.mp4"
 HOST_CLIP="${HOST_CLIP:-/tmp/grid_720p.mp4}"
@@ -93,13 +93,20 @@ sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
     --es smoke_path "$CLIP" --es smoke_mime video/mp4 >/dev/null
 sleep 8
 
-# Landscape transport row: reveal the chrome, then hit play/pause by its glyph.
-sh_ input tap $((WIDTH / 2)) $((HEIGHT / 5)) >/dev/null
-sleep 1.5
-PAUSE_X=$((WIDTH * 268 / 2560))
-PAUSE_Y=$((HEIGHT * 990 / 1096))
-sh_ input tap "$PAUSE_X" "$PAUSE_Y" >/dev/null
-sleep 2
+# Use the running player's controls directly. Coordinate taps raced the idle timer and
+# could photograph hidden chrome; a static pattern alone cannot detect that false positive.
+glass_state() {
+  "$ADB" logcat -c
+  sh_ am broadcast -p "$PKG_DEBUG" -a org.spatialplayer.debug.GLASS_CAPTURE --ez visible "$1" >/dev/null
+  sleep 0.8
+  local report
+  report=$("$ADB" logcat -d -s PanelProbe)
+  if ! echo "$report" | grep -q "glass-capture shown=$1"; then
+    fail "chrome did not reach visible=$1"
+    exit 1
+  fi
+}
+glass_state false
 
 say "freeze check"
 shot frozen_a.png
@@ -113,19 +120,21 @@ else
 fi
 
 say "raw and glass frames of the same picture"
-sh_ input tap $((WIDTH / 2)) $((HEIGHT / 5)) >/dev/null
-sleep 2
+glass_state false
 shot raw.png
 sleep 1
 shot raw2.png
-sh_ input tap $((WIDTH / 2)) $((HEIGHT / 5)) >/dev/null
-sleep 2
+glass_state true
 shot glass.png
+if cmp -s "$OUT_DIR/raw.png" "$OUT_DIR/glass.png"; then
+  fail "raw and glass captures are identical"
+  exit 1
+fi
 
 say "tracking"
 python3 "$ROOT/tools/glass_tracking.py" "$OUT_DIR/raw.png" "$OUT_DIR/raw2.png" "$OUT_DIR/glass.png"
 if [ $? -eq 0 ]; then
-  pass "the glass tracks the picture behind it, pixel-exact"
+  pass "the frosted glass tracks the picture behind it"
 else
   fail "the glass does not track the picture behind it"
 fi

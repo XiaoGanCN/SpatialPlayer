@@ -69,7 +69,6 @@ class PowerampReader(private val context: Context) {
     /** Poweramp's `files` endpoint refuses queries without a limit. */
     private val pageLimit = 1000
 
-
     fun isInstalled(): Boolean = runCatching {
         context.packageManager.getPackageInfo(POWERAMP_PACKAGE, 0)
         true

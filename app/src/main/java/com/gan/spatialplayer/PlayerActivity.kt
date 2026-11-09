@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.media.AudioManager
@@ -18,8 +17,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -35,39 +32,46 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.gan.spatialplayer.databinding.ActivityPlayerBinding
+import com.gan.spatialplayer.media.Chapter
+import com.gan.spatialplayer.media.DecoderPolicy
 import com.gan.spatialplayer.media.DecoderProfile
 import com.gan.spatialplayer.media.DeviceCapabilities
 import com.gan.spatialplayer.media.FfmpegCodecs
+import com.gan.spatialplayer.media.MatroskaChapters
 import com.gan.spatialplayer.media.MediaTrack
 import com.gan.spatialplayer.media.MediaTracks
-import com.gan.spatialplayer.media.Chapter
-import com.gan.spatialplayer.media.MatroskaChapters
-import java.io.File
-import com.gan.spatialplayer.media.PlaybackReport
 import com.gan.spatialplayer.media.PlaybackEngine
-import com.gan.spatialplayer.media.UpmixMatrix
-import com.gan.spatialplayer.media.UpmixMode
+import com.gan.spatialplayer.media.PlaybackReport
 import com.gan.spatialplayer.media.PlayerEngine
 import com.gan.spatialplayer.media.PlayerSample
-import com.gan.spatialplayer.media.DecoderPolicy
-import com.gan.spatialplayer.ui.ChipFade
-import com.gan.spatialplayer.ui.GlassInstaller
-import com.gan.spatialplayer.ui.ChipStrip
+import com.gan.spatialplayer.media.UpmixMatrix
+import com.gan.spatialplayer.media.UpmixMode
 import com.gan.spatialplayer.ui.AmbientSampler
+import com.gan.spatialplayer.ui.ChipFade
+import com.gan.spatialplayer.ui.ChipStrip
+import com.gan.spatialplayer.ui.GlassInstaller
 import com.gan.spatialplayer.ui.Haptics
 import com.gan.spatialplayer.ui.InspectorSheet
 import com.gan.spatialplayer.ui.OverflowSheet
 import com.gan.spatialplayer.ui.PlayerAnimation
+import com.gan.spatialplayer.ui.PlayerChoiceValues.VALUE_AUDIO_PREFIX
+import com.gan.spatialplayer.ui.PlayerChoiceValues.VALUE_CHAPTER_PREFIX
+import com.gan.spatialplayer.ui.PlayerChoiceValues.VALUE_TEXT_PREFIX
+import com.gan.spatialplayer.ui.PlayerChoiceValues.VALUE_TEXT_SHOW_ALL
+import com.gan.spatialplayer.ui.PlayerChoiceValues.VALUE_UPMIX_ADVANCED
+import com.gan.spatialplayer.ui.PlayerChoiceValues.VALUE_UPMIX_PREFIX
 import com.gan.spatialplayer.ui.PlayerGestureController
+import com.gan.spatialplayer.ui.PlayerPanels
 import com.gan.spatialplayer.ui.TextSpans
 import com.gan.spatialplayer.ui.VideoRectCalculator
+import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 /**
  * The player.
@@ -76,6 +80,7 @@ import java.util.Locale
  * the chrome. Everything that decides *how* a file is played is here or in the engine; the views
  * only report what the user asked for.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorSheet.Callback,
     PlayerGestureController.Host {
 
@@ -88,6 +93,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     /** Touch dispatch must not reach the controller before it and the player exist. */
     private var gesturesReady = false
     private lateinit var inspectorSheet: InspectorSheet
+    private val panels by lazy { PlayerPanels(this, inspectorSheet, settings) }
 
     /** The capsule's overflow: speed, scaling, subtitles and audio. */
     private lateinit var overflowSheet: OverflowSheet
@@ -114,12 +120,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private var audioDownmixNote: String? = null
 
     /**
-     * Chapters found in the current item, empty when there are none or the container is not Matroska.
-     *
-     * Read once per item on a background thread: the reference film is a 70 GB remux, and walking its
-     * element tree on the main thread would stall the first frame.
-     */
-    /**
      * Set when the subtitle picker has been asked to ignore the cap, for this item only.
      *
      * Raising the stored cap instead would mean the setting the user chose is silently replaced by
@@ -134,6 +134,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     /** Whether the current item has a picture, once its tracks have been seen. See [hasVideo]. */
     private var itemHasVideo: Boolean? = null
 
+    /**
+     * Chapters found in the current item, empty when there are none or the container is not Matroska.
+     *
+     * Read once per item on a background thread: the reference film is a 70 GB remux, and walking its
+     * element tree on the main thread would stall the first frame.
+     */
     private var chapters: List<Chapter> = emptyList()
     private var chapterJob: Job? = null
     private var refreshJob: Job? = null
@@ -153,10 +159,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      */
     private var deferredBackgroundDecision = false
 
-    /** Playback position when a horizontal scrub began, and the position it currently points at. */
-    /** Fractional volume position while dragging; Int.MIN_VALUE means "resync from the system". */
+    /** Fractional volume position while dragging; Float.MIN_VALUE means "resync from the system". */
     private var volumeAccumulator: Float = Float.MIN_VALUE
 
+    /** Playback position at the start of a scrub, and its current target. */
     private var scrubAnchorMs = 0L
     private var scrubTargetMs = 0L
 
@@ -632,29 +638,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     /** Playback rates offered, matching what Media3's `setPlaybackSpeed` handles cleanly. */
-    private fun populateSpeedPanel() {
-        val current = engine.player?.playbackParameters?.speed ?: 1f
-        val choices = SPEED_OPTIONS.map { speed ->
-            InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.SPEED,
-                value = speed.toString(),
-                title = String.format(Locale.US, "%.2f×", speed),
-                subtitle = speedHint(speed),
-                selected = kotlin.math.abs(speed - current) < 0.01f,
-                enabled = true,
-                section = if (speed == SPEED_OPTIONS.first()) "Playback speed" else null,
-            )
-        }
-        inspectorSheet.setChoices(InspectorSheet.Panel.SPEED, choices)
-    }
-
-    /** A word for the rates worth naming, so the list is not five bare numbers. */
-    private fun speedHint(speed: Float): String? = when (speed) {
-        0.5f -> "Half speed"
-        1f -> "Normal"
-        2f -> "Double speed"
-        else -> null
-    }
+    private fun populateSpeedPanel() =
+        panels.populateSpeedPanel(engine.player?.playbackParameters?.speed ?: 1f)
 
     private fun handleSpeedChoice(choice: InspectorSheet.Choice) {
         val speed = choice.value.toFloatOrNull() ?: return
@@ -728,13 +713,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         Haptics.release(binding.buttonMore)
         updateVideoRect()
         showFeedback(scaleModeLabel())
-    }
-
-    private fun toggleControls() {
-        if (locked) return
-        // The view is the source of truth, not a mirror boolean: keeping a second copy is what let
-        // the two disagree and made the first tap appear to do nothing.
-        if (PlayerAnimation.isShown(binding.controlsOverlay)) hideControls() else showControls()
     }
 
     /**
@@ -1157,25 +1135,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         startAmbientSampling()
         // Debug builds only: lets `tools/verify-panels.sh` open an inspector panel on this instance
         // and read back what it rendered, because neither a screenshot nor `uiautomator dump` can.
-        if (BuildConfig.DEBUG && panelProbeReceiver == null) {
-            panelProbeReceiver = PanelProbeReceiver().also {
-                // EXPORTED because the sender is `adb shell am broadcast`, a different uid from the
-                // app. One of the two flags is mandatory from API 34 - without either the
-                // registration throws and takes the activity down with it, which is how this was
-                // found. Both probe actions are listed: a dynamically registered receiver only hears
-                // the actions it named, which is why the second probe was silent until it was added.
-                registerReceiver(
-                    it,
-                    IntentFilter().apply {
-                        addAction(PanelProbeReceiver.ACTION)
-                        addAction(PanelProbeReceiver.ACTION_CHROME_TOUCH)
-                        addAction(PanelProbeReceiver.ACTION_GEOMETRY)
-                        addAction(PanelProbeReceiver.ACTION_GLASS_PRESS)
-                    },
-                    RECEIVER_EXPORTED,
-                )
-            }
+        if (panelProbeReceiver == null) {
+            panelProbeReceiver = DebugProbes.registerPlayer(this)
         }
+
         instance = this
     }
 
@@ -1588,295 +1551,17 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     // ------------------------------------------------------------------ sheets
 
-    private fun populateDecoderPanel() {
-        val sheet = inspectorSheet
-        val videoMime = engine.player?.videoFormat?.sampleMimeType
-        val audioMime = engine.player?.audioFormat?.sampleMimeType
+    private fun populateDecoderPanel() =
+        panels.populateDecoderPanel(engine)
 
-        val choices = DecoderProfile.entries.map { profile ->
-            InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.DECODER,
-                value = profile.name,
-                title = profile.label,
-                subtitle = buildString {
-                    append(profile.detail)
-                    append("\nvideo: ")
-                    append(
-                        com.gan.spatialplayer.media.DecoderPolicy.describeRoute(videoMime, profile),
-                    )
-                    append("   audio: ")
-                    append(
-                        com.gan.spatialplayer.media.DecoderPolicy.describeRoute(audioMime, profile),
-                    )
-                },
-                selected = profile == engine.decoderProfile,
-                enabled = true,
-                section = if (profile == DecoderProfile.entries.first()) "Policy" else null,
-            )
-        }
-        sheet.setChoices(InspectorSheet.Panel.DECODER, choices)
-    }
+    private fun populateAudioPanel() =
+        panels.populateAudioPanel(engine, mediaTracks)
 
-    private fun populateAudioPanel() {
-        val sheet = inspectorSheet
-        val spatial = DeviceCapabilities.spatialSnapshot(this)
-                val choices = ArrayList<InspectorSheet.Choice>()
+    private fun populateSubtitlePanel() =
+        panels.populateSubtitlePanel(mediaTracks, subtitleLimitOverridden, subtitleSizeSp, subtitlePositionFraction)
 
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.AUDIO,
-            value = "spatial_on",
-            title = getString(R.string.spatial_audio),
-            subtitle = buildString {
-                append("spatializer ")
-                append(if (spatial.available) "available" else "unavailable")
-                append(" · enabled ").append(spatial.enabled)
-                append(" · level ").append(spatial.immersiveLevelLabel)
-                append("\nhead tracker: ").append(spatial.headTrackerAvailable)
-                append(" · output spatializes: ").append(spatial.outputCanSpatialize)
-                append("\noutput: ").append(spatial.outputDeviceName ?: "—")
-                if (!spatial.headTrackerAvailable || !spatial.enabled) {
-                    append("\n").append(getString(R.string.head_tracking_how))
-                }
-            },
-            selected = engine.spatialAudioEnabled,
-            enabled = true,
-            section = "Spatial",
-        )
-
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.AUDIO,
-            value = "spatial_off",
-            title = "Ask the system not to spatialise",
-            // Deliberately worded as a request: the platform has the final say, and on the
-            // reference device it keeps spatialising even when asked not to.
-            subtitle = "The platform and connected headset make the final decision",
-            selected = !engine.spatialAudioEnabled,
-            enabled = true,
-        )
-
-        // The upmix, where the user already is. Having to leave the player, find the library, open
-        // Settings and come back made a control that changes how the current song sounds into one
-        // nobody would reach mid-playback.
-        val currentUpmix = when {
-            engine.upmixAdvanced -> "advanced"
-            engine.upmixMode == UpmixMode.WIDE -> getString(R.string.upmix_wide)
-            engine.upmixMode == UpmixMode.FRONT -> getString(R.string.upmix_front)
-            else -> getString(R.string.upmix_surround)
-        }
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.AUDIO,
-            value = VALUE_UPMIX_HEADER,
-            title = getString(R.string.settings_upmix),
-            subtitle = "How stereo is spread across 5.1, for music. Now: $currentUpmix",
-            selected = false,
-            enabled = false,
-            section = "Upmix",
-        )
-        if (!engine.hasVideo) {
-            for (mode in listOf(UpmixMode.SURROUND, UpmixMode.WIDE, UpmixMode.FRONT)) {
-                val label = when (mode) {
-                    UpmixMode.WIDE -> getString(R.string.upmix_wide)
-                    UpmixMode.FRONT -> getString(R.string.upmix_front)
-                    else -> getString(R.string.upmix_surround)
-                }
-                choices += InspectorSheet.Choice(
-                    panel = InspectorSheet.Panel.AUDIO,
-                    value = "$VALUE_UPMIX_PREFIX${mode.name}",
-                    title = label,
-                    subtitle = null,
-                    selected = !engine.upmixAdvanced && engine.upmixMode == mode,
-                    enabled = true,
-                )
-            }
-            choices += InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.AUDIO,
-                value = VALUE_UPMIX_ADVANCED,
-                title = "Advanced matrix",
-                subtitle = "Per-channel mapping; opens Settings",
-                selected = engine.upmixAdvanced,
-                enabled = true,
-            )
-        }
-
-        // One row per audio stream. A file with several dubs has to be switchable mid-playback.
-        val audio = mediaTracks.audio
-        if (audio.size > 1) {
-            choices += InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.AUDIO,
-                value = VALUE_AUDIO_HEADER,
-                title = "${audio.size} audio tracks",
-                subtitle = "Selecting one keeps playing and switches the stream",
-                selected = false,
-                enabled = false,
-                section = "Audio track",
-            )
-        }
-        for ((index, track) in audio.withIndex()) {
-            choices += InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.AUDIO,
-                value = "$VALUE_AUDIO_PREFIX${track.id}",
-                title = track.label,
-                subtitle = track.detail,
-                selected = track.selected,
-                enabled = track.supported,
-                section = if (audio.size == 1 && index == 0) "Audio track" else null,
-            )
-        }
-
-        sheet.setChoices(InspectorSheet.Panel.AUDIO, choices)
-    }
-
-    private fun populateSubtitlePanel() {
-        val sheet = inspectorSheet
-        val choices = ArrayList<InspectorSheet.Choice>()
-
-        val textTracks = mediaTracks.text
-
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SUBTITLES,
-            value = SUBTITLE_OFF,
-            title = getString(R.string.subtitle_off),
-            subtitle = "Hide subtitles for this item",
-            selected = textTracks.none { it.selected },
-            enabled = true,
-            section = "Tracks",
-        )
-
-        // A remux can carry fifty or more subtitle tracks and building a row for each one makes the
-        // panel slow to open and impossible to scan. The cap keeps the common case instant; whatever
-        // is selected is always listed, wherever it falls, and the rest are one tap away.
-        val limit = if (subtitleLimitOverridden) Int.MAX_VALUE else settings.subtitleTrackLimit
-        val selectedTracks = textTracks.filter { it.selected }
-        val listed = if (textTracks.size <= limit) {
-            textTracks
-        } else {
-            // Always keep whatever is selected, then fill up to the cap in file order. The selected
-            // tracks are collected first and the list is filtered back into its original order
-            // afterwards, so the panel still reads top-to-bottom like the container does rather than
-            // putting the current track first - and it is exactly `limit` rows when there are enough,
-            // which a "take(limit - selected)" formulation gets wrong whenever a selected track is
-            // already inside the first block.
-            val keep = LinkedHashSet(selectedTracks.map { it.id })
-            for (track in textTracks) {
-                if (keep.size >= limit) break
-                keep += track.id
-            }
-            textTracks.filter { it.id in keep }
-        }
-
-        // Logged as well as shown: the panel cannot be introspected (the player never settles for
-        // uiautomator), so this is how the cap is asserted on a file with more tracks than the cap.
-        if (textTracks.size > listed.size) {
-            Log.i(TAG, "subtitle list capped: showing ${listed.size} of ${textTracks.size} tracks")
-        }
-
-        for (track in listed) {
-            choices += InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.SUBTITLES,
-                value = "$VALUE_TEXT_PREFIX${track.id}",
-                title = track.label,
-                subtitle = track.detail,
-                selected = track.selected,
-                enabled = track.supported,
-            )
-        }
-
-        if (listed.size < textTracks.size) {
-            choices += InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.SUBTITLES,
-                value = VALUE_TEXT_SHOW_ALL,
-                title = getString(R.string.subtitle_tracks_show_all, textTracks.size),
-                subtitle = getString(
-                    R.string.subtitle_tracks_limited,
-                    listed.size,
-                    textTracks.size,
-                ),
-                selected = false,
-                enabled = true,
-            )
-        }
-
-        if (textTracks.isEmpty()) {
-            choices += InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.SUBTITLES,
-                value = VALUE_TEXT_HEADER,
-                title = "No embedded subtitle tracks",
-                subtitle = "Add a sidecar file, or drop one next to the video",
-                selected = false,
-                enabled = false,
-            )
-        }
-
-        // Styling sliders. Fixed subtitle geometry cannot suit portrait, a landscape window and a
-        // TV-style layout at once.
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SUBTITLES,
-            value = subtitleSizeSp.toString(),
-            title = getString(R.string.subtitle_size),
-            range = SettingsStore.MIN_SUBTITLE_SIZE..SettingsStore.MAX_SUBTITLE_SIZE,
-            stepSize = 1f,
-            section = "Styling",
-        )
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SUBTITLES,
-            value = (subtitlePositionFraction * 100f).toString(),
-            title = getString(R.string.subtitle_bottom_padding),
-            range = 0f..45f,
-            stepSize = 1f,
-            section = null,
-        )
-
-        choices += InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SUBTITLES,
-            value = "add_external",
-            title = getString(R.string.subtitle_external),
-            subtitle = "Sidecar files next to the video are picked up automatically",
-            selected = false,
-            enabled = true,
-            section = "External",
-        )
-
-        sheet.setChoices(InspectorSheet.Panel.SUBTITLES, choices)
-    }
-
-    private fun populateScalingPanel() {
-        val sheet = inspectorSheet
-        val choices = listOf(
-            Triple(VideoRectCalculator.SCALE_FIT, R.string.scale_fit, "Fit the whole picture, bars as needed"),
-            Triple(VideoRectCalculator.SCALE_FILL, R.string.scale_fill, "Fill the screen, no cropping"),
-            Triple(VideoRectCalculator.SCALE_ZOOM, R.string.scale_zoom, "Fill the screen and crop the overflow"),
-            Triple(VideoRectCalculator.SCALE_STRETCH, R.string.scale_stretch, "Ignore aspect ratio (distorts)"),
-        ).mapIndexed { index, (mode, titleRes, detail) ->
-            InspectorSheet.Choice(
-                panel = InspectorSheet.Panel.SCALING,
-                value = "scale_$mode",
-                title = getString(titleRes),
-                subtitle = detail,
-                selected = mode == scaleMode,
-                enabled = true,
-                section = if (index == 0) "Scaling" else null,
-            )
-        } + InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SCALING,
-            value = if (ambientEnabled) "ambient_off" else "ambient_on",
-            title = getString(R.string.ambient_glow),
-            subtitle = if (ambientEnabled) "On" else "Off",
-            selected = ambientEnabled,
-            enabled = true,
-            section = "Ambient",
-        ) + InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SCALING,
-            value = doubleTapJumpMs.toString(),
-            title = getString(R.string.double_tap_jump),
-            subtitle = "Double tap the left half to go back, the right half to go forward",
-            // A slider over the four lengths people actually ask for; 10s is the default.
-            range = 1f..10f,
-            stepSize = 0.5f,
-            section = "Gestures",
-        )
-
-        sheet.setChoices(InspectorSheet.Panel.SCALING, choices)
-    }
+    private fun populateScalingPanel() =
+        panels.populateScalingPanel(scaleMode, ambientEnabled, doubleTapJumpMs)
 
     /**
      * Opens a panel with the chrome taken away.
@@ -2421,28 +2106,14 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         @JvmStatic
         internal var instance: PlayerActivity? = null
             private set
-        private const val VALUE_CHAPTER_PREFIX = "chapter_"
-
-        /** Raises the subtitle cap so every track in the file is listed. */
-        private const val VALUE_TEXT_SHOW_ALL = "show_all_subtitle_tracks"
 
         const val SUBTITLE_OFF = "subtitle_off"
-
-        private const val VALUE_UPMIX_HEADER = "upmix_header"
-        private const val VALUE_UPMIX_PREFIX = "upmix_"
-        private const val VALUE_UPMIX_ADVANCED = "upmix_advanced"
-
-        private const val VALUE_AUDIO_PREFIX = "audiotrack_"
-        private const val VALUE_TEXT_PREFIX = "texttrack_"
-        private const val VALUE_AUDIO_HEADER = "audio_header"
-        private const val VALUE_TEXT_HEADER = "text_header"
 
         private const val TAG = "PlayerActivity"
 
         /** Corner radius of the floating control capsule. */
         private const val CONTROL_GLASS_RADIUS_DP = 30f
 
-        /** Refracting bevel and bend distance for the control capsule, in dp. */
         /**
          * The two materials as straight-alpha tints.
          *
@@ -2468,13 +2139,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
          */
         private const val CHROME_VIDEO_INSET_DP = 16f
 
-        /** Playback rates offered in the speed picker. */
-        private val SPEED_OPTIONS = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f
-
-        /** Double-tap seek range and default, in ms. */
 
         /** Below this the position is not worth restoring. */
         private const val RESUME_MIN_MS = 15_000L
@@ -2485,6 +2151,5 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         /** How long the chrome stays up after an interaction. */
         private const val CONTROLS_TIMEOUT_MS = 6_000L
 
-        /** Subtitle defaults and the range the sliders expose. */
     }
 }

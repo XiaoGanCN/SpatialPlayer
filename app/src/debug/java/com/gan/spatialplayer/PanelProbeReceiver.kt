@@ -34,6 +34,16 @@ import com.gan.spatialplayer.ui.InspectorSheet
 class PanelProbeReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_GLASS_CAPTURE) {
+            val activity = PlayerActivity.instance ?: return
+            com.gan.spatialplayer.media.PlaybackEngine.peek()?.pause()
+            if (intent.getBooleanExtra("visible", false)) activity.showControlsTemporarilyForTest()
+            else activity.hideControlsForTest()
+            activity.window.decorView.postDelayed({
+                report("glass-capture shown=${activity.controlsShownForTest()}")
+            }, 500L)
+            return
+        }
         if (intent.action == ACTION_CHROME_TOUCH) {
             probeChromeTouch()
             return
@@ -52,7 +62,7 @@ class PanelProbeReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "PanelProbe"
 
-        const val ACTION = "com.gan.spatialplayer.debug.PANEL_PROBE"
+        const val ACTION = "org.spatialplayer.debug.PANEL_PROBE"
 
         /**
          * Exercises the chrome's touch path instead of its panels.
@@ -60,19 +70,21 @@ class PanelProbeReceiver : BroadcastReceiver() {
          * Separate action because it is a different question: what happens when the chrome has timed
          * out and the user taps where one of its buttons used to be. See [probeChromeTouch].
          */
-        const val ACTION_CHROME_TOUCH = "com.gan.spatialplayer.debug.CHROME_TOUCH"
+        const val ACTION_CHROME_TOUCH = "org.spatialplayer.debug.CHROME_TOUCH"
 
         /**
          * Reports the picture geometry the ambient wash is drawing with. Used by
          * `tools/verify-rotation.sh` after each rotation.
          */
-        const val ACTION_GEOMETRY = "com.gan.spatialplayer.debug.GEOMETRY"
+        const val ACTION_GEOMETRY = "org.spatialplayer.debug.GEOMETRY"
 
         /**
          * Holds the player's capsule in a press for a moment, so `tools/verify-glass-press.sh` can
          * photograph the press and compare it with the same capsule at rest.
          */
-        const val ACTION_GLASS_PRESS = "com.gan.spatialplayer.debug.GLASS_PRESS"
+        const val ACTION_GLASS_CAPTURE = "org.spatialplayer.debug.GLASS_CAPTURE"
+
+        const val ACTION_GLASS_PRESS = "org.spatialplayer.debug.GLASS_PRESS"
 
         /** How long the press is held. Long enough to screenshot from the host, twice. */
         private const val PRESS_HOLD_MS = 3_000L

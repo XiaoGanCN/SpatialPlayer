@@ -10,7 +10,7 @@
 set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
-PKG_DEBUG="com.gan.spatialplayer.debug"
+PKG_DEBUG="org.spatialplayer.debug"
 ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
 ACT_TRACKS="$PKG_DEBUG/com.gan.spatialplayer.SmokeTrackProbeActivity"
 MEDIA_DIR="/sdcard/Movies/SpatialPlayerTest"

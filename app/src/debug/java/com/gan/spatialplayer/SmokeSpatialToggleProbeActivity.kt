@@ -16,6 +16,7 @@ import java.io.File
  * so driving that method directly answers whether the switch has any effect - without needing to
  * screenshot a dialog window, which cannot be captured because it is blurred by the window manager.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class SmokeSpatialToggleProbeActivity : Activity(), PlayerEngine.Listener {
 
     private lateinit var engine: PlayerEngine

@@ -5,7 +5,6 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.HdrConversionMode
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.Spatializer
 import android.os.Build
@@ -262,11 +261,6 @@ object DeviceCapabilities {
     }
 
     // ---------------------------------------------------------------- container probing
-
-    /** MIME types the bundled FFmpeg build can decode, restricted to audio. */
-    fun ffmpegAudioMimes(): List<String> = FfmpegCodecs.AUDIO.filter { FfmpegCodecs.isAvailable(it) }
-
-    fun ffmpegVideoMimes(): List<String> = FfmpegCodecs.VIDEO.filter { FfmpegCodecs.isAvailable(it) }
 
     // ---------------------------------------------------------------- device identity
 
