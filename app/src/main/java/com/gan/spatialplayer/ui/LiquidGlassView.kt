@@ -537,7 +537,9 @@ class LiquidGlassView @JvmOverloads constructor(
         val bitmap = backBuffer
         val active = shader
 
-        if (bitmap != null && active != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (canvas.isHardwareAccelerated && bitmap != null && active != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
             drawShaderGlass(canvas, bitmap, active)
         } else {
             drawFallbackGlass(canvas)

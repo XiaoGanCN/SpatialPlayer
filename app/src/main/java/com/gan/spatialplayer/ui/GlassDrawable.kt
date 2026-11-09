@@ -136,6 +136,12 @@ class GlassDrawable(
         // Standing down during the capture is what stops the glass from sampling itself.
         if (GlassBackdrop.capturing) return
         if (bounds.isEmpty) return
+        // RippleDrawable may rasterize its content into a software mask during a press.
+        // RuntimeShader is hardware-only, even when the owning window is accelerated.
+        if (!canvas.isHardwareAccelerated) {
+            drawFallback(canvas)
+            return
+        }
 
         val bitmap = GlassBackdrop.image
         val shader = sharedShader()

@@ -137,5 +137,12 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.SpatialPlayer" />
 
+        <activity
+            android:name=".GlassRenderProbeActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.SpatialPlayer" />
+
     </application>
 </manifest>

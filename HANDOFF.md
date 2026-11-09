@@ -2,7 +2,7 @@
 
 Everything learned while building this, so the next session does not have to rediscover it.
 
-**Current snapshot (2026-11-10):** Work is back in this original repository on `main`; debug installs as `org.spatialplayer.debug`. The refactor, glass port (including Settings), and film fallback are implemented. See the refactor entry in §8 for current validation and the two deferred screen-off checks.
+**Current snapshot (2026-11-10):** Work is back in this original repository on `main`; debug installs as `org.spatialplayer.debug`. The refactor, glass port (including Settings), and film fallback are implemented. The subsequent touch crash is fixed in the ripple-mask/software-canvas path (§3.14). See the refactor entry in §8 for current validation and the two deferred screen-off checks.
 
 **Where to look first**
 
@@ -154,6 +154,14 @@ has focus before asserting (`verify-background.sh` now does, via `wake_visible`)
 the only reliable fix is a physical touch — `osascript display dialog` on the Mac is the way to ask.
 An earlier symptom of the same thing: `input tap`/`swipe` returning success while nothing moves is not
 always the §3.1 stale-injection trap. Check `mWakefulness` first; `Asleep` explains all of it.
+
+### 3.14 A glass ripple can draw into a software canvas even in an accelerated window
+
+A held press on a glass-backed control crashed with `IllegalArgumentException: Software rendering doesn't support RuntimeShader`. The stack was `RippleDrawable.updateMaskShaderIfNeeded → drawContent → GlassDrawable.draw`: without an explicit mask, Android software-rasterizes the content to obtain its alpha mask. Checking the OS version or the window's hardware acceleration does not protect that canvas.
+
+`GlassInstaller` now supplies an opaque rounded mask to the ripple. `GlassDrawable` and `LiquidGlassView` check the actual canvas's `isHardwareAccelerated` flag and use their existing fallback for software rendering. Hardware draws retain the shader. A real 800 ms hold on Library Refresh reproduced the crash on the previous APK; instantaneous taps and `performClick` did not reliably trigger the mask rebuild, so the earlier suites missed it. `tools/verify-glass-touch.py` adds held presses across Library/Settings and a debug probe that draws initialized glass and a pressed ripple into a bitmap canvas.
+
+Verified on the phone after this fix (2026-11-10): seven real 800 ms presses across Library/Settings without process restart; initialized glass content and a pressed ripple draw into a software bitmap canvas without exception. Panel suite 14/14 and backdrop suite 4/4 still pass (tracking r=0.9345). Debug/release builds and lint pass with zero lint errors. Updated debug APK installed. Crash evidence and regression output are in `smoke/out/glass-touch/`.
 
 ## 4. Verified findings worth not re-deriving
 
@@ -587,6 +595,7 @@ the full native text that no log line produced.
 | `tools/verify-spatial-audio.sh` | 13 | `isSpatialized=true`, head tracking non-DISABLED |
 | `tools/verify-gestures.sh` | 11 | sensitivity, chrome tap/timeout — injects real swipes/taps |
 | `tools/verify-glass-backdrop.sh` | 4 | glass samples the picture behind it (§4.10) |
+| `tools/verify-glass-touch.py` | — | seven real 800 ms holds across Library/Settings, stable process, initialized glass and pressed ripple on a software canvas (§3.14) |
 | `tools/verify-chapters.sh` | 10 | Matroska chapter parse via the probe, plus the no-chapter case |
 | `tools/verify-background.sh` | 7 | audio survives HOME and screen-off, video does not. `SKIP_SCREEN_OFF=1` skips the two screen-off checks (§3.13) |
 | `tools/verify-panels.sh` | 13 | every inspector panel renders its rows however it was reached, **and the glass is installed on both screens** (§4.21) |
