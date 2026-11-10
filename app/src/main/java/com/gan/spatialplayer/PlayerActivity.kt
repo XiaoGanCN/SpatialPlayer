@@ -328,9 +328,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.controlGlass.bevelWidthPx = density * CONTROL_GLASS_BEVEL_DP
         binding.controlGlass.refractionPx = density * CONTROL_GLASS_REFRACT_DP
         binding.controlGlass.refractionFalloff = 1.6f
-        binding.controlGlass.dispersionStrength = 0.025f
-        binding.controlGlass.specularStrength = 0.32f
-        binding.controlGlass.blurTexels = 5f
+        binding.controlGlass.dispersionStrength = 0.10f
+        binding.controlGlass.specularStrength = 1f
+        binding.controlGlass.blurRadiusPx = 14f
         binding.controlGlass.saturation = 1.06f
         applyGlassMaterial()
 
@@ -381,8 +381,15 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             override fun onScrubMove(fraction: Float) {
                 val duration = lastSample.durationMs
                 if (duration > 0) {
-                    binding.timeCurrent.text = TextSpans.timecode((duration * fraction).toLong())
+                    val position = (duration * fraction).toLong()
+                    binding.timeCurrent.text = TextSpans.timecode(position)
+                    binding.timeRemaining.text = "-" + TextSpans.timecode(duration - position)
                 }
+            }
+
+            override fun onScrubCancel() {
+                isScrubbing = false
+                updateProgress()
             }
 
             override fun onScrubStop(fraction: Float) {
@@ -934,11 +941,11 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     override fun onBrightnessDelta(delta: Float) {
         val attrs = window.attributes
-        val next = (attrs.screenBrightness.takeIf { it >= 0f } ?: 0.5f) + delta
+        val next = (attrs.screenBrightness.takeIf { it >= 0f } ?: (android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, 128) / 255f)) + delta
         val applied = next.coerceIn(0.01f, 1f)
         attrs.screenBrightness = applied
         window.attributes = attrs
-        showFeedback(String.format(Locale.US, "BRI %.0f%%", applied * 100))
+        showFeedback(String.format(Locale.US, "Brightness %.0f%%", applied * 100))
     }
 
     /**
@@ -965,7 +972,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         volumeAccumulator = exact.coerceIn(0f, max.toFloat())
         Log.d(TAG, "volDelta delta=$delta exact=$exact next=$next max=$max")
-        showFeedback("VOL ${(next * 100) / max}%")
+        showFeedback("Volume ${(manager.getStreamVolume(AudioManager.STREAM_MUSIC) * 100) / max}%")
     }
 
     // ------------------------------------------------------------------ ambient + geometry
@@ -1406,6 +1413,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun updateProgress() {
         val sample = engine.sample()
         lastSample = sample
+        binding.seekBar.isEnabled = sample.durationMs > 0 && engine.player?.isCurrentMediaItemSeekable == true
         if (!isScrubbing && sample.durationMs > 0) {
             val fraction = sample.positionMs.toFloat() / sample.durationMs
             binding.seekBar.setProgress(fraction)
@@ -1415,6 +1423,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 "-" + TextSpans.timecode((sample.durationMs - sample.positionMs).coerceAtLeast(0L))
         }
         binding.buttonSpeed.text = String.format(Locale.US, "%.2g×", sample.playbackSpeed)
+        updateStreamChips()
     }
 
     private fun updateDuration() {
@@ -1441,22 +1450,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         val chips = ArrayList<ChipStrip.Chip>()
 
-        chips += ChipStrip.Chip(
-            mimeType ?: PlaybackReport.containerFor(displayName, null) ?: "video",
-            ChipStrip.Tone.NEUTRAL,
-        )
-
-        if (sizeBytes > 0) {
-            chips += ChipStrip.Chip(TextSpans.bytes(sizeBytes), ChipStrip.Tone.NEUTRAL)
-        }
-
         if (hdr != null) {
             chips += ChipStrip.Chip(hdr, ChipStrip.Tone.ACTIVE)
         }
 
         videoFormat?.let { format ->
             if (format.width > 0 && format.height > 0) {
-                chips += ChipStrip.Chip("${format.width}x${format.height}", ChipStrip.Tone.NEUTRAL)
+                chips += ChipStrip.Chip(if (format.height >= 2160) "4K" else "${format.height}p", ChipStrip.Tone.NEUTRAL)
             }
         }
 
@@ -1472,12 +1472,12 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
 
         // The decoder route is the single most useful diagnostic when something will not play.
-        videoFormat?.sampleMimeType?.let { mime ->
-            chips += ChipStrip.Chip(
-                DecoderPolicy.describeRoute(mime, engine.decoderProfile).uppercase(),
-                ChipStrip.Tone.NEUTRAL,
-            )
-        }
+        val decoder = engine.sample().videoCodecName
+        if (decoder != "—") chips += ChipStrip.Chip(
+            if (decoder in hardwareDecoderNames) "Hardware" else "Software",
+            if (decoder in hardwareDecoderNames) ChipStrip.Tone.NEUTRAL else ChipStrip.Tone.WARN,
+        )
+        if (engine.isStereoUpmixActive) chips += ChipStrip.Chip("Stereo → 5.1", ChipStrip.Tone.ACTIVE)
 
         // What the decoder produced and what the output will actually receive are different things.
         // The track selector caps the channel count to what the sink accepts and Media3 downmixes to
@@ -2063,6 +2063,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         const val SUBTITLE_OFF = "subtitle_off"
 
         private const val TAG = "PlayerActivity"
+        private val hardwareDecoderNames by lazy {
+            android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).codecInfos
+                .filter { !it.isEncoder && it.isHardwareAccelerated }.flatMap { listOf(it.name, it.canonicalName) }.toSet()
+        }
 
         /** Corner radius of the floating control capsule. */
         private const val CONTROL_GLASS_RADIUS_DP = 30f
@@ -2080,8 +2084,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         private const val GLASS_CLEAR_BODY = 0x33000000
         private const val GLASS_CLEAR_DIM = 0.22f
 
-        private const val CONTROL_GLASS_BEVEL_DP = 8f
-        private const val CONTROL_GLASS_REFRACT_DP = 3f
+        private const val CONTROL_GLASS_BEVEL_DP = 18f
+        private const val CONTROL_GLASS_REFRACT_DP = 55f
 
         /** Vertical drag sensitivity handed to the gesture controller. */
         private const val DEFAULT_VERTICAL_GAIN = 0.30f

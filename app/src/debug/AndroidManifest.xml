@@ -144,5 +144,6 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.SpatialPlayer" />
 
+        <activity android:name=".GlassOpticsProbeActivity" android:exported="true" android:excludeFromRecents="true" />
     </application>
 </manifest>

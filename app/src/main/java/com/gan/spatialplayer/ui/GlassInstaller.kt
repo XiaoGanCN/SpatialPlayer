@@ -48,23 +48,23 @@ object GlassInstaller {
      */
     private fun roles(context: Context): Map<Int, Role> = mapOf(
         R.id.glass_role_button to Role { ctx ->
-            GlassStyle(cornerRadiusPx = dp(ctx, 22f), fallbackFill = 0x2BFFFFFF)
+            GlassStyle(cornerRadiusPx = dp(ctx, 1000f), fallbackFill = 0x2BFFFFFF)
         },
         R.id.glass_role_button_active to Role { ctx ->
             GlassStyle(
-                cornerRadiusPx = dp(ctx, 22f),
+                cornerRadiusPx = dp(ctx, 1000f),
                 tint = 0x32FFFFFF,
                 body = 0x12FFFFFF,
-                specularStrength = 0.35f,
+                specularStrength = 1f,
                 fallbackFill = 0x32FFFFFF,
             )
         },
         R.id.glass_role_bar to Role { ctx ->
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 30f),
-                bevelWidthPx = dp(ctx, 8f),
-                refractionPx = dp(ctx, 3f),
-                blurTexels = 8f,
+                bevelWidthPx = 48f,
+                refractionPx = 160f,
+                blurRadiusPx = 18f,
                 tint = 0x1AFFFFFF,
                 fallbackFill = 0x2BFFFFFF,
             )
@@ -72,9 +72,9 @@ object GlassInstaller {
         R.id.glass_role_panel to Role { ctx ->
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 26f),
-                blurTexels = 9f,
-                bevelWidthPx = dp(ctx, 8f),
-                refractionPx = dp(ctx, 3f),
+                blurRadiusPx = 18f,
+                bevelWidthPx = 48f,
+                refractionPx = 160f,
                 tint = 0x1AFFFFFF,
                 fallbackFill = 0x24FFFFFF,
             )
@@ -118,6 +118,7 @@ object GlassInstaller {
             }
             if (existing != null) {
                 existing.style = style
+                if (view.isClickable) Haptics.attachTo(view)
                 return@walk
             }
             val glass = GlassDrawable(view, style).apply { radiusPx = style.cornerRadiusPx }
@@ -136,7 +137,7 @@ object GlassInstaller {
             } else {
                 glass
             }
-            watchTouch(view, glass)
+            if (view.isClickable) Haptics.attachTo(view)
             watch(view)
             installed++
         }
@@ -175,27 +176,12 @@ object GlassInstaller {
         })
     }
 
-    /**
-     * Tells the glass where the finger is.
-     *
-     * The press *state* reaches the drawable through `RippleDrawable`'s `setState`, so nothing here
-     * decides whether the pane is pressed - this only adds the position, which the ripple path cannot
-     * carry. It runs before the view's own `onTouchEvent`, so the coordinate is set for the frame the
-     * press begins on rather than one frame late.
-     *
-     * Returning `false` for `ACTION_DOWN` would stop the view from ever seeing it, so the event is
-     * still dispatched. There is no gesture to steal: the only consumer below is the control itself.
-     */
-    private fun watchTouch(view: View, glass: GlassDrawable) {
-        view.setOnTouchListener { touched, event ->
-            when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN,
-                android.view.MotionEvent.ACTION_MOVE,
-                -> glass.setTouchPoint(event.x, event.y)
-            }
-            touched.onTouchEvent(event)
-        }
+    internal fun material(view: View): GlassDrawable? = when (val bg = view.background) {
+        is GlassDrawable -> bg
+        is RippleDrawable -> (0 until bg.numberOfLayers).map { bg.getDrawable(it) }.filterIsInstance<GlassDrawable>().firstOrNull()
+        else -> null
     }
+    internal fun isGlass(view: View): Boolean = view is LiquidGlassView || material(view) != null
 
     private fun walk(view: View, visit: (View) -> Unit) {
         visit(view)

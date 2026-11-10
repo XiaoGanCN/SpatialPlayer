@@ -376,7 +376,7 @@ class InspectorSheet @JvmOverloads constructor(
             text = String.format(java.util.Locale.US, "%.2f×", speed)
         }
         container.addView(readout, LinearLayout.LayoutParams(-1, dp(92)))
-        val slider = android.widget.SeekBar(context).apply {
+        val slider = GlassSlider(context).apply {
             tag = "speed_slider"
             progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
             thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
@@ -518,7 +518,7 @@ class InspectorSheet @JvmOverloads constructor(
 
         val steps = (((range.endInclusive - range.start) / choice.stepSize).toInt())
             .coerceAtLeast(1)
-        val slider = android.widget.SeekBar(context).apply {
+        val slider = GlassSlider(context).apply {
             progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
             thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
             max = steps
@@ -541,7 +541,7 @@ class InspectorSheet @JvmOverloads constructor(
         SliderReading.attach(
             view = reading,
             current = {
-                snapToStep(choice.value.toFloatOrNull() ?: range.start, range, steps, choice.stepSize)
+                snapToStep(range.start + slider.progress * choice.stepSize, range, steps, choice.stepSize)
             },
             range = range,
             step = choice.stepSize,

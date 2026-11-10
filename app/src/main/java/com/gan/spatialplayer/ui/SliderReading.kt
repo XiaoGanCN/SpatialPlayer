@@ -40,10 +40,12 @@ object SliderReading {
         onSet: (Float) -> Unit,
     ) {
         // The reading is not naturally clickable; say so, or it cannot take focus at all.
+        view.setTag(R.id.control_owns_touch, true)
         view.isClickable = true
         view.isFocusable = true
 
         val detector = GestureDetector(view.context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(event: MotionEvent) = true
             override fun onSingleTapConfirmed(event: MotionEvent): Boolean {
                 edit(view, current(), range, step, format, onSet)
                 return true
@@ -59,7 +61,12 @@ object SliderReading {
                 return true
             }
         })
-        view.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
+        view.setOnClickListener { edit(view, current(), range, step, format, onSet) }
+        view.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) Haptics.touch(view)
+            detector.onTouchEvent(event)
+            true
+        }
     }
 
     /** One place that maps any incoming value onto the slider's own grid. */
@@ -126,6 +133,5 @@ object SliderReading {
         input.selectAll()
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
         GlassTheme.configureSheet(dialog, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-        Haptics.touch(view)
     }
 }

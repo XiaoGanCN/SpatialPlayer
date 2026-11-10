@@ -36,9 +36,9 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 | Library / Poweramp | `MainActivity`, `MediaRepository`, `PowerampReader`, `FileListAdapter` |
 | Playback / background session | `PlayerActivity`, `media/PlayerEngine`, `PlaybackEngine`, `PlaybackService` |
 | Audio | `SpatialRenderersFactory`, `StereoUpmixProcessor`, `UpmixMatrix`, `AudioOutputCapability` |
-| Controls / settings | `PlayerPanels`, `InspectorSheet`, `OverflowSheet`, `SettingsActivity`, `SettingsStore` |
-| Material | `GlassTheme`, `GlassInstaller`, `GlassDrawable`, `GlassStyle`, `GlassShader` |
-| Backdrop | `GlassBackdrop` (one scene per UI window); `LiquidGlassView` (video PixelCopy) |
+| Controls / settings | `PlayerPanels`, `InspectorSheet`, `OverflowSheet`, `GlassSlider`, `GlassSwitch`, `SettingsStore` |
+| Material | `GlassLensRenderer`, `GlassOptics`, `GlassDrawable`, `GlassStyle`, `GlassTheme`, `GlassInstaller` |
+| Backdrop | `GlassBackdrop` / `BackdropCapture` (GPU view recording); `VideoGlassBackdrop` (native video preview) |
 | Debug entry points | `app/src/debug`; receiver registration is variant-specific `DebugProbes` |
 
 ## Verified technical constraints
@@ -59,8 +59,20 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 - Never infer correct tone mapping from an SDR screenshot or merely from a rendered first frame.
 - `TextureView` is not a substitute: Android's HDR guidance says it tone-maps video to SDR.
   Reference: https://developer.android.com/media/grow/hdr-playback
-- The reference glass library captures the View hierarchy, which cannot capture a native video surface.
-  Use its design/optics without replacing the HDR surface: https://github.com/QWEA0/Liquid-Glass-Android
+- Glass is now a direct port of the reference `GlassLensRenderer` optical shader / GPU Gaussian-blur
+  chain, with its small-control scaling and sensor light model. MIT license and upstream revision are
+  bundled under `assets/licenses/`. Source: https://github.com/QWEA0/Liquid-Glass-Android
+- `VideoGlassBackdrop` supplies a shared double-buffered, downscaled PixelCopy preview only while
+  controls are visible. UI backdrops use GPU view recording, not CPU bitmap capture or sparse blur taps.
+  The native HDR video surface is never replaced or modified by this preview.
+- Blu-ray M2TS: `M2tsDataSource` strips four timestamp bytes from each 192-byte packet and maps virtual
+  188-byte seek offsets/lengths back to the original file. Other transport streams pass through.
+  `BlurayTsExtractor` distinguishes HDMV's DTS-HD type 0x86 from broadcast SCTE-35, excludes the DV
+  enhancement PID when a primary HEVC picture is present, and keeps the HDR10 base layer.
+  `BlurayDtsReader` joins core/extension PES into DTS-HD access units; stock Media3 emits extensions
+  separately as DTS Express, which causes nextlib decoder initialization failure. The PCR search window
+  is enlarged for high-bitrate streams so duration / seeking does not depend on a broadcast-sized span.
+- HDMV PGS subtitle extraction is still absent in the TS reader; external subtitles remain available.
 
 ### Spatial audio
 
@@ -78,18 +90,26 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 - `RuntimeShader` cannot draw on a software canvas. Both renderers have a canvas-acceleration guard.
   RippleDrawable gets an explicit opaque rounded mask; otherwise a held press rasterizes shader content
   into a software mask and crashes. Keep `verify-glass-touch.py`.
-- Rim lighting must fade toward the interior. The old inverse profile lit the whole pane and washed it out.
-- PixelCopy uses decoder **buffer** coordinates, not view coordinates. Supply decoded frame dimensions;
-  convert window → displayed picture → buffer, and mask areas outside the video.
-- UI backdrop scenes are per window. Exclude complete glass subtrees during capture to avoid refracting
-  their own labels. Never reuse a Settings/dialog capture for the Library. Floating/translucent dialog
-  themes are required for compositor background blur; merely setting its radius is insufficient.
-- Player overlay is a FrameLayout: independent safe-area header and width-capped, two-row transport.
-  No weight-spacer positioning or picture-relative giant margins. Technical chips and scrims are removed.
+- The GPU lens shader is blurred **before** refraction/dispersion. Do not reintroduce unblurred RGB
+  samples, sparse multi-tap frost, or a constant bright outline; these caused sharpening / false glass.
+- `BackdropCapture` walks ancestor branches with public `draw()` and transition visibility to avoid
+  re-entering active RenderNodes or creating cyclic display lists. Restore hidden views in `finally`.
+- Native video copies use decoder buffer coordinates, not view coordinates. Double buffering avoids
+  writing into the preview currently sampled by the render thread; don't prematurely recycle bitmaps.
+- Floating + translucent dialog themes are required for compositor window blur. Keep controls SDR.
+- Player overlay is a FrameLayout: independent safe-area header, useful stream chips, width-capped
+  two-row transport. Button radii derive from half the measured short side; square controls are circles.
+- Main screen prioritizes Open file / Open folder. Videos and Music disclose optional collections;
+  no selection means a clean collapsed home. Persist and restore the selected source.
+- Timeline scrubbing draws the live finger fraction and commits once on release. Cancellation cancels
+  the seek. All sliders retain native seeking/accessibility and use an expanding glass handle.
+- Continuous volume/brightness feedback must update without restarting its alpha entrance on MOVE.
+- Haptics and glass deformation share one listener; don't replace `SliderReading`'s own gesture
+  listener. Respect system haptics. Switch/slider widgets own their touch and feedback.
 - Gesture ownership is decided on DOWN and retained for the gesture. Header buttons, seek bar and speed
   control are included in hit-testing. Alpha zero alone does not remove a touch target: park at INVISIBLE.
 - `View.animate().cancel()` retains listeners. Clear stale listeners before reusing an animator.
-- Library uses a stable, full-height list and a source selector. No animated layout weights or docking.
+- Expanded collections use a stable list. No animated layout weights or docking.
 
 ### Data
 
@@ -113,6 +133,10 @@ Original movie (73 GB; never push the whole file):
   `stereo_48k.mp4`, `multi_eng_subs.mkv` and `chapters_720p.mkv` in that same folder.
 - Host checks: `python3 tools/verify-host.py` (cached Kotlin compiler, JDK 21; Gradle unit tests have no sources).
 - Real UI/native HDR checks: `python3 tools/verify-redesign.py`; artifacts in `smoke/out/redesign/`.
+- New controls / picker / live scrub / gesture HUD / switch / GPU blur: `python3 tools/verify-controls.py`.
+  Test artifacts live in `smoke/out/controls/`. The stripe probe measures the actual rendered Gaussian blur.
+- New source: `/Volumes/Storage/Medias/Wandering Earth 2/00004.m2ts` (80 GB; never push whole).
+  Its unmodified 96 MB packet-aligned prefix is `earth2_original_12s.m2ts` (~16.8 s) in both fixture folders.
 - Crash regression: `python3 tools/verify-glass-touch.py` (real held presses + software-canvas rendering).
 - Codec/identity regression: `tools/verify-multichannel.sh`; spatial tests: `tools/verify-spatial-audio.sh`.
 - Other harnesses cover Poweramp refresh, chapters, background policy, panels, gestures, rotation and glass.
@@ -122,14 +146,17 @@ Original movie (73 GB; never push the whole file):
 
 ## Current verification / remaining work
 
-- Debug/release builds and debug lint pass. Host checks: **21 passed**.
-- Redesign device suite: **39 passed** — list visibility without rotation, matrix edits, portrait/landscape
-  bounds, real header/speed taps, six repeated video transitions and sustained HDR playback.
-  Production movie sample with visible controls: hardware HEVC, **48 → 279 frames / 0 dropped**,
-  native PQ video + SDR UI, 7.1 source with stereo upmix inactive.
-- Other current device receipts: panels **14**, glass **4**, multichannel **25**, Poweramp **14** passed.
-  Held-press/software-canvas regression passed (**7 real held presses**, process unchanged).
-  Background policy: **5 passed / 2 screen-off checks skipped** due to the lock-screen constraint.
-- Physical screen/color assessment of the full original movie remains unverified; only a stream-copy cut
-  is on the phone. The system/vendor performs tone mapping.
+- Debug/release builds and debug lint pass. Host checks: **36 passed**, including fragmented M2TS
+  reads, seek boundaries, and virtual length mapping.
+- M2TS native probe: hardware HEVC **3840×2160 PQ**, FFmpeg DTS-HD **5.1**, **205 frames / 0 dropped /
+  0 underruns** in the timed prefix sample; stereo upmix inactive. Full 80 GB playback is unverified.
+- New controls: **20 passed** (real pickers, collapsing collections, live seek thumb/timecode, live
+  brightness/volume HUD, glass sliders/switches, haptic dispatch, flat-sensor stability, real GPU blur).
+  Stripe probe: standard deviation **127.5 → 0.0** under the pane. Physical tilt remains a manual check.
+- Native HDR/UI regression: **39 passed**, including rotations, actual header taps, repeated player
+  opens, hardware Spider-Verse playback, native PQ video and separate SDR controls.
+- Blu-ray/TS regression: **12 passed**, including mid-file seeks on M2TS and ordinary 188-byte TS,
+  production M2TS playback with visible glass (**55 → 185 frames, 0 dropped**) and native PQ output. `python3 tools/verify-bluray.py`.
+- Held-touch/software-canvas regression: **7 real holds passed**, process unchanged.
+- Physical HDR color accuracy of either full movie remains unverified; the system/vendor tone maps.
 - Sony headset recentering and the device lock-screen test limitation remain outside this redesign.

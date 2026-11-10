@@ -73,6 +73,8 @@ object LightSourceController : SensorEventListener {
     private var lastNotifiedX = DEFAULT_X
     private var lastNotifiedY = DEFAULT_Y
     private var lastLoggedAt = 0L
+    internal var planarGravity = 0f
+        private set
 
     /** The current direction, or `null` when this device cannot track the light. */
     fun lightDirection(): Pair<Float, Float>? {
@@ -185,6 +187,7 @@ object LightSourceController : SensorEventListener {
         }
 
         val planar = sqrt(ux * ux + uy * uy)
+        planarGravity = planar
         val tilt = (planar / SensorManager.GRAVITY_EARTH).coerceIn(0f, 1f)
 
         var tx = DEFAULT_X

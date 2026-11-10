@@ -221,8 +221,11 @@ class PlayerGestureController(
                         // deliberate drag.
                         adjustArmed = mode != Mode.SEEK && mode != Mode.NONE
                         slopCrossedAtMs = System.currentTimeMillis()
-                        if (mode == Mode.SEEK) {
-                            host.onScrubStart()
+                        when (mode) {
+                            Mode.SEEK -> host.onScrubStart()
+                            Mode.BRIGHTNESS -> host.onBrightnessDelta(0f)
+                            Mode.VOLUME -> host.onVolumeDelta(0f)
+                            else -> Unit
                         }
                         // Rebase the reference to the current position: the travel that triggered
                         // the gesture must not also be applied as an adjustment, or the first

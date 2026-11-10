@@ -93,16 +93,6 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_info"
                 android:contentDescription="@string/metadata" />
-            <HorizontalScrollView
-                android:id="@+id/playerChipScroll"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone">
-                <com.gan.spatialplayer.ui.ChipStrip
-                    android:id="@+id/playerChips"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </HorizontalScrollView>
             <View
                 android:id="@+id/playerChipFade"
                 android:layout_width="0dp"
@@ -120,7 +110,7 @@
             android:padding="14dp">
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="32dp"
+                android:layout_height="44dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical">
                 <TextView
@@ -206,6 +196,20 @@
                     android:contentDescription="@string/more" />
             </LinearLayout>
         </com.gan.spatialplayer.ui.LiquidGlassView>
+        <HorizontalScrollView
+            android:id="@+id/playerChipScroll"
+            android:layout_width="match_parent"
+            android:layout_height="30dp"
+            android:visibility="visible"
+            android:layout_gravity="top"
+            android:layout_marginTop="68dp"
+            android:layout_marginHorizontal="16dp"
+            android:scrollbars="none">
+            <com.gan.spatialplayer.ui.ChipStrip
+                android:id="@+id/playerChips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </HorizontalScrollView>
     </FrameLayout>
     <LinearLayout
         android:id="@+id/errorCard"
@@ -231,7 +235,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp" />
-        <!-- Actions. Copy exists because the exact error text is what makes a bug report useful. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

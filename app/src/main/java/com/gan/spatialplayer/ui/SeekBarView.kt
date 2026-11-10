@@ -36,6 +36,8 @@ class SeekBarView @JvmOverloads constructor(
 
         /** Fraction of total duration to commit as a seek. */
         fun onScrubStop(fraction: Float)
+
+        fun onScrubCancel() = Unit
     }
 
     var listener: Listener? = null
@@ -44,6 +46,7 @@ class SeekBarView @JvmOverloads constructor(
     private val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bufferedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val lens = GlassLensRenderer()
 
     private val trackRect = RectF()
     private val playedRect = RectF()
@@ -163,10 +166,11 @@ class SeekBarView @JvmOverloads constructor(
     }
 
     val isScrubbing: Boolean get() = scrubbing
+    internal val displayedFraction: Float get() = if (scrubbing) hoverFraction else progress
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
-        val desiredHeight = (scrubThumbRadiusPx * 2 + 12f * resources.displayMetrics.density).toInt()
+        val desiredHeight = (44f * resources.displayMetrics.density).toInt()
         val height = resolveSize(desiredHeight, heightMeasureSpec)
         setMeasuredDimension(width, height)
     }
@@ -175,7 +179,7 @@ class SeekBarView @JvmOverloads constructor(
         super.onDraw(canvas)
 
         val centerY = height / 2f
-        val horizontalInset = scrubThumbRadiusPx
+        val horizontalInset = scrubThumbRadiusPx * 1.4f
         val left = paddingLeft + horizontalInset
         val right = width - paddingRight - horizontalInset
         if (right <= left) return
@@ -196,7 +200,7 @@ class SeekBarView @JvmOverloads constructor(
         // Played. Slightly thicker than the track, and thicker again while scrubbing, which reads
         // as the bar "picking up" under the finger without any colour change.
         val playedHalf = halfTrack * playedThicknessScale
-        val playedX = left + (right - left) * progress
+        val playedX = left + (right - left) * (if (scrubbing) hoverFraction else progress)
         if (playedX > left) {
             playedRect.set(left, centerY - playedHalf, playedX, centerY + playedHalf)
             canvas.drawRoundRect(playedRect, playedHalf, playedHalf, playedPaint)
@@ -204,11 +208,22 @@ class SeekBarView @JvmOverloads constructor(
 
         // Thumb: a plain white dot that grows on touch.
         val radius = if (scrubbing) scrubThumbRadiusPx else thumbRadiusPx * thumbScale
-        canvas.drawCircle(playedX, centerY, radius, thumbPaint)
+        val handle = RectF(playedX-radius*1.4f, centerY-radius, playedX+radius*1.4f, centerY+radius)
+        canvas.drawRoundRect(handle, radius, radius, thumbPaint)
+        if (scrubbing && canvas.isHardwareAccelerated && !GlassBackdrop.capturing) {
+            val style = GlassStyle(cornerRadiusPx = radius, blurRadiusPx = 10f, tint = 0x30FFFFFF)
+            lens.draw(canvas,this,GlassOptics.parameters(this,style,1f,playedX,centerY,handle),GlassOptics.margin(style)) { backdrop ->
+                GlassBackdrop.draw(backdrop,this)
+                backdrop.drawRoundRect(trackRect,halfTrack,halfTrack,trackPaint)
+                if (bufferedX > left) backdrop.drawRoundRect(bufferedRect,halfTrack,halfTrack,bufferedPaint)
+                if (playedX > left) backdrop.drawRoundRect(playedRect,playedHalf,playedHalf,playedPaint)
+            }
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val horizontalInset = scrubThumbRadiusPx
+        if (!isEnabled) return false
+        val horizontalInset = scrubThumbRadiusPx * 1.4f
         val left = paddingLeft + horizontalInset
         val right = width - paddingRight - horizontalInset
         if (right <= left) return false
@@ -218,7 +233,9 @@ class SeekBarView @JvmOverloads constructor(
                 // Accept the touch anywhere in the bar's vertical slop, not just on the thumb.
                 if (event.y < -touchSlopPx || event.y > height + touchSlopPx) return false
                 parent?.requestDisallowInterceptTouchEvent(true)
+                progressAnimator?.cancel()
                 scrubbing = true
+                isPressed = true
                 hoverFraction = fractionFor(event.x, left, right)
                 animateThumb(1.25f)
                 listener?.onScrubStart()
@@ -239,8 +256,11 @@ class SeekBarView @JvmOverloads constructor(
                 if (!scrubbing) return false
                 hoverFraction = fractionFor(event.x, left, right)
                 scrubbing = false
+                isPressed = false
+                forceProgress(hoverFraction)
                 animateThumb(1f)
                 listener?.onScrubStop(hoverFraction)
+                performClick()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 invalidate()
                 return true
@@ -249,8 +269,9 @@ class SeekBarView @JvmOverloads constructor(
             MotionEvent.ACTION_CANCEL -> {
                 if (!scrubbing) return false
                 scrubbing = false
+                isPressed = false
                 animateThumb(1f)
-                listener?.onScrubStop(hoverFraction)
+                listener?.onScrubCancel()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 invalidate()
                 return true
@@ -281,11 +302,35 @@ class SeekBarView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        lens.release()
         thumbAnimator?.cancel()
         thumbAnimator = null
         progressAnimator?.cancel()
         progressAnimator = null
         super.onDetachedFromWindow()
+    }
+
+    override fun getAccessibilityClassName(): CharSequence = "android.widget.SeekBar"
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.rangeInfo = android.view.accessibility.AccessibilityNodeInfo.RangeInfo.obtain(
+            android.view.accessibility.AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT,0f,1f,displayedFraction)
+        if (isEnabled) {
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS)
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+        }
+    }
+    override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        if (!isEnabled) return super.performAccessibilityAction(action,arguments)
+        val value = when (action) {
+            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id -> arguments?.getFloat(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE) ?: return false
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> progress+.05f
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> progress-.05f
+            else -> return super.performAccessibilityAction(action,arguments)
+        }.coerceIn(0f,1f)
+        listener?.onScrubStart();forceProgress(value);listener?.onScrubMove(value);listener?.onScrubStop(value)
+        return true
     }
 
     override fun performClick(): Boolean {

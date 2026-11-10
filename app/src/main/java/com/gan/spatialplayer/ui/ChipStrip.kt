@@ -54,7 +54,10 @@ class ChipStrip @JvmOverloads constructor(
      * Values are rendered in monospace (they are technical) while the surrounding chrome stays in
      * the system face, matching the app's typography rule.
      */
+    private var displayed: List<Chip> = emptyList()
     fun setChips(chips: List<Chip>) {
+        if (displayed == chips) return
+        displayed = chips.toList()
         removeAllViews()
         visibility = if (chips.isEmpty()) View.GONE else View.VISIBLE
         for (chip in chips) {
@@ -76,9 +79,9 @@ class ChipStrip @JvmOverloads constructor(
 
         return TextView(context).apply {
             text = chip.label
-            typeface = Typeface.MONOSPACE
+            typeface = UiTypography.body(context)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-            letterSpacing = 0.06f
+            letterSpacing = 0f
             setTextColor(colors.text)
             gravity = Gravity.CENTER_VERTICAL
             includeFontPadding = false
@@ -92,12 +95,13 @@ class ChipStrip @JvmOverloads constructor(
                     cornerRadiusPx = dp(20).toFloat(),
                     bevelWidthPx = dp(8).toFloat(),
                     refractionPx = dp(5).toFloat(),
-                    blurTexels = 6f,
+                    blurRadiusPx = dp(8).toFloat(),
                     tint = colors.fill,
                     specularStrength = if (chip.tone == Tone.NEUTRAL) 0.75f else 1.25f,
                     fallbackFill = colors.fill,
                 ),
             ).apply { radiusPx = dp(20).toFloat() }
+            GlassInstaller.watch(this)
             layoutParams = LayoutParams(
                 LayoutParams.WRAP_CONTENT,
                 LayoutParams.WRAP_CONTENT,

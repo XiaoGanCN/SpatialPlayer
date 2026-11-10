@@ -114,27 +114,31 @@ object PlayerAnimation {
             .start()
     }
 
-/** Pulse for the transient seek/zoom feedback chips. */
+    private val dismissals = java.util.WeakHashMap<View, Runnable>()
+
+    /** Repeated gesture updates replace the text without restarting its entrance animation. */
     fun pulse(view: View, holdMs: Long = 620L) {
-        view.animate().cancel()
+        val visible = dismissals.containsKey(view) || isShown(view)
+        dismissals.remove(view)?.let { view.removeCallbacks(it) }
+        stop(view)
+        view.animate().setStartDelay(0L)
         view.visibility = View.VISIBLE
-        view.alpha = 0f
-        view.scaleX = 0.92f
-        view.scaleY = 0.92f
-        view.animate()
-            .alpha(1f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(150L)
-            .setInterpolator(DecelerateInterpolator())
-            .withEndAction {
-                view.animate()
-                    .alpha(0f)
-                    .setStartDelay(holdMs)
-                    .setDuration(200L)
-                    .withEndAction { view.visibility = View.GONE }
-                    .start()
-            }
-            .start()
+        if (visible) {
+            view.alpha = 1f
+            view.scaleX = 1f
+            view.scaleY = 1f
+        } else {
+            view.alpha = 1f
+            view.scaleX = 0.94f
+            view.scaleY = 0.94f
+            view.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(0L)
+                .setDuration(120L).setInterpolator(DecelerateInterpolator()).start()
+        }
+        val dismiss = Runnable {
+            dismissals.remove(view)
+            hide(view, durationMs = 180L, gone = true)
+        }
+        dismissals[view] = dismiss
+        view.postDelayed(dismiss, holdMs)
     }
 }

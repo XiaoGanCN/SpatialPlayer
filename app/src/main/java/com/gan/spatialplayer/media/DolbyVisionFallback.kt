@@ -84,11 +84,14 @@ object DolbyVisionFallback {
      * When the device can play Dolby Vision, the stock factory is returned untouched - there is
      * nothing to fix and the original path is the one to keep.
      */
-    fun extractorsFactory(): ExtractorsFactory {
-        if (!isNeeded()) return DefaultExtractorsFactory()
+    internal fun extractorsFactory(transport: () -> M2tsPackets.Layout? = { null }): ExtractorsFactory {
         return ExtractorsFactory {
             DefaultExtractorsFactory().createExtractors().map { extractor ->
-                if (extractor is MatroskaExtractor) RewritingExtractor(extractor) else extractor
+                when {
+                    extractor is androidx.media3.extractor.ts.TsExtractor -> BlurayTsExtractor(transport)
+                    extractor is MatroskaExtractor && isNeeded() -> RewritingExtractor(extractor)
+                    else -> extractor
+                }
             }.toTypedArray()
         }
     }

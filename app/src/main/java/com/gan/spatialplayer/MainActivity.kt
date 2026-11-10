@@ -301,10 +301,10 @@ class MainActivity : AppCompatActivity() {
         binding.buttonSettings.tag = R.id.glass_role_button
         binding.buttonSpatialStatus.tag = R.id.glass_role_button
         binding.buttonRefresh.tag = R.id.glass_role_button
-        binding.actionBar.tag = R.id.glass_role_bar
+        binding.buttonOpenFolder.tag = R.id.glass_role_button
         binding.buttonOpenFile.tag = R.id.glass_role_button_active
-        binding.buttonPoweramp.tag = R.id.glass_role_button
-        binding.buttonLibrary.tag = R.id.glass_role_button
+        binding.buttonPoweramp.tag = if (folded == Fold.POWERAMP) R.id.glass_role_button_active else R.id.glass_role_button
+        binding.buttonLibrary.tag = if (folded == Fold.LIBRARY) R.id.glass_role_button_active else R.id.glass_role_button
         binding.root.post { GlassInstaller.apply(binding.root) }
     }
 
@@ -312,6 +312,8 @@ class MainActivity : AppCompatActivity() {
         binding.buttonOpenFile.setOnClickListener {
             pickFile.launch(MediaRepository.PICKER_MIME_TYPES)
         }
+
+        binding.buttonOpenFolder.setOnClickListener { pickFolder.launch(null) }
 
         // Long-press opens a folder instead of a single file.
         binding.buttonOpenFile.setOnLongClickListener {
@@ -367,7 +369,7 @@ class MainActivity : AppCompatActivity() {
 
             if (granted) {
                 collected += repository.fromMediaStore()
-            } else {
+            } else if (folded == Fold.LIBRARY) {
                 requestMediaPermission.launch(Manifest.permission.READ_MEDIA_VIDEO)
             }
 
@@ -438,14 +440,15 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setUpLibraryDisclosure() {
         binding.buttonLibrary.setOnClickListener {
-            setFold(Fold.LIBRARY, animate = true)
+            setFold(if (folded == Fold.LIBRARY) Fold.NONE else Fold.LIBRARY, animate = true)
+            if (folded == Fold.LIBRARY) refresh()
         }
 
         binding.buttonPoweramp.setOnClickListener {
             // Poweramp is read lazily: its provider costs a query and the audio permission may not
             // have been granted yet, so the fold opens first and fills in when the read lands.
             if (folded == Fold.POWERAMP) {
-                setFold(Fold.POWERAMP, animate = true)
+                setFold(Fold.NONE, animate = true)
             } else {
                 setFold(Fold.POWERAMP, animate = true)
                 // Re-reads even when it is already loaded. It used to skip the read on the theory
@@ -458,7 +461,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val restored = prefs.getString(KEY_FOLDED, null)
-        val initialFold = runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.LIBRARY)
+        val initialFold = runCatching { Fold.valueOf(restored ?: "") }.getOrDefault(Fold.NONE)
         setFold(initialFold, animate = false)
         // A fold that was left open comes back open, so it also has to come back *filled*: the
         // restore used to call `setFold` alone, so a fresh process opened onto an empty Poweramp
@@ -477,14 +480,14 @@ class MainActivity : AppCompatActivity() {
      * rather than up front.
      */
     private fun setFold(target: Fold, animate: Boolean) {
-        folded = if (target == Fold.NONE) Fold.LIBRARY else target
+        folded = target
         prefs.edit().putString(KEY_FOLDED, folded.name).apply()
         binding.buttonLibrary.tag = if (folded == Fold.LIBRARY) R.id.glass_role_button_active else R.id.glass_role_button
         binding.buttonPoweramp.tag = if (folded == Fold.POWERAMP) R.id.glass_role_button_active else R.id.glass_role_button
         GlassInstaller.apply(binding.actionBar)
         adapter.submit(visibleEntries())
         binding.libraryBody.apply {
-            visibility = View.VISIBLE
+            visibility = if (folded == Fold.NONE) View.GONE else View.VISIBLE
             alpha = 1f
             translationY = 0f
             requestLayout()
@@ -515,6 +518,7 @@ class MainActivity : AppCompatActivity() {
     /** Count only the selected media source. */
     private fun updateLibrarySummary() {
         val count = visibleEntries().size
+        binding.headerSubtitle.visibility = if (folded == Fold.NONE) View.GONE else View.VISIBLE
         binding.headerSubtitle.text = if (count == 0) getString(R.string.library_empty)
             else "$count ${if (folded == Fold.POWERAMP) "songs" else "videos"}"
     }
@@ -550,32 +554,12 @@ class MainActivity : AppCompatActivity() {
     private fun updateCapabilityLine() {
         val hdr = DeviceCapabilities.hdrSnapshot(this)
         val spatial = DeviceCapabilities.spatialSnapshot(this)
-        val ffmpegReady = FfmpegCodecs.isAvailable(MimeTypes.AUDIO_TRUEHD)
-
-        binding.chipStrip.setChips(
-            listOf(
-                ChipStrip.Chip(
-                    "${hdr.widthPx}x${hdr.heightPx}",
-                    ChipStrip.Tone.NEUTRAL,
-                ),
-                ChipStrip.Chip(
-                    hdr.supportedHdrTypes.joinToString("+").ifEmpty { "SDR" },
-                    if (hdr.supportedHdrTypes.isEmpty()) ChipStrip.Tone.NEUTRAL else ChipStrip.Tone.ACTIVE,
-                ),
-                ChipStrip.Chip(
-                    if (spatial.active) "SPATIAL ON" else "SPATIAL OFF",
-                    if (spatial.active) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.NEUTRAL,
-                ),
-                ChipStrip.Chip(
-                    if (spatial.headTrackerAvailable) "HEAD TRACK" else "NO HEAD TRACK",
-                    if (spatial.headTrackerAvailable) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.WARN,
-                ),
-                ChipStrip.Chip(
-                    if (ffmpegReady) "FFMPEG" else "NO FFMPEG",
-                    if (ffmpegReady) ChipStrip.Tone.ACTIVE else ChipStrip.Tone.WARN,
-                ),
-            ),
-        )
+        binding.chipStrip.setChips(buildList {
+            add(ChipStrip.Chip(hdr.supportedHdrTypes.joinToString(" · ").ifEmpty { "SDR display" }, ChipStrip.Tone.NEUTRAL))
+            if (!settings.spatialEnabled) add(ChipStrip.Chip("Spatial off", ChipStrip.Tone.NEUTRAL))
+            else if (spatial.headTrackerAvailable && spatial.enabled) add(ChipStrip.Chip("Head tracking", ChipStrip.Tone.ACTIVE))
+            else if (spatial.active) add(ChipStrip.Chip("Spatial audio", ChipStrip.Tone.ACTIVE))
+        })
     }
 
     private fun showSpatialSummary() {
@@ -656,6 +640,13 @@ class MainActivity : AppCompatActivity() {
         get() = if (folded == Fold.POWERAMP) adapter.itemCount else -1
 
     internal val powerampLoadedForTest: Boolean get() = powerampLoaded
+
+    internal val sourceForTest: String get() = folded.name
+    internal fun restoreSourceForTest(value: String) {
+        val source = runCatching { Fold.valueOf(value) }.getOrNull() ?: return
+        setFold(source, animate = false)
+        if (source == Fold.POWERAMP && !powerampLoaded) loadPowerampLibrary()
+    }
 
     internal val scanningForTest: Boolean get() = binding.scanProgress.visibility == View.VISIBLE
 

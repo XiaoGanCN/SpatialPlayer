@@ -207,6 +207,11 @@ class PlayerEngine(
         val audioAttributes = buildAudioAttributes()
         val loadControl = buildLoadControl()
 
+        val transport = M2tsDataSource.Factory(androidx.media3.datasource.DefaultDataSource.Factory(context)) { uri ->
+            uri.path?.lowercase()?.let { it.endsWith(".m2ts") || it.endsWith(".mts") } == true ||
+                (uri == currentMediaUri && (currentMediaMime == MimeTypes.VIDEO_MP2T ||
+                    currentMedia?.mediaMetadata?.title?.toString()?.lowercase()?.let { it.endsWith(".m2ts") || it.endsWith(".mts") } == true))
+        }
         val exo = ExoPlayer.Builder(context, renderersFactory)
             // The 4K HEVC + TrueHD remux exceeds Media3's 500 ms teardown budget on this device.
             .setReleaseTimeoutMs(5_000L)
@@ -215,7 +220,7 @@ class PlayerEngine(
             // `video/dolby-vision` and this device has no decoder for that type - so the track is
             // dropped with no error and the film plays to a black screen. See DolbyVisionFallback.
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(context, DolbyVisionFallback.extractorsFactory()),
+                DefaultMediaSourceFactory(transport, DolbyVisionFallback.extractorsFactory { transport.layout(currentMediaUri) }),
             )
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)

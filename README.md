@@ -3,11 +3,11 @@
 Android 14+ media player with hardware HDR10/HLG video, bundled FFmpeg surround audio,
 and Android spatial audio with head tracking on supported headsets.
 
-- AC3, EAC3, TrueHD, DTS/DTS-HD; stereo-to-5.1 presets and an editable channel matrix.
+- Blu-ray M2TS with native HEVC/HDR and DTS-HD; AC3, EAC3, TrueHD, DTS/DTS-HD; stereo-to-5.1 presets and an editable channel matrix.
 - Embedded and external subtitles, Matroska chapters, decoder selection, and scaling controls.
 - Poweramp integration, picked folders, and MediaStore files.
 - Background music with media controls; separate music/video background settings.
-- Glass controls, gesture seeking, and live settings with editable/resettable slider values.
+- GPU glass controls, live scrubbing and gesture values, glass sliders and switches.
 
 Build with **JDK 21** and **Android SDK 35**. Media3 and nextlib remain pinned in the version catalog.
 
@@ -27,3 +27,5 @@ recentering are controlled by Android and the headset.
 App source: MIT ([LICENSE](LICENSE)). Distributed builds bundle GPL-3.0 nextlib and are GPL-3.0.
 
 Inter typeface is distributed under the SIL Open Font License; its license is bundled in the app.
+
+Glass lens renderer adapted from [Liquid-Glass-Android](https://github.com/QWEA0/Liquid-Glass-Android) under MIT; license and revision are bundled.

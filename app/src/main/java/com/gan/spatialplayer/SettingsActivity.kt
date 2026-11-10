@@ -324,12 +324,11 @@ class SettingsActivity : AppCompatActivity() {
         val rightReading = valuePill(percent(fromRight), false)
 
         fun bar(initial: Int, reading: TextView, onValue: (Int) -> Unit): SeekBar =
-            SeekBar(this).apply {
+            com.gan.spatialplayer.ui.GlassSlider(this).apply {
                 progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
                 thumbTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
                 max = UpmixMatrix.MAX_GAIN - UpmixMatrix.MIN_GAIN
                 progress = initial - UpmixMatrix.MIN_GAIN
-                setPadding(0, dp(4), 0, 0)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                         val current = progress + UpmixMatrix.MIN_GAIN
@@ -400,7 +399,7 @@ class SettingsActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams(dp(28), WRAP_CONTENT),
             )
             row.addView(view, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            row.addView(pill, LinearLayout.LayoutParams(dp(52), WRAP_CONTENT))
+            row.addView(pill, LinearLayout.LayoutParams(dp(68), WRAP_CONTENT).apply { marginStart = dp(8) })
             return row
         }
 
@@ -608,26 +607,10 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun toggleRow(title: String, subtitle: String?, value: Boolean, onChange: (Boolean) -> Unit): View {
-        val toggle = android.widget.Switch(this).apply {
-            isChecked = value
-            showText = false
-            splitTrack = false
-            thumbDrawable = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(android.graphics.Color.WHITE)
-                setSize(dp(26), dp(26))
-            }
-            trackDrawable = android.graphics.drawable.StateListDrawable().apply {
-                fun track(color: Int) = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = dp(18).toFloat(); setColor(color); setSize(dp(48), dp(30))
-                }
-                addState(intArrayOf(android.R.attr.state_checked), track(0xFF30B86C.toInt()))
-                addState(intArrayOf(), track(0xFF46484E.toInt()))
-            }
-        }
+        val toggle = com.gan.spatialplayer.ui.GlassSwitch(this).apply { isChecked = value }
         val row = rowShell(title, subtitle, toggle)
         row.setOnClickListener { toggle.toggle() }
-        toggle.setOnCheckedChangeListener { _, checked -> Haptics.touch(row); onChange(checked) }
+        toggle.setOnCheckedChangeListener { _, checked -> onChange(checked) }
         return row
     }
 
@@ -724,15 +707,14 @@ class SettingsActivity : AppCompatActivity() {
         val steps = (((to - from) / step).toInt()).coerceAtLeast(1)
         val label = valuePill(reading(value), false)
 
-        val bar = SeekBar(this).apply {
+        val bar = com.gan.spatialplayer.ui.GlassSlider(this).apply {
                 progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
                 thumbTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
             max = steps
             progress = ((value - from) / step).toInt().coerceIn(0, steps)
-            setPadding(0, dp(6), 0, 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    if (!fromUser && progress == 0) return
+                    if (!fromUser) return
                     val current = from + progress * step
                     label.text = reading(current)
                     onChange(current)

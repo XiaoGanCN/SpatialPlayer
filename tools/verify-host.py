@@ -26,7 +26,7 @@ stdlib = [p for p in jars if p.name == "kotlin-stdlib-2.0.21.jar"]
 if not compiler or not stdlib:
     raise SystemExit("Kotlin 2.0.21 is not cached; resolve project dependencies with Gradle first.")
 source = ROOT / "app/src/main/java/com/gan/spatialplayer"
-sources = [source / "ui/VideoRectCalculator.kt", source / "media/UpmixMatrix.kt", source / "media/MatroskaChapters.kt"]
+sources = [source / "ui/VideoRectCalculator.kt", source / "media/UpmixMatrix.kt", source / "media/MatroskaChapters.kt", source / "media/M2tsPackets.kt"]
 sources += sorted((ROOT / "tools/host").glob("*.kt"))
 with tempfile.TemporaryDirectory(prefix="spatial-host-") as work:
     output = Path(work) / "classes"
