@@ -11,7 +11,7 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
+ACT_SMOKE="$PKG_DEBUG/org.spatialplayer.SmokeTestActivity"
 DIR="/sdcard/Movies/SpatialPlayerTest"
 AUDIO_CLIP="$DIR/stems_51.mkv"       # audio only: six channels, no video track
 VIDEO_CLIP="$DIR/yt_1080p_ac3_51.mkv" # a minute of video and audio; the short grid clip ended mid-test
@@ -139,7 +139,7 @@ wake_visible() {
 play() {
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$1" --es smoke_mime "$2" > /dev/null
   sleep 7
 }
@@ -242,7 +242,7 @@ else
     skip "screen-off video check skipped (SKIP_SCREEN_OFF=1)"
   else
   wake_visible || true
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$VIDEO_CLIP" --es smoke_mime video/mp4 > /dev/null
   sleep 6
   sh_ input keyevent KEYCODE_SLEEP

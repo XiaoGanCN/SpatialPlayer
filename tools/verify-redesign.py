@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Real touch/viewport regression and sustained native HDR playback with visible SDR chrome."""
 import json
+import base64
+import gzip
 import os
 from pathlib import Path
 import re
@@ -22,7 +24,7 @@ def adb(*args):
     return subprocess.check_output([ADB, *args], text=True, timeout=35).strip()
 
 def launch(name, *args):
-    adb("shell", "am", "start", "-n", PKG + "/com.gan.spatialplayer." + name, *args)
+    adb("shell", "am", "start", "-n", PKG + "/org.spatialplayer." + name, *args)
 
 def snapshot(screen="PLAYER", **extras):
     request_id = str(time.monotonic_ns())
@@ -32,9 +34,15 @@ def snapshot(screen="PLAYER", **extras):
         args.extend(["--ez" if isinstance(value, bool) else "--es", key, str(value).lower() if isinstance(value, bool) else str(value)])
     adb(*args)
     for _ in range(15):
-        lines = [s for s in adb("logcat", "-d", "-v", "raw", "-s", "UiStateProbe:I").splitlines() if s.startswith("{")]
-        replies = [json.loads(line) for line in lines]
-        matches = [value for value in replies if value.get("requestId") == request_id]
+        lines = adb("logcat", "-d", "-v", "raw", "-s", "UiStateProbe:I").splitlines()
+        pieces = [re.fullmatch(r"UI_STATE " + re.escape(request_id) + r" (\d+)/(\d+) (\S+)", line) for line in lines]
+        pieces = [piece for piece in pieces if piece]
+        matches = []
+        if pieces:
+            total = int(pieces[-1][2])
+            chunks = {int(piece[1]):piece[3] for piece in pieces}
+            if len(chunks) == total:
+                matches = [json.loads(gzip.decompress(base64.b64decode("".join(chunks[i] for i in range(total)))))]
         if matches:
             with (OUT / "states.jsonl").open("a") as stream:
                 stream.write(json.dumps(matches[-1]) + "\n")
@@ -180,8 +188,8 @@ def main():
         layers = adb("shell", "dumpsys", "SurfaceFlinger")
         (OUT / "hdr-layers.txt").write_text(layers)
         blocks = layers.split("* Layer ")
-        video = next(b for b in blocks if "SurfaceView[" + PKG + "/com.gan.spatialplayer.PlayerActivity](BLAST)" in b.split("\n")[0])
-        ui = next(b for b in blocks if "(" + PKG + "/com.gan.spatialplayer.PlayerActivity#" in b.split("\n")[0])
+        video = next(b for b in blocks if "SurfaceView[" + PKG + "/org.spatialplayer.PlayerActivity](BLAST)" in b.split("\n")[0])
+        ui = next(b for b in blocks if "(" + PKG + "/org.spatialplayer.PlayerActivity#" in b.split("\n")[0])
         verify("dataspace=BT2020_ITU_PQ" in video, "video is a native PQ HDR layer")
         verify("dataspace=V0_SRGB" in ui, "controls remain on a separate SDR layer")
         (OUT / "performance.json").write_text(json.dumps(samples, indent=2))

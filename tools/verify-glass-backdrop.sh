@@ -17,7 +17,7 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
+ACT_SMOKE="$PKG_DEBUG/org.spatialplayer.SmokeTestActivity"
 CLIP="/sdcard/Movies/SpatialPlayerTest/grid_720p.mp4"
 HOST_CLIP="${HOST_CLIP:-/tmp/grid_720p.mp4}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,7 +89,7 @@ fi
 say "play, then pause"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
-sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
     --es smoke_path "$CLIP" --es smoke_mime video/mp4 >/dev/null
 sleep 8
 

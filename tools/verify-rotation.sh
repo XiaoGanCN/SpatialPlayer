@@ -17,8 +17,8 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG="org.spatialplayer.debug"
-ACT_SMOKE="$PKG/com.gan.spatialplayer.SmokeTestActivity"
-ACT_PROBE="$PKG/com.gan.spatialplayer.PanelProbeActivity"
+ACT_SMOKE="$PKG/org.spatialplayer.SmokeTestActivity"
+ACT_PROBE="$PKG/org.spatialplayer.PanelProbeActivity"
 CLIP="${CLIP:-/sdcard/Movies/SpatialPlayerTest/yt_1080p_ac3_51.mkv}"
 MIME="${MIME:-video/mp4}"
 
@@ -96,11 +96,11 @@ sh_ settings put system user_rotation 0
 sleep 1
 sh_ am force-stop "$PKG"
 sleep 1
-sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
     --es smoke_path "$CLIP" --es smoke_mime "$MIME" > /dev/null
 sleep 9
 RESUMED=$(sh_ "dumpsys activity activities" | grep -oE "ResumedActivity: ActivityRecord\{[^}]*\}" | head -1)
-if echo "$RESUMED" | grep -q "com.gan.spatialplayer"; then
+if echo "$RESUMED" | grep -q "org.spatialplayer"; then
   pass "the player is the foreground activity"
 else
   fail "the player is not foreground (${RESUMED:-none})"; exit 1

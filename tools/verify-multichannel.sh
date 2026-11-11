@@ -11,8 +11,8 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
-ACT_TRACKS="$PKG_DEBUG/com.gan.spatialplayer.SmokeTrackProbeActivity"
+ACT_SMOKE="$PKG_DEBUG/org.spatialplayer.SmokeTestActivity"
+ACT_TRACKS="$PKG_DEBUG/org.spatialplayer.SmokeTrackProbeActivity"
 MEDIA_DIR="/sdcard/Movies/SpatialPlayerTest"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$ROOT/smoke/out}"
@@ -85,7 +85,7 @@ check_clip() {
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
   adb_ logcat -c
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$MEDIA_DIR/$file" --es smoke_mime "video/x-matroska" > /dev/null
   sleep 6
 
@@ -171,7 +171,7 @@ say "hdr10 passthrough"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 adb_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
     --es smoke_path "$MEDIA_DIR/hdr10_hevc_720p.mkv" --es smoke_mime "video/x-matroska" > /dev/null
 sleep 5
 "$ADB" logcat -d -v time > "$OUT_DIR/mc-hdr10.txt" 2>/dev/null
@@ -208,7 +208,7 @@ say "subtitle track discovery and selection"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 adb_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
+sh_ am start -a org.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
     --es track_probe_path "$MEDIA_DIR/h264_aac_subs_720p.mkv" \
     --ei track_probe_select_text_index 0 > /dev/null
 sleep 14
@@ -247,7 +247,7 @@ else
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
   adb_ logcat -c
-  sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
+  sh_ am start -a org.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
       --es track_probe_path "$MULTI_ENG" --ei track_probe_select_text_index 2 > /dev/null
   # Waits for the probe's end marker rather than for a fixed interval, for the same reason as the
   # rebuild check below: the probe's settle time grew, and a fixed sleep that is one second short
@@ -301,7 +301,7 @@ else
   # real rebuild: the track list that arrives afterwards is the one that has to carry the selection
   # over. It is applied before the engine is built and put back in the probe's `onDestroy`, because
   # `switchDecoderProfile` persists its choice and FFMPEG_ONLY would break every later run.
-  sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
+  sh_ am start -a org.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
       --es track_probe_path "$MULTI_ENG" --ei track_probe_select_text_index 2 \
       --ez track_probe_apply_language true --es track_probe_profile ffmpeg > /dev/null
   # Wait for the probe's own end marker rather than for a fixed interval. The probe finishes after a
@@ -351,7 +351,7 @@ say "multichannel track selection"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 adb_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
+sh_ am start -a org.spatialplayer.SMOKE_TRACKS -n "$ACT_TRACKS" \
     --es track_probe_path "$MEDIA_DIR/truehd_51_720p.mkv" > /dev/null
 sleep 11
 adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/mc-trackselect.txt" 2>/dev/null

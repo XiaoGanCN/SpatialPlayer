@@ -40,7 +40,7 @@ def main():
         ui.verify(last['channels']==6 and not last['upmix'],'production DTS-HD 5.1 bypasses stereo upmix')
         layers=ui.adb('shell','dumpsys','SurfaceFlinger');(OUT/'hdr-layers.txt').write_text(layers)
         blocks=layers.split('* Layer ')
-        video=next(b for b in blocks if 'SurfaceView['+PKG+'/com.gan.spatialplayer.PlayerActivity](BLAST)' in b.split('\n')[0])
+        video=next(b for b in blocks if 'SurfaceView['+PKG+'/org.spatialplayer.PlayerActivity](BLAST)' in b.split('\n')[0])
         ui.verify('dataspace=BT2020_ITU_PQ' in video,'M2TS production video remains native PQ HDR')
         ui.shot('earth2-player.png')
         print(f'PASS: {ui.checks} Blu-ray/TS checks',flush=True)

@@ -31,7 +31,7 @@ assert run("get-state") == "device", "No authorized device"
 assert run("shell", "test", "-f", args.clip) == "", "Fixture is missing"
 run("shell", "am", "force-stop", pkg)
 run("logcat", "-c")
-run("shell", "am", "start", "-n", pkg + "/com.gan.spatialplayer.TrackProbeActivity",
+run("shell", "am", "start", "-n", pkg + "/org.spatialplayer.TrackProbeActivity",
     "-a", "android.intent.action.VIEW", "-d", "file://" + args.clip,
     "-t", "video/x-matroska", "--ez", "track_probe_mute", "true",
     "--el", "track_probe_seek_ms", "9000")

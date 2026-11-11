@@ -14,7 +14,7 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
+ACT_SMOKE="$PKG_DEBUG/org.spatialplayer.SmokeTestActivity"
 CLIP="/sdcard/Movies/SpatialPlayerTest/hdr10_hevc_720p.mkv"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$ROOT/smoke/out}"
@@ -155,7 +155,7 @@ PX_PER_MM=$(( DENSITY * 10 / 254 ))   # density is px/inch; 1mm = density/25.4 p
 say "start playback"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
-sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
     --es smoke_path "$CLIP" --es smoke_mime "video/x-matroska" > /dev/null
 sleep 6
 if [ -n "$(sh_ pidof "$PKG_DEBUG")" ]; then pass "player running"; else fail "player not running"; exit 1; fi
@@ -169,7 +169,7 @@ info "density ${DENSITY}dpi -> 1mm = ${PX_PER_MM}px"
 # assertions then compare two screenshots of something that is not the player at all.
 RESUMED=$(sh_ "dumpsys activity activities" | grep -oE "ResumedActivity: ActivityRecord\{[^}]*\}" | head -1)
 info "resumed: ${RESUMED}"
-if echo "$RESUMED" | grep -q "com.gan.spatialplayer"; then
+if echo "$RESUMED" | grep -q "org.spatialplayer"; then
   pass "the player is the foreground activity"
 else
   fail "the player is not foreground (${RESUMED:-none}) - readings would be meaningless"

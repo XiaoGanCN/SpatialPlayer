@@ -133,5 +133,10 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:launchMode="singleTop"
             android:theme="@style/Theme.SpatialPlayer.Player" />
+        <!-- Retain existing file-manager defaults and pinned explicit launch intents after the rename. -->
+        <activity-alias
+            android:name="com.gan.spatialplayer.MainActivity"
+            android:targetActivity=".MainActivity"
+            android:exported="true" />
     </application>
 </manifest>

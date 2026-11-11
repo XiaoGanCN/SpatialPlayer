@@ -1,0 +1,351 @@
+package org.spatialplayer.ui
+
+import android.animation.ValueAnimator
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.util.AttributeSet
+import android.view.MotionEvent
+import android.view.View
+import android.view.animation.DecelerateInterpolator
+import androidx.annotation.ColorInt
+
+/**
+ * A scrub bar that behaves like a video timeline rather than a progress indicator.
+ *
+ * Three bands are drawn: the played portion, the buffered-but-not-played portion, and the
+ * remainder. Dragging is captured immediately on touch-down within a generous vertical slop so a
+ * thumb does not have to be precise, and the listener distinguishes [Listener.onScrubStart] /
+ * [Listener.onScrubMove] / [Listener.onScrubStop] so the caller can hold the timecode steady while
+ * the finger is down and commit a single seek on release.
+ */
+class SeekBarView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0,
+) : View(context, attrs, defStyleAttr) {
+
+    interface Listener {
+        /** Finger down; the caller should stop advancing the displayed position. */
+        fun onScrubStart()
+
+        /** Fraction of total duration, 0..1. Continuous, for live timecode updates. */
+        fun onScrubMove(fraction: Float)
+
+        /** Fraction of total duration to commit as a seek. */
+        fun onScrubStop(fraction: Float)
+
+        fun onScrubCancel() = Unit
+    }
+
+    var listener: Listener? = null
+
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bufferedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val lens = GlassLensRenderer()
+
+    private val trackRect = RectF()
+    private val playedRect = RectF()
+    private val bufferedRect = RectF()
+
+    // Monochrome by design: a white played portion on a faint white track, with a white thumb.
+    // Colour here would compete with the picture and the ambient wash.
+    @ColorInt private val trackColor: Int = Color.argb(48, 255, 255, 255)
+    @ColorInt private val playedColor: Int = Color.argb(242, 255, 255, 255)
+    @ColorInt private val bufferedColor: Int = Color.argb(92, 255, 255, 255)
+    @ColorInt private val thumbColor: Int = Color.argb(255, 255, 255, 255)
+
+    /** 0..1, the value actually drawn. */
+    private var progress = 0f
+
+    /** Where the animation is heading; playback may report the next tick before it arrives. */
+    private var targetProgress = 0f
+
+    private var progressAnimator: ValueAnimator? = null
+
+    /** 0..1 */
+    private var buffered = 0f
+
+    private var scrubbing = false
+    private var hoverFraction = 0f
+
+    /** Grows on touch for a tangible handle. */
+    private var thumbScale = 1f
+    private var thumbAnimator: ValueAnimator? = null
+
+    private var trackHeightPx = 2.5f
+    private var thumbRadiusPx = 5.5f
+    private var scrubThumbRadiusPx = 8.5f
+
+    /** The played portion thickens slightly while the user is engaged. */
+    private var playedThicknessScale = 1f
+    private var touchSlopPx = 0f
+
+    init {
+        val density = resources.displayMetrics.density
+        trackHeightPx = 2.5f * density
+        thumbRadiusPx = 5.5f * density
+        scrubThumbRadiusPx = 8.5f * density
+        touchSlopPx = 34f * density
+
+        trackPaint.color = trackColor
+        playedPaint.color = playedColor
+        bufferedPaint.color = bufferedColor
+        thumbPaint.color = thumbColor
+
+        isClickable = true
+        isFocusable = true
+    }
+
+    /**
+     * Current playback position as a fraction of duration. Ignored while the user is scrubbing.
+     *
+     * The value is eased toward rather than snapped to. Playback position arrives on a polling
+     * tick (and in coarse jumps on some streams), so assigning it directly makes the bar step
+     * visibly; interpolating gives a continuous sweep without ever running ahead of the truth.
+     */
+    fun setProgress(fraction: Float) {
+        if (scrubbing) return
+        val clamped = fraction.coerceIn(0f, 1f)
+
+        val distance = kotlin.math.abs(clamped - progress)
+        if (distance < MIN_VISIBLE_DELTA) {
+            // Below a pixel or so there is nothing to smooth; avoid pointless animation churn.
+            progress = clamped
+            invalidate()
+            return
+        }
+
+        targetProgress = clamped
+
+        // A large jump (a seek, or a stream restart) should arrive quickly and directly; the
+        // smoothing is for the small increments of ordinary playback.
+        if (distance > LARGE_JUMP) {
+            progressAnimator?.cancel()
+            progress = clamped
+            invalidate()
+            return
+        }
+
+        startProgressAnimation()
+    }
+
+    private fun startProgressAnimation() {
+        progressAnimator?.cancel()
+        val from = progress
+        val to = targetProgress
+        progressAnimator = ValueAnimator.ofFloat(from, to).apply {
+            duration = PROGRESS_ANIMATION_MS
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { animator ->
+                progress = animator.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    /** Buffered position as a fraction of duration. */
+    fun setBuffered(fraction: Float) {
+        val clamped = fraction.coerceIn(0f, 1f)
+        if (clamped == buffered) return
+        buffered = clamped
+        invalidate()
+    }
+
+    /** Bypasses the scrub lock, for the caller to re-sync after a seek completes. */
+    fun forceProgress(fraction: Float) {
+        progressAnimator?.cancel()
+        progress = fraction.coerceIn(0f, 1f)
+        targetProgress = progress
+        invalidate()
+    }
+
+    val isScrubbing: Boolean get() = scrubbing
+    internal val displayedFraction: Float get() = if (scrubbing) hoverFraction else progress
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        val desiredHeight = (44f * resources.displayMetrics.density).toInt()
+        val height = resolveSize(desiredHeight, heightMeasureSpec)
+        setMeasuredDimension(width, height)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val centerY = height / 2f
+        val horizontalInset = scrubThumbRadiusPx * 1.4f
+        val left = paddingLeft + horizontalInset
+        val right = width - paddingRight - horizontalInset
+        if (right <= left) return
+
+        val halfTrack = trackHeightPx / 2f
+        trackRect.set(left, centerY - halfTrack, right, centerY + halfTrack)
+
+        // Remainder, kept faint so the played portion is what the eye follows.
+        canvas.drawRoundRect(trackRect, halfTrack, halfTrack, trackPaint)
+
+        // Buffered, a half-step brighter than the remainder.
+        val bufferedX = left + (right - left) * buffered.coerceAtLeast(progress)
+        if (bufferedX > left) {
+            bufferedRect.set(left, centerY - halfTrack, bufferedX, centerY + halfTrack)
+            canvas.drawRoundRect(bufferedRect, halfTrack, halfTrack, bufferedPaint)
+        }
+
+        // Played. Slightly thicker than the track, and thicker again while scrubbing, which reads
+        // as the bar "picking up" under the finger without any colour change.
+        val playedHalf = halfTrack * playedThicknessScale
+        val playedX = left + (right - left) * (if (scrubbing) hoverFraction else progress)
+        if (playedX > left) {
+            playedRect.set(left, centerY - playedHalf, playedX, centerY + playedHalf)
+            canvas.drawRoundRect(playedRect, playedHalf, playedHalf, playedPaint)
+        }
+
+        // Thumb: a plain white dot that grows on touch.
+        val radius = if (scrubbing) scrubThumbRadiusPx else thumbRadiusPx * thumbScale
+        val handle = RectF(playedX-radius*1.4f, centerY-radius, playedX+radius*1.4f, centerY+radius)
+        canvas.drawRoundRect(handle, radius, radius, thumbPaint)
+        if (scrubbing && canvas.isHardwareAccelerated && !GlassBackdrop.capturing) {
+            val style = GlassStyle(cornerRadiusPx = radius, blurRadiusPx = 10f, tint = 0x30FFFFFF)
+            lens.draw(canvas,this,GlassOptics.parameters(this,style,1f,playedX,centerY,handle),GlassOptics.margin(style)) { backdrop ->
+                GlassBackdrop.draw(backdrop,this)
+                backdrop.drawRoundRect(trackRect,halfTrack,halfTrack,trackPaint)
+                if (bufferedX > left) backdrop.drawRoundRect(bufferedRect,halfTrack,halfTrack,bufferedPaint)
+                if (playedX > left) backdrop.drawRoundRect(playedRect,playedHalf,playedHalf,playedPaint)
+            }
+        }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isEnabled) return false
+        val horizontalInset = scrubThumbRadiusPx * 1.4f
+        val left = paddingLeft + horizontalInset
+        val right = width - paddingRight - horizontalInset
+        if (right <= left) return false
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Accept the touch anywhere in the bar's vertical slop, not just on the thumb.
+                if (event.y < -touchSlopPx || event.y > height + touchSlopPx) return false
+                parent?.requestDisallowInterceptTouchEvent(true)
+                progressAnimator?.cancel()
+                scrubbing = true
+                isPressed = true
+                hoverFraction = fractionFor(event.x, left, right)
+                animateThumb(1.25f)
+                listener?.onScrubStart()
+                listener?.onScrubMove(hoverFraction)
+                invalidate()
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (!scrubbing) return false
+                hoverFraction = fractionFor(event.x, left, right)
+                listener?.onScrubMove(hoverFraction)
+                invalidate()
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                if (!scrubbing) return false
+                hoverFraction = fractionFor(event.x, left, right)
+                scrubbing = false
+                isPressed = false
+                forceProgress(hoverFraction)
+                animateThumb(1f)
+                listener?.onScrubStop(hoverFraction)
+                performClick()
+                parent?.requestDisallowInterceptTouchEvent(false)
+                invalidate()
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                if (!scrubbing) return false
+                scrubbing = false
+                isPressed = false
+                animateThumb(1f)
+                listener?.onScrubCancel()
+                parent?.requestDisallowInterceptTouchEvent(false)
+                invalidate()
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
+    private fun fractionFor(x: Float, left: Float, right: Float): Float =
+        ((x - left) / (right - left)).coerceIn(0f, 1f)
+
+    private fun animateThumb(target: Float) {
+        thumbAnimator?.cancel()
+        val thicknessTarget = if (target > 1f) 1.8f else 1f
+        thumbAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 160L
+            interpolator = DecelerateInterpolator()
+            val fromScale = thumbScale
+            val fromThickness = playedThicknessScale
+            addUpdateListener {
+                val t = it.animatedFraction
+                thumbScale = fromScale + (target - fromScale) * t
+                playedThicknessScale = fromThickness + (thicknessTarget - fromThickness) * t
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        lens.release()
+        thumbAnimator?.cancel()
+        thumbAnimator = null
+        progressAnimator?.cancel()
+        progressAnimator = null
+        super.onDetachedFromWindow()
+    }
+
+    override fun getAccessibilityClassName(): CharSequence = "android.widget.SeekBar"
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.rangeInfo = android.view.accessibility.AccessibilityNodeInfo.RangeInfo.obtain(
+            android.view.accessibility.AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT,0f,1f,displayedFraction)
+        if (isEnabled) {
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS)
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+        }
+    }
+    override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        if (!isEnabled) return super.performAccessibilityAction(action,arguments)
+        val value = when (action) {
+            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id -> arguments?.getFloat(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE) ?: return false
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> progress+.05f
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> progress-.05f
+            else -> return super.performAccessibilityAction(action,arguments)
+        }.coerceIn(0f,1f)
+        listener?.onScrubStart();forceProgress(value);listener?.onScrubMove(value);listener?.onScrubStop(value)
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    private companion object {
+        /** How long the bar takes to ease to a newly reported position. */
+        const val PROGRESS_ANIMATION_MS = 260L
+
+        /** Below this fraction there is nothing visible to smooth. */
+        const val MIN_VISIBLE_DELTA = 0.0008f
+
+        /** Above this fraction the change is a seek, not playback drift, so jump straight there. */
+        const val LARGE_JUMP = 0.05f
+    }
+}

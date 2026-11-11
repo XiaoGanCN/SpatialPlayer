@@ -19,9 +19,9 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_MAIN="$PKG_DEBUG/com.gan.spatialplayer.MainActivity"
-ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
-ACT_PROBE="$PKG_DEBUG/com.gan.spatialplayer.SmokeProbeActivity"
+ACT_MAIN="$PKG_DEBUG/org.spatialplayer.MainActivity"
+ACT_SMOKE="$PKG_DEBUG/org.spatialplayer.SmokeTestActivity"
+ACT_PROBE="$PKG_DEBUG/org.spatialplayer.SmokeProbeActivity"
 MEDIA_DIR="/sdcard/Movies/SpatialPlayerTest"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APK="${APK:-$ROOT/app/build/outputs/apk/debug/app-debug.apk}"
@@ -177,7 +177,7 @@ fi
 
 # ---------------------------------------------------------------------------
 say "in-app capability + decoder routing probe"
-sh_ am start -a com.gan.spatialplayer.SMOKE_PROBE -n "$ACT_PROBE" > /dev/null
+sh_ am start -a org.spatialplayer.SMOKE_PROBE -n "$ACT_PROBE" > /dev/null
 sleep 2
 adb_ logcat -d -v time -s SpatialPlayerProbe > "$OUT_DIR/05-probe.txt" 2>/dev/null
 touch "$OUT_DIR/05-probe.txt"
@@ -240,7 +240,7 @@ else
   adb_ logcat -c
   # SmokeTestActivity is debug-only and exported precisely so adb can drive playback, while the
   # shipped manifest keeps PlayerActivity unexported.
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$CLIP" --es smoke_mime "video/mp4" > /dev/null
   sleep 7
   capture "04-playing"

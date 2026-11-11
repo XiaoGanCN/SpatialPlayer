@@ -11,7 +11,7 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT="$PKG_DEBUG/com.gan.spatialplayer.SmokePowerampProbeActivity"
+ACT="$PKG_DEBUG/org.spatialplayer.SmokePowerampProbeActivity"
 TAG="SpatialPlayerPoweramp"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$ROOT/smoke/out}"
@@ -51,7 +51,7 @@ say "in-app reader"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 adb_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_POWERAMP -n "$ACT" > /dev/null
+sh_ am start -a org.spatialplayer.SMOKE_POWERAMP -n "$ACT" > /dev/null
 sleep 7
 adb_ logcat -d -v time > "$OUT_DIR/poweramp.txt" 2>/dev/null
 touch "$OUT_DIR/poweramp.txt"
@@ -138,12 +138,12 @@ fi
 say "refresh keeps the Poweramp fold"
 # The broadcast only reaches an activity that is up, and a foreground library is also the state
 # the bug lived in - the fold was opened by hand and refresh pressed on the same screen.
-sh_ am start -n "$PKG_DEBUG/com.gan.spatialplayer.MainActivity" > /dev/null
+sh_ am start -n "$PKG_DEBUG/org.spatialplayer.MainActivity" > /dev/null
 sleep 3
 
 LOG2="$OUT_DIR/poweramp-refresh.txt"
 adb_ logcat -c
-sh_ am start -n "$PKG_DEBUG/com.gan.spatialplayer.PanelProbeActivity" --es probe library > /dev/null
+sh_ am start -n "$PKG_DEBUG/org.spatialplayer.PanelProbeActivity" --es probe library > /dev/null
 
 # The load and the refresh are both async, so the probe polls the list and only logs when it has
 # settled; 20 s is well past any provider read. Without waiting for the marker, a log read a beat

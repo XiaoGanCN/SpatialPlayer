@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.gan.spatialplayer"
+    namespace = "org.spatialplayer"
     compileSdk = 35
 
     defaultConfig {

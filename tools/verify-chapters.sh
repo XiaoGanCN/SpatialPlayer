@@ -15,7 +15,7 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_PROBE="$PKG_DEBUG/com.gan.spatialplayer.SmokeChaptersProbeActivity"
+ACT_PROBE="$PKG_DEBUG/org.spatialplayer.SmokeChaptersProbeActivity"
 CLIP="/sdcard/Movies/SpatialPlayerTest/chapters_720p.mkv"
 HOST_CLIP="${HOST_CLIP:-/tmp/chapters_720p.mkv}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,7 +46,7 @@ say "read the chapters"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 sh_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_CHAPTERS -n "$ACT_PROBE" \
+sh_ am start -a org.spatialplayer.SMOKE_CHAPTERS -n "$ACT_PROBE" \
     --es chapters_probe_path "$CLIP" >/dev/null
 sleep 4
 
@@ -90,7 +90,7 @@ say "a file with no chapters"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 sh_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_CHAPTERS -n "$ACT_PROBE" \
+sh_ am start -a org.spatialplayer.SMOKE_CHAPTERS -n "$ACT_PROBE" \
     --es chapters_probe_path /sdcard/Movies/SpatialPlayerTest/grid_720p.mp4 >/dev/null
 sleep 4
 ZERO="$(sh_ "logcat -d" | grep ChaptersProbe | grep -oE 'chapters total=[0-9]+' | grep -oE '[0-9]+' | tail -1)"

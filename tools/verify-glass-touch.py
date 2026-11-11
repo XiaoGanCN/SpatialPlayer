@@ -34,8 +34,12 @@ def hold(node):
 adb("shell", "am", "force-stop", PKG)
 adb("logcat", "-c")
 adb("logcat", "-b", "crash", "-c")
-adb("shell", "am", "start", "-n", PKG + "/com.gan.spatialplayer.MainActivity")
+adb("shell", "am", "start", "-n", PKG + "/org.spatialplayer.MainActivity")
 time.sleep(1)
+library = next(n for n in nodes() if n.get("resource-id", "").endswith("/buttonLibrary"))
+bounds = list(map(int, re.findall(r"\d+", library.attrib["bounds"])))
+adb("shell", "input", "tap", str((bounds[0]+bounds[2])//2), str((bounds[1]+bounds[3])//2))
+time.sleep(.5)
 initial_pid = pid()
 for _ in range(3):
     hold(next(n for n in nodes() if n.get("resource-id", "").endswith("/buttonRefresh")))
@@ -43,7 +47,7 @@ for _ in range(2):
     hold(next(n for n in nodes() if n.get("resource-id", "").endswith("/buttonSettings")))
     hold(next(n for n in nodes() if n.get("content-desc") == "Close"))
 assert pid() == initial_pid
-adb("shell", "am", "start", "-n", PKG + "/com.gan.spatialplayer.GlassRenderProbeActivity")
+adb("shell", "am", "start", "-n", PKG + "/org.spatialplayer.GlassRenderProbeActivity")
 time.sleep(2)
 report = adb("logcat", "-d", "-s", "GlassRenderProbe:I")
 assert "PASS: initialized glass" in report, "Software rendering probe did not pass"

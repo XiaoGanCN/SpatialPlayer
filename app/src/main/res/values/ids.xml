@@ -48,4 +48,7 @@
     <item name="glass_role_bar" type="id" />
     <item name="glass_role_panel" type="id" />
     <item name="control_owns_touch" type="id" />
+    <item name="glass_role" type="id" />
+    <item name="glass_role_sheet" type="id" />
+    <item name="glass_role_panel_active" type="id" />
 </resources>

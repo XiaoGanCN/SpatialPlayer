@@ -15,8 +15,8 @@ set -uo pipefail
 
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 PKG_DEBUG="org.spatialplayer.debug"
-ACT_SMOKE="$PKG_DEBUG/com.gan.spatialplayer.SmokeTestActivity"
-ACT_PROBE="$PKG_DEBUG/com.gan.spatialplayer.SmokeSpatialProbeActivity"
+ACT_SMOKE="$PKG_DEBUG/org.spatialplayer.SmokeTestActivity"
+ACT_PROBE="$PKG_DEBUG/org.spatialplayer.SmokeSpatialProbeActivity"
 MEDIA_DIR="/sdcard/Movies/SpatialPlayerTest"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$ROOT/smoke/out}"
@@ -61,7 +61,7 @@ say "control experiment (bare AudioTrack, no player involved)"
 sh_ am force-stop "$PKG_DEBUG"
 sleep 1
 adb_ logcat -c
-sh_ am start -a com.gan.spatialplayer.SMOKE_SPATIAL -n "$ACT_PROBE" > /dev/null
+sh_ am start -a org.spatialplayer.SMOKE_SPATIAL -n "$ACT_PROBE" > /dev/null
 sleep 4
 adb_ logcat -d -v time -s SpatialPlayerSpatial > "$OUT_DIR/spatial-control.txt" 2>/dev/null
 touch "$OUT_DIR/spatial-control.txt"
@@ -90,7 +90,7 @@ if [ "$(sh_ "[ -f $CLIP ] && echo yes || echo no")" != "yes" ]; then
 else
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$CLIP" --es smoke_mime "video/x-matroska" > /dev/null
   sleep 6
 
@@ -128,7 +128,7 @@ if [ "$(sh_ "[ -f $HDR_CLIP ] && echo yes || echo no")" != "yes" ]; then
 else
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$HDR_CLIP" --es smoke_mime "video/x-matroska" > /dev/null
   sleep 10
 
@@ -171,7 +171,7 @@ else
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
   sh_ logcat -c
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$CLIP_71" --es smoke_mime video/x-matroska >/dev/null
   sleep 8
   DOWNMIX="$(sh_ "logcat -d" | grep -E "audio downmix" | tail -1)"
@@ -197,7 +197,7 @@ else
   sh_ am force-stop "$PKG_DEBUG"
   sleep 1
   sh_ logcat -c
-  sh_ am start -a com.gan.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
+  sh_ am start -a org.spatialplayer.SMOKE_PLAY -n "$ACT_SMOKE" \
       --es smoke_path "$CLIP_STEREO" --es smoke_mime video/mp4 >/dev/null
   sleep 8
 

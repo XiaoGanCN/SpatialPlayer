@@ -1,8 +1,8 @@
 import android.graphics.Rect
-import com.gan.spatialplayer.media.MatroskaChapters
-import com.gan.spatialplayer.media.M2tsPackets
-import com.gan.spatialplayer.media.UpmixMatrix
-import com.gan.spatialplayer.ui.VideoRectCalculator as Geometry
+import org.spatialplayer.media.MatroskaChapters
+import org.spatialplayer.media.M2tsPackets
+import org.spatialplayer.media.UpmixMatrix
+import org.spatialplayer.ui.VideoRectCalculator as Geometry
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
 

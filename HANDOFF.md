@@ -24,7 +24,8 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 - JDK **21**; `/usr/libexec/java_home -v 21` currently returns JDK 26 on this Mac and is unsuitable.
 - SDK 35, minSdk 34, AGP 8.7.3, Kotlin 2.0.21, Gradle 8.9.
 - Media3 **1.8.0**, nextlib **1.8.0-0.9.0**. Newer Media3 needs a newer SDK; don't upgrade incidentally.
-- Application IDs: `org.spatialplayer.debug` / `org.spatialplayer`; Kotlin namespace `com.gan.spatialplayer`.
+- Application IDs: `org.spatialplayer.debug` / `org.spatialplayer`; Kotlin/source namespace `org.spatialplayer` (all source sets and custom XML views).
+  A legacy launcher alias and folder-preference key preserve existing external launch intents / grants.
 - Device: Sony Xperia 1 V / XQ-DQ72, API 34, 1096×2560, density 2.625. HDR10/HLG, no DV decoder.
 - Headset: `1000X THE COLLEXION`, LDAC. A six-channel spatialized sink has been observed.
 - Some screen-off tests wake into a locked NotificationShade. Confirm focus; otherwise mark checks skipped.
@@ -92,20 +93,27 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   into a software mask and crashes. Keep `verify-glass-touch.py`.
 - The GPU lens shader is blurred **before** refraction/dispersion. Do not reintroduce unblurred RGB
   samples, sparse multi-tap frost, or a constant bright outline; these caused sharpening / false glass.
-- `BackdropCapture` walks ancestor branches with public `draw()` and transition visibility to avoid
-  re-entering active RenderNodes or creating cyclic display lists. Restore hidden views in `finally`.
+- `BackdropCapture` records ancestor backgrounds/children explicitly. Never call `draw()` on live
+  scrolling or glass ancestors: it replays stateful edge effects and clears pending redraws, causing
+  runaway stretch and frozen nested highlights. Preserve dirty leaf state after offscreen drawing.
+  UI scrollers disable native stretch; their ordinary scrolling remains intact.
 - Native video copies use decoder buffer coordinates, not view coordinates. Double buffering avoids
   writing into the preview currently sampled by the render thread; don't prematurely recycle bitmaps.
 - Floating + translucent dialog themes are required for compositor window blur. Keep controls SDR.
 - Player overlay is a FrameLayout: independent safe-area header, useful stream chips, width-capped
   two-row transport. Button radii derive from half the measured short side; square controls are circles.
-- Main screen prioritizes Open file / Open folder. Videos and Music disclose optional collections;
-  no selection means a clean collapsed home. Persist and restore the selected source.
+- Main screen prioritizes Open file. Videos/Music are collapsed on each new launch; rotation preserves
+  the current in-memory selection. “Add folder” lives inside Videos and opens that list after selection.
+  Folder grants are migrated from the former Activity-scoped preference into stable `spatial_player`.
+- Player drawer and submenus share `GlassSheetLayout`; keyed material roles preserve debug/action tags.
+  Dialog glass panes keep the shared video preview refreshing while the underlying chrome is hidden.
 - Timeline scrubbing draws the live finger fraction and commits once on release. Cancellation cancels
   the seek. All sliders retain native seeking/accessibility and use an expanding glass handle.
 - Continuous volume/brightness feedback must update without restarting its alpha entrance on MOVE.
-- Haptics and glass deformation share one listener; don't replace `SliderReading`'s own gesture
-  listener. Respect system haptics. Switch/slider widgets own their touch and feedback.
+- Haptics: `KEYBOARD_PRESS` on down, `KEYBOARD_RELEASE` on up, `SEGMENT_TICK` for sliders and volume /
+  brightness steps. Do not substitute other effects. Share touch with glass; preserve numeric editors.
+  Snapping sliders track held state independently of native dragging so a stationary hold becomes glass.
+- Switch track/thumb radii use matching 3 dp resting / 1.5 dp pressed gaps; active color is #0A84FF.
 - Gesture ownership is decided on DOWN and retained for the gesture. Header buttons, seek bar and speed
   control are included in hit-testing. Alpha zero alone does not remove a touch target: park at INVISIBLE.
 - `View.animate().cancel()` retains listeners. Clear stale listeners before reusing an animator.
@@ -116,7 +124,7 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 - Poweramp URI: `content://com.maxmpz.audioplayer.data/files?limit=...`; qualify joined columns
   (`folder_files._id/name/duration`). Title is `title_tag`; artist/album already exist in that view.
   Resolve playable URIs through MediaStore; Poweramp's own file URIs cannot be opened.
-- Keep Poweramp rows separate when refreshing other sources, and load a persisted Music selection on launch.
+- Keep Poweramp rows separate when refreshing other sources. Load Music when explicitly opened.
 - Subtitle selection uses exact track identity, not language: a remux can contain dozens of `eng` tracks.
 - Media3 1.8 has no chapter API. `MatroskaChapters` is the project's defensive EBML parser.
 - Video previews come from provider-cached thumbnails; pause preview jobs while the library is stopped.
@@ -146,17 +154,12 @@ Original movie (73 GB; never push the whole file):
 
 ## Current verification / remaining work
 
-- Debug/release builds and debug lint pass. Host checks: **36 passed**, including fragmented M2TS
-  reads, seek boundaries, and virtual length mapping.
-- M2TS native probe: hardware HEVC **3840×2160 PQ**, FFmpeg DTS-HD **5.1**, **205 frames / 0 dropped /
-  0 underruns** in the timed prefix sample; stereo upmix inactive. Full 80 GB playback is unverified.
-- New controls: **20 passed** (real pickers, collapsing collections, live seek thumb/timecode, live
-  brightness/volume HUD, glass sliders/switches, haptic dispatch, flat-sensor stability, real GPU blur).
-  Stripe probe: standard deviation **127.5 → 0.0** under the pane. Physical tilt remains a manual check.
-- Native HDR/UI regression: **39 passed**, including rotations, actual header taps, repeated player
-  opens, hardware Spider-Verse playback, native PQ video and separate SDR controls.
-- Blu-ray/TS regression: **12 passed**, including mid-file seeks on M2TS and ordinary 188-byte TS,
-  production M2TS playback with visible glass (**55 → 185 frames, 0 dropped**) and native PQ output. `python3 tools/verify-bluray.py`.
-- Held-touch/software-canvas regression: **7 real holds passed**, process unchanged.
-- Physical HDR color accuracy of either full movie remains unverified; the system/vendor tone maps.
-- Sony headset recentering and the device lock-screen test limitation remain outside this redesign.
+- Debug/release builds and debug lint pass after source migration; **36 host checks pass**.
+- Device checks after migration: **23 UI polish**, **21 controls**, **39 HDR/UI** passed; **7 held presses**
+  plus the software-canvas regression passed. `tools/verify-polish.py` covers settings pull bounds,
+  stationary slider holds, exact haptic constants, nested highlights, circular seeks and player menus.
+  Seek-button releases are checked to dispatch exactly one `KEYBOARD_RELEASE`.
+- Existing M2TS probe: hardware 4K PQ + FFmpeg DTS-HD 5.1, 205 frames / 0 dropped / 0 underruns.
+  `tools/verify-bluray.py` covers ordinary TS and M2TS seeking; media code is unchanged by UI polish.
+- Physical HDR color accuracy / full original movies and physical tilt remain manual checks.
+- HDMV PGS subtitle extraction, Sony recentering and the lock-screen test limitation remain open.

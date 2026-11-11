@@ -14,7 +14,7 @@
         app:resize_mode="fit"
         app:use_controller="false"
         app:shutter_background_color="@android:color/black" />
-    <com.gan.spatialplayer.ui.AmbientGlowView
+    <org.spatialplayer.ui.AmbientGlowView
         android:id="@+id/ambientGlow"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -99,7 +99,7 @@
                 android:layout_height="0dp"
                 android:visibility="gone" />
         </LinearLayout>
-        <com.gan.spatialplayer.ui.LiquidGlassView
+        <org.spatialplayer.ui.LiquidGlassView
             android:id="@+id/controlGlass"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -120,7 +120,7 @@
                     android:text="0:00"
                     android:textColor="@color/text_primary"
                     android:textSize="12sp" />
-                <com.gan.spatialplayer.ui.SeekBarView
+                <org.spatialplayer.ui.SeekBarView
                     android:id="@+id/seekBar"
                     android:layout_width="0dp"
                     android:layout_weight="1"
@@ -195,7 +195,7 @@
                     android:src="@drawable/ic_more"
                     android:contentDescription="@string/more" />
             </LinearLayout>
-        </com.gan.spatialplayer.ui.LiquidGlassView>
+        </org.spatialplayer.ui.LiquidGlassView>
         <HorizontalScrollView
             android:id="@+id/playerChipScroll"
             android:layout_width="match_parent"
@@ -205,7 +205,7 @@
             android:layout_marginTop="68dp"
             android:layout_marginHorizontal="16dp"
             android:scrollbars="none">
-            <com.gan.spatialplayer.ui.ChipStrip
+            <org.spatialplayer.ui.ChipStrip
                 android:id="@+id/playerChips"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content" />
