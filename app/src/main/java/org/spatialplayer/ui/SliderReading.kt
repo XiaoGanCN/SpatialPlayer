@@ -5,8 +5,6 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import org.spatialplayer.R
 import kotlin.math.roundToInt
 
@@ -23,6 +21,8 @@ import kotlin.math.roundToInt
  * the bar showing a position it cannot actually take.
  */
 object SliderReading {
+    internal var activeEditor: View? = null
+        private set
 
     /**
      * @param current supplies the value shown right now, so a reset can be offered even after a
@@ -57,7 +57,7 @@ object SliderReading {
                     view.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT)
                     return false
                 }
-                apply(view, target, range, step, onSet)
+                apply(target, range, step, onSet)
                 return true
             }
         })
@@ -78,14 +78,12 @@ object SliderReading {
     }
 
     private fun apply(
-        view: View,
         value: Float,
         range: ClosedFloatingPointRange<Float>,
         step: Float,
         onSet: (Float) -> Unit,
     ) {
         onSet(snap(value, range, step))
-        Haptics.release(view)
     }
 
     private fun edit(
@@ -109,30 +107,58 @@ object SliderReading {
             setPadding(0, context.resources.displayMetrics.density.toInt() * 12, 0, 0)
         }
 
-        val dialog = AlertDialog.Builder(context)
-            .setTitle(R.string.slider_edit_value)
-            .setView(input)
-            .setMessage(
-                context.getString(
-                    R.string.slider_range_hint,
-                    format(range.start),
-                    format(range.endInclusive),
-                ),
-            )
-            .setPositiveButton(R.string.apply) { _, _ ->
-                val typed = input.text.toString().replace(',', '.').toFloatOrNull()
-                if (typed == null) {
-                    Toast.makeText(context, R.string.slider_not_a_number, Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                apply(view, typed, range, step, onSet)
+        val dialog = android.app.Dialog(context, R.style.Theme_SpatialPlayer_Glass)
+        val panel = GlassSheetLayout(context, context.getString(R.string.slider_edit_value), { dialog.dismiss() })
+        val density = context.resources.displayMetrics.density
+        val gap = (12 * density).toInt()
+        input.setTextColor(android.graphics.Color.WHITE)
+        input.textSize = 28f
+        input.gravity = android.view.Gravity.CENTER
+        input.minimumHeight = (64*density).toInt()
+        input.setTag(R.id.glass_role, R.id.glass_role_panel)
+        input.background = GlassTheme.surface(context)
+        input.setPadding(gap,gap,gap,gap)
+        val rangeHint = context.getString(R.string.slider_range_hint, format(range.start), format(range.endInclusive))
+        panel.content.addView(android.widget.TextView(context).apply {
+            text = rangeHint; textSize = 13f; setTextColor(0xC7FFFFFF.toInt())
+            setPadding(0,0,0,gap)
+        })
+        panel.content.addView(input, android.widget.LinearLayout.LayoutParams(-1,-2))
+        fun submit() {
+            val typed = input.text.toString().replace(',', '.').toFloatOrNull()
+            if (typed == null || !typed.isFinite()) {
+                input.error = context.getString(R.string.slider_not_a_number)
+                return
             }
-            .setNegativeButton(android.R.string.cancel, null)
-            .create()
+            apply(typed, range, step, onSet)
+            dialog.dismiss()
+        }
+        val actions = android.widget.LinearLayout(context).apply { gravity = android.view.Gravity.END }
+        for ((label, action) in listOf(context.getString(android.R.string.cancel) to { dialog.dismiss() },
+            context.getString(R.string.apply) to { submit() })) {
+            actions.addView(android.widget.TextView(context).apply {
+                text = label; textSize = 16f; gravity = android.view.Gravity.CENTER
+                setTextColor(android.graphics.Color.WHITE)
+                background = GlassTheme.control(context)
+                setTag(R.id.glass_role, if (label == context.getString(R.string.apply)) R.id.glass_role_button_active else R.id.glass_role_button)
+                setOnClickListener { action() }
+            }, android.widget.LinearLayout.LayoutParams(0,(48*density).toInt(),1f).apply { setMargins(gap/2,gap,gap/2,0) })
+        }
+        panel.content.addView(actions)
+        input.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+        input.setOnEditorActionListener { _, action, _ ->
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) { submit(); true } else false
+        }
+        activeEditor = panel
+        dialog.setOnDismissListener { activeEditor = null }
+        dialog.setContentView(panel)
         dialog.show()
+        GlassTheme.configureSheet(dialog, minOf((310*density).toInt(), (context.resources.displayMetrics.heightPixels*.60f).toInt()))
+        GlassInstaller.apply(panel)
         input.requestFocus()
         input.selectAll()
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
-        GlassTheme.configureSheet(dialog, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        input.post { context.getSystemService(android.view.inputmethod.InputMethodManager::class.java).showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
     }
 }

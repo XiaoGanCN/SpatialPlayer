@@ -8,14 +8,9 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import org.spatialplayer.R
 import org.spatialplayer.media.FileEntry
-import org.spatialplayer.ui.TextSpans.mixed
 
-/**
- * Flat list of playable files.
- *
- * Rows show a preview frame where one can be decoded, the file name, a monospace line of technical
- * facts (duration, size, source) and, when the source provides them, the artist and album.
- */
+
+/** Flat media rows with rounded thumbnails, readable filenames, and available duration/artist data. */
 class FileListAdapter(
     private val onClick: (FileEntry) -> Unit,
     private val thumbnails: ThumbnailLoader? = null,
@@ -63,6 +58,10 @@ class FileListAdapter(
         private val icon: ImageView = itemView.findViewById(R.id.rowIcon)
         private val title: TextView = itemView.findViewById(R.id.rowTitle)
         private val meta: TextView = itemView.findViewById(R.id.rowMeta)
+        init {
+            icon.clipToOutline = true
+            Haptics.attachTo(itemView)
+        }
         private val tags: TextView = itemView.findViewById(R.id.rowTags)
 
         fun bind(entry: FileEntry, onClick: (FileEntry) -> Unit, thumbnails: ThumbnailLoader?) {
@@ -75,6 +74,7 @@ class FileListAdapter(
             val duration = if (entry.durationMs > 0) TextSpans.timecode(entry.durationMs) else null
             val metaParts = if (!entry.artist.isNullOrBlank()) listOfNotNull(entry.artist, entry.album) else listOfNotNull(duration)
             meta.text = metaParts.joinToString(" · ")
+            meta.visibility = if (metaParts.isEmpty()) View.GONE else View.VISIBLE
 
             val isAudio = entry.mimeType?.startsWith("audio/") == true ||
                 entry.extension in AUDIO_EXTENSIONS
@@ -142,13 +142,13 @@ class FileListAdapter(
             )
 
             /** Width of a video row's 16:9 thumbnail slot, in dp. Matches `item_file.xml`. */
-            const val VIDEO_SLOT_DP = 80
+            const val VIDEO_SLOT_DP = 88
 
             /** Height of a video row's thumbnail slot, in dp. */
-            const val VIDEO_SLOT_HEIGHT_DP = 46
+            const val VIDEO_SLOT_HEIGHT_DP = 50
 
             /** Cover art is square; this is also the height of an audio row's art. */
-            const val AUDIO_ART_DP = 46
+            const val AUDIO_ART_DP = 50
         }
     }
 }

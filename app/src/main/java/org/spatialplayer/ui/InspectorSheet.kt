@@ -18,22 +18,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import org.spatialplayer.R
 
-/**
- * The shared sheet behind Inspection, Metadata, Decoder, Subtitles, Audio and Scaling.
- *
- * ## Why this presents in its own window
- *
- * The brief asks for a liquid-glass surface, and a view inside the player's own window cannot
- * deliver one: the picture is drawn by a `SurfaceView`, which is composited by SurfaceFlinger
- * rather than drawn into the window's canvas, so there is nothing behind an in-window panel to
- * blur. The only way to genuinely frost the video is to put the panel in a *separate, translucent
- * window* that declares a background blur radius. On Android 12+ that asks the system compositor to
- * blur whatever is behind the window - which includes the video - and the result is real glass
- * rather than a tinted rectangle.
- *
- * On older platforms the blur is simply unavailable, so the same layout falls back to a translucent
- * gradient surface. Nothing about the panel's behaviour changes.
- */
+/** Player subpanels share the GPU lens shell; native HDR video remains on its own surface. */
 class InspectorSheet @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -200,13 +185,6 @@ class InspectorSheet @JvmOverloads constructor(
         GlassTheme.configureSheet(d, minOf((resources.displayMetrics.heightPixels * 0.78f).toInt(), dp(if (currentPanel == Panel.SPEED) 390 else 620)))
     }
 
-    /**
-     * Requests the real backdrop blur.
-     *
-     * This is what makes the surface read as glass: the system compositor blurs everything behind
-     * this window - including the video, which an in-window view could never reach - and the
-     * translucent fill above it is then read as frosted rather than merely tinted.
-     */
     // ------------------------------------------------------------------ rendering
 
     private fun animateIn() {

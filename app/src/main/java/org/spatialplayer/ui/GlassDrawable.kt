@@ -23,6 +23,7 @@ class GlassDrawable(
         color = 0x40FFFFFF
     }
     private val rect = RectF()
+    private val fallbackPath = android.graphics.Path()
     private val renderer = GlassLensRenderer()
     internal var renderedFrames = 0L
         private set
@@ -129,8 +130,9 @@ class GlassDrawable(
     private fun drawFallback(canvas: Canvas) {
         fallbackPaint.color = style.fallbackFill
         val radius = radiusPx.coerceAtMost(minOf(rect.width(), rect.height()) / 2f)
-        canvas.drawRoundRect(rect, radius, radius, fallbackPaint)
-        canvas.drawRoundRect(rect, radius, radius, rimPaint)
+        SmoothCorners.path(rect,radius,fallbackPath)
+        canvas.drawPath(fallbackPath,fallbackPaint)
+        canvas.drawPath(fallbackPath,rimPaint)
     }
 
     override fun setAlpha(alpha: Int) {

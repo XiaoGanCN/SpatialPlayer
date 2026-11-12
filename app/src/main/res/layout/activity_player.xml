@@ -109,6 +109,7 @@
             android:orientation="vertical"
             android:padding="14dp">
             <LinearLayout
+                android:id="@+id/timelineRow"
                 android:layout_width="match_parent"
                 android:layout_height="44dp"
                 android:orientation="horizontal"
@@ -136,6 +137,7 @@
                     android:textSize="12sp" />
             </LinearLayout>
             <LinearLayout
+                android:id="@+id/transportRow"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
                 android:orientation="horizontal"

@@ -20,6 +20,7 @@ object UiStateProbe {
     const val PLAYER = "org.spatialplayer.debug.UI_PLAYER"
     const val LIBRARY = "org.spatialplayer.debug.UI_LIBRARY"
     fun report(activity: Activity, intent: Intent) {
+        if (intent.getBooleanExtra("mutate_backdrop",false)) (activity as? TopFadeProbeActivity)?.changePattern()
         intent.getStringExtra("restore_upmix")?.let {
             val state = runCatching { JSONObject(it) }.getOrElse { error -> Log.e("UiStateProbe", "Invalid restore payload", error); return }
             SettingsStore(activity).apply {
@@ -32,7 +33,7 @@ object UiStateProbe {
         intent.getStringExtra("restore_source")?.let { (activity as? MainActivity)?.restoreSourceForTest(it) }
         if (intent.hasExtra("restore_spatial")) SettingsStore(activity).spatialEnabled = intent.getBooleanExtra("restore_spatial", true)
         val views = JSONObject()
-        val names = listOf("buttonOpenFile", "buttonOpenFolder", "buttonPlayPause", "buttonRewind", "buttonForward", "seekFeedback", "timeCurrent", "timeRemaining", "playerChips", "chipStrip", "buttonBack", "buttonInspect", "buttonMetadata", "buttonMore", "buttonSpeed",
+        val names = listOf("buttonOpenFile", "headerTitle", "collectionSummary", "listTopFade", "scanProgress", "timelineRow", "transportRow", "buttonPlayPause", "buttonRewind", "buttonForward", "seekFeedback", "timeCurrent", "timeRemaining", "playerChips", "chipStrip", "buttonBack", "buttonInspect", "buttonMetadata", "buttonMore", "buttonSpeed",
             "seekBar", "controlGlass", "playerHeader", "buttonLibrary", "buttonPoweramp", "buttonSettings", "buttonRefresh", "libraryBody", "fileList")
         fun add(name: String, view: View) {
             val pos = IntArray(2)
@@ -56,18 +57,21 @@ object UiStateProbe {
         if (overflow?.isOpen == true) for (tag in listOf("sheet_close", "overflow_action_0", "overflow_action_1", "overflow_action_2", "overflow_action_3", "overflow_action_4")) {
             overflow.viewTaggedForTest(tag)?.let { add(tag, it) }
         }
+        intent.getStringExtra("restore_gain")?.toFloatOrNull()?.let { SettingsStore(activity).verticalGain = it }
         intent.getStringExtra("restore_jump")?.toLongOrNull()?.let { SettingsStore(activity).doubleTapJumpMs = it }
         val nodes = JSONArray()
         fun scan(view: View, path: String) {
             val glass = org.spatialplayer.ui.GlassInstaller.material(view)
             if (intent.getBooleanExtra("refresh_glass", false) && glass != null) view.invalidate()
-            if (glass != null || view is org.spatialplayer.ui.GlassSlider || view is org.spatialplayer.ui.GlassSwitch || view is android.widget.ScrollView) {
+            if ((intent.getBooleanExtra("include_text",false) && view is android.widget.TextView) || view is org.spatialplayer.ui.TopFadeBlurView || glass != null || view is org.spatialplayer.ui.GlassSlider || view is org.spatialplayer.ui.GlassSwitch || view is android.widget.ScrollView) {
                 val position = IntArray(2); view.getLocationOnScreen(position)
                 nodes.put(JSONObject().put("path", path).put("kind", view.javaClass.simpleName)
                     .put("bounds", JSONArray(listOf(position[0],position[1],position[0]+view.width,position[1]+view.height)))
+                    .put("text",(view as? android.widget.TextView)?.text?.toString())
+                    .put("selected", view.isSelected).put("tint",glass?.style?.body ?: 0)
                     .put("tag", view.tag?.toString()).put("scrollY", view.scrollY).put("height", view.height).put("width", view.width)
                     .put("translationY", view.translationY).put("scaleY", view.scaleY)
-                    .put("frames", glass?.renderedFrames ?: 0).put("pressed", view.isPressed)
+                    .put("frames", glass?.renderedFrames ?: (view as? org.spatialplayer.ui.TopFadeBlurView)?.renderedFrames ?: 0).put("pressed", view.isPressed)
                     .put("engaged", (view as? org.spatialplayer.ui.GlassSlider)?.glassEngaged ?: false)
                     .put("max", (view as? android.widget.SeekBar)?.max ?: 0).put("progress", (view as? android.widget.SeekBar)?.progress ?: -1)
                     .put("radius", glass?.let { minOf(it.style.cornerRadiusPx,view.width/2f,view.height/2f) } ?: 0f))
@@ -75,6 +79,8 @@ object UiStateProbe {
             if (view is android.view.ViewGroup) for (i in 0 until view.childCount) scan(view.getChildAt(i), "$path/$i")
         }
         scan(activity.window.decorView, "root")
+        (activity as? SettingsActivity)?.activeSheet?.let { scan(it, "sheet") }
+        org.spatialplayer.ui.SliderReading.activeEditor?.let { scan(it, "editor") }
         if (sheet?.isOpen == true) sheet.rootForTest()?.let { scan(it, "sheet") }
         if (overflow?.isOpen == true) overflow.rootForTest()?.let { scan(it, "sheet") }
         val sample = PlaybackEngine.peek()?.sample()
@@ -85,6 +91,7 @@ object UiStateProbe {
         val bypass = pass.configure(native) == native && !pass.isActive()
         pass.reset()
         val json = JSONObject().put("source", (activity as? MainActivity)?.sourceForTest)
+            .put("verticalGain", settings.verticalGain)
             .put("spatialSetting", settings.spatialEnabled).put("skipMs", settings.doubleTapJumpMs).put("overflowOpen", overflow?.isOpen ?: false)
             .put("nodes", nodes).put("lastHaptic", org.spatialplayer.ui.Haptics.lastKind)
             .put("haptics", org.spatialplayer.ui.Haptics.feedbackCount)
@@ -98,6 +105,10 @@ object UiStateProbe {
             .put("upmix", PlaybackEngine.peek()?.isStereoUpmixActive ?: false).put("channels", sample?.audioChannelCount ?: 0)
             .put("seekDragging", seek?.isScrubbing ?: false).put("seekDisplayed", seek?.displayedFraction ?: 0f)
             .put("positionMs", sample?.positionMs ?: 0L).put("durationMs", sample?.durationMs ?: 0L)
+            .put("videoBackdropState", org.spatialplayer.ui.GlassBackdrop.videoDebug(activity.window.decorView))
+            .put("playerPlaying", PlaybackEngine.peek()?.player?.isPlaying).put("playWhenReady",PlaybackEngine.peek()?.player?.playWhenReady)
+            .put("videoSize",PlaybackEngine.peek()?.player?.videoSize?.let { "${it.width}x${it.height}" })
+            .put("videoBackdropReady", org.spatialplayer.ui.GlassBackdrop.videoReady(activity.window.decorView))
             .put("videoPreviewFrames", org.spatialplayer.ui.GlassBackdrop.videoPreviewFrames)
             .put("glassFrames", org.spatialplayer.ui.GlassLensRenderer.framesRendered)
             .put("surroundBypass", bypass)

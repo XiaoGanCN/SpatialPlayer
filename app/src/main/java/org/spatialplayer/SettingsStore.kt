@@ -196,7 +196,7 @@ class SettingsStore(context: Context) {
 
         const val DEFAULT_VERTICAL_GAIN = 0.30f
         const val MIN_VERTICAL_GAIN = 0.10f
-        const val MAX_VERTICAL_GAIN = 0.70f
+        const val MAX_VERTICAL_GAIN = 1.50f
 
         const val DEFAULT_SUBTITLE_SIZE = 18f
         const val MIN_SUBTITLE_SIZE = 10f

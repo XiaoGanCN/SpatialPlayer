@@ -22,8 +22,9 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 ```
 
 - JDK **21**; `/usr/libexec/java_home -v 21` currently returns JDK 26 on this Mac and is unsuitable.
-- SDK 35, minSdk 34, AGP 8.7.3, Kotlin 2.0.21, Gradle 8.9.
-- Media3 **1.8.0**, nextlib **1.8.0-0.9.0**. Newer Media3 needs a newer SDK; don't upgrade incidentally.
+- Compile SDK 36, target 35, minSdk 34; AGP 8.13.2, Kotlin 2.3.10, Gradle 8.13.
+  The upgrade is required by the isolated Backdrop/Compose playground.
+- Media3 **1.8.0**, nextlib **1.8.0-0.9.0**. Keep the tested decoder pair pinned when changing UI dependencies.
 - Application IDs: `org.spatialplayer.debug` / `org.spatialplayer`; Kotlin/source namespace `org.spatialplayer` (all source sets and custom XML views).
   A legacy launcher alias and folder-preference key preserve existing external launch intents / grants.
 - Device: Sony Xperia 1 V / XQ-DQ72, API 34, 1096×2560, density 2.625. HDR10/HLG, no DV decoder.
@@ -37,6 +38,7 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 | Library / Poweramp | `MainActivity`, `MediaRepository`, `PowerampReader`, `FileListAdapter` |
 | Playback / background session | `PlayerActivity`, `media/PlayerEngine`, `PlaybackEngine`, `PlaybackService` |
 | Audio | `SpatialRenderersFactory`, `StereoUpmixProcessor`, `UpmixMatrix`, `AudioOutputCapability` |
+| Experimental glass | `GlassPlaygroundActivity`, `playground/` — real Backdrop 1.0.6 + adapted upstream catalog controls; no playback settings persisted |
 | Controls / settings | `PlayerPanels`, `InspectorSheet`, `OverflowSheet`, `GlassSlider`, `GlassSwitch`, `SettingsStore` |
 | Material | `GlassLensRenderer`, `GlassOptics`, `GlassDrawable`, `GlassStyle`, `GlassTheme`, `GlassInstaller` |
 | Backdrop | `GlassBackdrop` / `BackdropCapture` (GPU view recording); `VideoGlassBackdrop` (native video preview) |
@@ -51,7 +53,10 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   in Auto / FFmpeg-audio modes. Otherwise a 4K movie can software-decode despite a “hardware” policy label.
 - Diagnostics now record the actual decoder initialization callback, not a guessed policy route.
 - Player release is ownership-checked. Old service/activity teardown must not clear a newly acquired
-  engine or listener, including while it is buffering. A service reattaches on every start command.
+  engine or listener, including while it is buffering. Background pause also checks listener/media ownership.
+  A service reattaches on every start command. `PlayerEngine`'s constructor argument must stay named
+  `initialListener`: naming it `listener` made anonymous callbacks capture the original activity instead
+  of reading the mutable property, breaking music → video preview / controls and retaining old screens.
 - DV Profile 7 Matroska: `DolbyVisionFallback` exposes the HDR10 HEVC base layer on this non-DV device,
   clearing the DV codec string while preserving HEVC initialization data and PQ/BT2020 metadata.
 - A revised timed probe selected **`c2.qti.hevc.decoder`**, rendered **326 frames / 0 dropped / 0 audio
@@ -99,11 +104,19 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   UI scrollers disable native stretch; their ordinary scrolling remains intact.
 - Native video copies use decoder buffer coordinates, not view coordinates. Double buffering avoids
   writing into the preview currently sampled by the render thread; don't prematurely recycle bitmaps.
-- Floating + translucent dialog themes are required for compositor window blur. Keep controls SDR.
+- All sheets (including Stereo stage, value entry, diagnostics and output status) use `GlassSheetLayout`
+  and the actual lens shader. Transparent windows have compositor blur disabled to avoid double frost.
+- Native cards use a continuous-curvature corner profile shared by shader, clip and ripple mask;
+  circles/capsules remain exactly circular. The playground uses Kyant0 Shapes' own continuous corners.
+- `TopFadeBlurView` uses a one-third-size GPU recording and four Gaussian levels with additive masks:
+  blur intensity eases down the strip and opacity fades at the foot, with no scrim. It excludes itself
+  from recording and never calls live scrolling ancestors' `draw()`. Keep the contrast fixture.
+- Video previews clear stale frames on source/size changes and discard old PixelCopy callbacks.
 - Player overlay is a FrameLayout: independent safe-area header, useful stream chips, width-capped
   two-row transport. Button radii derive from half the measured short side; square controls are circles.
 - Main screen prioritizes Open file. Videos/Music are collapsed on each new launch; rotation preserves
-  the current in-memory selection. “Add folder” lives inside Videos and opens that list after selection.
+  the current in-memory selection. There is no Add folder button; long-press Open retains folder picking.
+  Collection counts and refresh live below the stable header; loading reserves its height.
   Folder grants are migrated from the former Activity-scoped preference into stable `spatial_player`.
 - Player drawer and submenus share `GlassSheetLayout`; keyed material roles preserve debug/action tags.
   Dialog glass panes keep the shared video preview refreshing while the underlying chrome is hidden.
@@ -145,6 +158,9 @@ Original movie (73 GB; never push the whole file):
   Test artifacts live in `smoke/out/controls/`. The stripe probe measures the actual rendered Gaussian blur.
 - New source: `/Volumes/Storage/Medias/Wandering Earth 2/00004.m2ts` (80 GB; never push whole).
   Its unmodified 96 MB packet-aligned prefix is `earth2_original_12s.m2ts` (~16.8 s) in both fixture folders.
+- `python3 tools/verify-glass-experiments.py`: stable collection geometry, measured progressive blur,
+  actual typed percentage input / 150% endpoint, Stereo stage, isolated library controls and repeated
+  audio-only → video preview recovery. Generates/pushes only a 2.3 MB silent WAV fixture.
 - Crash regression: `python3 tools/verify-glass-touch.py` (real held presses + software-canvas rendering).
 - Codec/identity regression: `tools/verify-multichannel.sh`; spatial tests: `tools/verify-spatial-audio.sh`.
 - Other harnesses cover Poweramp refresh, chapters, background policy, panels, gestures, rotation and glass.
@@ -154,12 +170,20 @@ Original movie (73 GB; never push the whole file):
 
 ## Current verification / remaining work
 
-- Debug/release builds and debug lint pass after source migration; **36 host checks pass**.
-- Device checks after migration: **23 UI polish**, **21 controls**, **39 HDR/UI** passed; **7 held presses**
-  plus the software-canvas regression passed. `tools/verify-polish.py` covers settings pull bounds,
-  stationary slider holds, exact haptic constants, nested highlights, circular seeks and player menus.
-  Seek-button releases are checked to dispatch exactly one `KEYBOARD_RELEASE`.
+- Debug/release builds and debug lint pass with the Compose playground; **36 host checks pass**.
+- Current device checks: **33 glass experiment checks** and **23 UI polish checks** pass. They cover
+  progressive blur contrast, 150% / typed sensitivity, Stereo stage, new library interaction, stable
+  collections, repeated music → video preview recovery, glass holds and menu navigation.
+  Stationary descendant updates refresh the fade; idle fades do not poll. Optics sliders expose
+  named accessibility ranges/actions.
+- Existing controls suite: **21 checks pass**, including the real file/folder pickers, live seeking,
+  volume / brightness feedback, haptics and GPU Gaussian blur. Folder picker tests now verify the
+  foreground activity (background broadcasts alone can misleadingly report hidden app geometry).
+- **39 HDR/UI checks** and **7 held presses + software-canvas regression** pass. The timed film
+  sample rendered 61 → 292 frames with **0 dropped**, using hardware HEVC, native PQ video and SDR UI.
 - Existing M2TS probe: hardware 4K PQ + FFmpeg DTS-HD 5.1, 205 frames / 0 dropped / 0 underruns.
-  `tools/verify-bluray.py` covers ordinary TS and M2TS seeking; media code is unchanged by UI polish.
+  `tools/verify-bluray.py` covers ordinary TS and M2TS seeking; extractor / decoder code is unchanged.
+- Optional logo direction: `design/logo-c.svg` simplifies the spatial orbit and increases small-size
+  contrast. Proposal only; the installed launcher icon remains unchanged.
 - Physical HDR color accuracy / full original movies and physical tilt remain manual checks.
 - HDMV PGS subtitle extraction, Sony recentering and the lock-screen test limitation remain open.

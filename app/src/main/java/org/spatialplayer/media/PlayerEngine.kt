@@ -34,7 +34,7 @@ import org.spatialplayer.SettingsStore
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlayerEngine(
     private val context: Context,
-    listener: Listener?,
+    initialListener: Listener?,
 ) {
 
     /**
@@ -43,9 +43,11 @@ class PlayerEngine(
      * Settable, and nullable, because this engine can outlive the screen that created it: music is
      * allowed to keep playing with the app in the background, and the activity that owns the views
      * must not be held alive by a callback list while that happens. The activity attaches itself in
-     * `onStart` and detaches in `onDestroy`.
+     * `onCreate` and detaches in `onDestroy`.
      */
-    var listener: Listener? = listener
+    // Keep the constructor parameter distinct: anonymous Player/Analytics listeners must read
+    // this mutable property, rather than capture the first activity for the engine's whole life.
+    var listener: Listener? = initialListener
 
     interface Listener {
         fun onEnginePlaybackState(state: Int)

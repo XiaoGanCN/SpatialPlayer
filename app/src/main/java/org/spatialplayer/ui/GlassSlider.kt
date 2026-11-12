@@ -16,6 +16,7 @@ class GlassSlider @JvmOverloads constructor(context: Context, attrs: AttributeSe
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF()
     private val lens = GlassLensRenderer()
+    internal var previewBackdrop: ((Canvas) -> Unit)? = null
     private var engagement = 0f
     private var animator: ValueAnimator? = null
     private var lastTick = -1
@@ -52,7 +53,7 @@ class GlassSlider @JvmOverloads constructor(context: Context, attrs: AttributeSe
         canvas.drawRoundRect(rect,hh,hh,paint)
         if (canvas.isHardwareAccelerated && (held || engagement > .01f) && !GlassBackdrop.capturing) {
             val style = GlassStyle(cornerRadiusPx=hh, blurRadiusPx=dp(4f), bevelWidthPx=dp(8f), tint=0x30FFFFFF)
-            lens.draw(canvas,this,GlassOptics.parameters(this,style,engagement,x,y,rect),GlassOptics.margin(style))
+            lens.draw(canvas,this,GlassOptics.parameters(this,style,engagement,x,y,rect),GlassOptics.margin(style), previewBackdrop)
         }
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {

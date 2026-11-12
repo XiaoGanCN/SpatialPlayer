@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run device-independent Kotlin checks using compiler jars cached by Gradle.
 
-Requires JDK 21 in JAVA_HOME and Kotlin 2.0.21 dependencies already cached.
+Requires JDK 21 in JAVA_HOME and Kotlin 2.3.10 dependencies already cached.
 No Android runtime, device, network, or Gradle daemon is used.
 """
 import os
@@ -17,21 +17,30 @@ if not JAVA.is_file():
 version = subprocess.run([str(JAVA), "-version"], capture_output=True, text=True, check=True)
 if 'version "21.' not in version.stderr:
     raise SystemExit("JDK 21 is required.")
-jars = [p for p in CACHE.rglob("*.jar") if any(part in str(p.relative_to(CACHE)) for part in (
-    "org.jetbrains.kotlin/", "org.jetbrains.intellij.deps/trove4j/", "org.jetbrains/annotations/",
-    "org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.6.4/",
-))]
-compiler = [p for p in jars if p.name == "kotlin-compiler-embeddable-2.0.21.jar"]
-stdlib = [p for p in jars if p.name == "kotlin-stdlib-2.0.21.jar"]
-if not compiler or not stdlib:
-    raise SystemExit("Kotlin 2.0.21 is not cached; resolve project dependencies with Gradle first.")
+def cached(group, artifact, version):
+    matches = sorted((CACHE / group / artifact / version).rglob("*.jar"))
+    if not matches:
+        raise SystemExit(f"{artifact} {version} is not cached; resolve project dependencies with Gradle first.")
+    return matches[0]
+
+# Compiler runtime versions from its POM. Never mix historical FIR/compiler jars from the cache.
+compiler = cached("org.jetbrains.kotlin", "kotlin-compiler-embeddable", "2.3.10")
+stdlib = cached("org.jetbrains.kotlin", "kotlin-stdlib", "2.3.10")
+jars = [compiler, stdlib,
+    cached("org.jetbrains.kotlin", "kotlin-script-runtime", "2.3.10"),
+    cached("org.jetbrains.kotlin", "kotlin-reflect", "1.6.10"),
+    cached("org.jetbrains.kotlin", "kotlin-daemon-embeddable", "2.3.10"),
+    cached("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.8.0"),
+    cached("org.jetbrains", "annotations", "13.0"),
+]
+
 source = ROOT / "app/src/main/java/org/spatialplayer"
 sources = [source / "ui/VideoRectCalculator.kt", source / "media/UpmixMatrix.kt", source / "media/MatroskaChapters.kt", source / "media/M2tsPackets.kt"]
 sources += sorted((ROOT / "tools/host").glob("*.kt"))
 with tempfile.TemporaryDirectory(prefix="spatial-host-") as work:
     output = Path(work) / "classes"
-    subprocess.run([str(JAVA), "-cp", os.pathsep.join(map(str, compiler + jars)),
+    subprocess.run([str(JAVA), "-cp", os.pathsep.join(map(str, jars)),
                     "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler", "-no-stdlib", "-no-reflect",
-                    "-jvm-target", "17", "-classpath", os.pathsep.join(map(str, stdlib)),
+                    "-jvm-target", "17", "-classpath", str(stdlib),
                     "-d", str(output), *map(str, sources)], check=True)
-    subprocess.run([str(JAVA), "-cp", os.pathsep.join(map(str, [output] + stdlib)), "HostChecksKt"], check=True)
+    subprocess.run([str(JAVA), "-cp", os.pathsep.join(map(str, [output, stdlib])), "HostChecksKt"], check=True)

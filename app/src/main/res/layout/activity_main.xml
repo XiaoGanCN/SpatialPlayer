@@ -33,6 +33,7 @@
                     android:textColor="@color/text_primary" />
                 <TextView
                     android:id="@+id/headerSubtitle"
+                    android:visibility="gone"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textSize="13sp"
@@ -49,16 +50,7 @@
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_settings"
                 android:contentDescription="@string/settings" />
-            <ImageButton
-                android:id="@+id/buttonRefresh"
-                android:layout_marginStart="6dp"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="@drawable/bg_glass_button"
-                android:padding="12dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_refresh"
-                android:contentDescription="@string/refresh" />
+
             <ImageButton
                 android:id="@+id/buttonSpatialStatus"
                 android:layout_width="0dp"
@@ -158,7 +150,8 @@
             android:layout_width="match_parent"
             android:layout_height="2dp"
             android:indeterminate="true"
-            android:layout_marginTop="12dp" />
+            android:layout_marginTop="8dp"
+            android:visibility="invisible" />
         <LinearLayout
             android:id="@+id/libraryBody"
             android:layout_width="match_parent"
@@ -166,23 +159,29 @@
             android:layout_weight="1"
             android:orientation="vertical">
             <LinearLayout
-                android:id="@+id/collectionActions"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="end|center_vertical"
+                android:layout_height="48dp"
+                android:gravity="center_vertical"
                 android:paddingHorizontal="16dp">
                 <TextView
-                    android:id="@+id/buttonOpenFolder"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:background="@drawable/bg_glass_button"
-                    android:contentDescription="Add a folder to Videos"
-                    android:paddingHorizontal="16dp"
-                    android:gravity="center"
-                    android:text="Add folder"
+                    android:id="@+id/collectionSummary"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:paddingStart="4dp"
                     android:textSize="13sp"
-                    android:textColor="@color/text_primary"
-                    android:tooltipText="Choose a folder to include its videos in this list" />
+                    android:textColor="@color/text_secondary" />
+            <ImageButton
+                android:id="@+id/buttonRefresh"
+                android:layout_marginStart="6dp"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_glass_button"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="@string/refresh" />
             </LinearLayout>
             <FrameLayout
                 android:layout_width="match_parent"
@@ -192,17 +191,22 @@
                     android:id="@+id/fileList"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:paddingHorizontal="12dp"
+                    android:paddingHorizontal="16dp"
+                    android:paddingTop="8dp"
                     android:paddingBottom="20dp"
                     android:clipToPadding="false"
                     android:overScrollMode="never" />
+                <org.spatialplayer.ui.TopFadeBlurView
+                    android:id="@+id/listTopFade"
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp" />
                 <TextView
                     android:id="@+id/emptyState"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:gravity="center"
                     android:padding="32dp"
-                    android:text="Open a file or choose a folder to get started."
+                    android:text="Open a file to get started."
                     android:textSize="17sp"
                     android:textColor="@color/text_secondary" />
             </FrameLayout>

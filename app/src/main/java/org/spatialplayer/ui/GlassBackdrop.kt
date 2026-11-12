@@ -13,6 +13,7 @@ object GlassBackdrop {
     private class Scene(val root: View, val activityRoot: View?) {
         val panes = LinkedHashSet<View>()
         var video: VideoGlassBackdrop? = null
+        var videoOwner: View? = null
         lateinit var scroll: ViewTreeObserver.OnScrollChangedListener
     }
     private val scenes = IdentityHashMap<View, Scene>()
@@ -22,8 +23,9 @@ object GlassBackdrop {
     val capturing: Boolean get() = depth > 0
 
     fun watch(view: View) {
-        if (owners.containsKey(view)) return
         val root = view.rootView
+        if (owners[view]?.root === root) return
+        if (owners.containsKey(view)) unwatch(view)
         val scene = scenes[root] ?: Scene(root, activityRoot(view)).also { scene ->
             scenes[root] = scene
             scene.scroll = ViewTreeObserver.OnScrollChangedListener { scene.panes.forEach { it.invalidate() } }
@@ -42,11 +44,18 @@ object GlassBackdrop {
     }
     internal fun video(owner: View, video: VideoGlassBackdrop?) {
         watch(owner)
-        scenes[owner.rootView]?.video = video
+        scenes[owner.rootView]?.let { scene ->
+            if (video != null || scene.videoOwner === owner) {
+                scene.video = video
+                scene.videoOwner = if (video != null) owner else null
+            }
+        }
     }
     internal var videoPreviewFrames = 0L
         private set
     private fun related(owner: View) = scenes.values.filter { it.root === owner.rootView || it.activityRoot === owner.rootView }
+    internal fun videoDebug(owner: View) = related(owner).mapNotNull { it.video?.debugState() }.joinToString()
+    internal fun videoReady(owner: View): Boolean = related(owner).any { it.video?.hasFrame == true }
     internal fun invalidateVideo(owner: View) {
         videoPreviewFrames++
         related(owner).forEach { scene -> scene.panes.forEach { if (it.isShown) it.invalidate() } }
@@ -57,20 +66,21 @@ object GlassBackdrop {
         val root = owner.rootView
         val scene = scenes[root]
         val video = scene?.video ?: activityRoot(owner)?.let { scenes[it]?.video }
-        if (video != null) {
+        if (video?.hasFrame == true) {
             canvas.drawColor(Color.BLACK)
             video.draw(canvas, owner)
             return
         }
         if (root === owner) { canvas.drawColor(0xFF14171B.toInt()); return }
+        val source = scene?.activityRoot?.takeIf { it !== root } ?: root
         val origin = IntArray(2)
         val position = IntArray(2)
-        root.getLocationOnScreen(origin)
+        source.getLocationOnScreen(origin)
         owner.getLocationOnScreen(position)
         val save = canvas.save()
         canvas.translate((origin[0] - position[0]).toFloat(), (origin[1] - position[1]).toFloat())
         depth++
-        try { capture.draw(canvas, root, owner) } finally { depth--; canvas.restoreToCount(save) }
+        try { capture.draw(canvas, source, owner, includeGlass = source !== root) } finally { depth--; canvas.restoreToCount(save) }
     }
     private fun activityRoot(view: View): View? {
         var context = view.context

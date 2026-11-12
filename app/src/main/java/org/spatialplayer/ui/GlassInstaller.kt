@@ -2,8 +2,6 @@ package org.spatialplayer.ui
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.util.Log
 import android.view.View
@@ -53,8 +51,9 @@ object GlassInstaller {
         R.id.glass_role_button_active to Role { ctx ->
             GlassStyle(
                 cornerRadiusPx = dp(ctx, 1000f),
-                tint = 0x32FFFFFF,
-                body = 0x12FFFFFF,
+                tint = 0x24FFFFFF,
+                body = 0x990A84FF.toInt(),
+                adaptiveTint = false,
                 specularStrength = 1f,
                 fallbackFill = 0x32FFFFFF,
             )
@@ -143,10 +142,7 @@ object GlassInstaller {
                 // RippleDrawable has no getter for its colour, so the one the XML declared is used.
                 // An explicit alpha mask keeps RippleDrawable from software-rasterizing the
                 // shader-backed content to discover the pressed region.
-                val mask = GradientDrawable().apply {
-                    cornerRadius = style.cornerRadiusPx
-                    setColor(Color.WHITE)
-                }
+                val mask = SmoothMask(style.cornerRadiusPx)
                 RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), glass, mask)
             } else {
                 glass

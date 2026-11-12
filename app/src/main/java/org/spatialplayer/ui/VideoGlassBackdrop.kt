@@ -15,8 +15,24 @@ import kotlin.math.roundToInt
 /** Only native video needs readback. The copied SDR preview is blurred by the same GPU lens chain. */
 internal class VideoGlassBackdrop(private val owner: View) {
     var source: SurfaceView? = null
-    var frameWidth = 0
-    var frameHeight = 0
+        set(value) {
+            if (field === value) return
+            field = value
+            generation++
+            front = null; back = null
+        }
+    val hasFrame: Boolean get() = front != null && frameWidth > 0 && frameHeight > 0 && source?.holder?.surface?.isValid == true
+    private var lastCopyResult = -1
+    internal fun debugState() = "running=$running inFlight=$inFlight frame=${frameWidth}x$frameHeight source=${source?.width}x${source?.height} valid=${source?.holder?.surface?.isValid} shown=${source?.isShown} window=${owner.windowVisibility} panes=${GlassBackdrop.hasVisiblePanes(owner)} result=$lastCopyResult"
+    private var generation = 0
+    fun setFrameSize(width: Int, height: Int) {
+        if (frameWidth == width && frameHeight == height) return
+        frameWidth = width; frameHeight = height
+        generation++
+        front = null; back = null
+    }
+    private var frameWidth = 0
+    private var frameHeight = 0
     private val handler = Handler(Looper.getMainLooper())
     private var running = false
     private var inFlight = false
@@ -55,11 +71,13 @@ internal class VideoGlassBackdrop(private val owner: View) {
         val h = (frameHeight * scale).roundToInt().coerceAtLeast(2)
         val target = back?.takeIf { it.width == w && it.height == h }
             ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val requestGeneration = generation
         inFlight = true
         try {
             PixelCopy.request(surface, Rect(0, 0, frameWidth, frameHeight), target, { result ->
                 inFlight = false
-                if (result == PixelCopy.SUCCESS && running) {
+                lastCopyResult = result
+                if (result == PixelCopy.SUCCESS && running && requestGeneration == generation && source === surface) {
                     back = front
                     front = target
                     GlassBackdrop.invalidateVideo(owner)

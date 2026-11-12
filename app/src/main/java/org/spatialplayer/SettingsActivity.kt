@@ -1,5 +1,6 @@
 package org.spatialplayer
 
+import kotlin.math.roundToInt
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -46,6 +47,8 @@ import org.spatialplayer.ui.SliderReading
 class SettingsActivity : AppCompatActivity() {
 
     private var probe: android.content.BroadcastReceiver? = null
+    internal var activeSheet: View? = null
+        private set
     private lateinit var settings: SettingsStore
     private val upmixHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val applyMatrix = Runnable { applyUpmixNow() }
@@ -64,6 +67,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         settings = SettingsStore(this)
         probe = DebugProbes.registerSettings(this)
 
@@ -74,16 +78,22 @@ class SettingsActivity : AppCompatActivity() {
         }
         scroll.addView(column)
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val bar = header()
+        val fade = org.spatialplayer.ui.TopFadeBlurView(this).apply { sourceView = scroll }
+        val root = FrameLayout(this).apply {
             setBackgroundColor(ContextCompat.getColor(this@SettingsActivity, R.color.bg_deep))
-            addView(header())
-            addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+            addView(scroll, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            addView(fade, FrameLayout.LayoutParams(MATCH_PARENT, dp(84)))
+            addView(bar, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
-
+        scroll.clipToPadding = false
+        scroll.setPadding(0,dp(62),0,0)
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            root.setPadding(0, bars.top, 0, bars.bottom)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            root.setPadding(bars.left, 0, bars.right, 0)
+            bar.setPadding(dp(8), bars.top + dp(10), dp(16), dp(10))
+            scroll.setPadding(0, bars.top + dp(62), 0, bars.bottom)
+            fade.layoutParams = (fade.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top + dp(84) }
             insets
         }
 
@@ -93,17 +103,22 @@ class SettingsActivity : AppCompatActivity() {
         buildAppearance(column)
         column.addView(infoRow("Playback diagnostics", "Device, decoder and output details").apply {
             setOnClickListener {
-                val details = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
-                buildDevice(details)
-                buildDiagnostics(details)
-                val dialog = android.app.Dialog(this@SettingsActivity)
-                dialog.setContentView(ScrollView(this@SettingsActivity).apply { setPadding(dp(18), dp(18), dp(18), dp(18)); addView(details) })
+                val dialog = android.app.Dialog(this@SettingsActivity, R.style.Theme_SpatialPlayer_Glass)
+                val panel = org.spatialplayer.ui.GlassSheetLayout(this@SettingsActivity, "Playback diagnostics", { dialog.dismiss() })
+                buildDevice(panel.content)
+                buildDiagnostics(panel.content)
+                dialog.setContentView(panel)
                 dialog.show()
                 org.spatialplayer.ui.GlassTheme.configureSheet(dialog, (resources.displayMetrics.heightPixels * .75f).toInt())
+                GlassInstaller.apply(panel)
             }
         })
 
+        column.addView(infoRow("Glass playground", "Try Backdrop alongside our current controls").apply {
+            setOnClickListener { startActivity(android.content.Intent(this@SettingsActivity, GlassPlaygroundActivity::class.java)) }
+        })
         setContentView(root)
+        ViewCompat.requestApplyInsets(root)
         GlassInstaller.apply(root)
     }
 
@@ -200,16 +215,8 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun showUpmixEditor() {
         val dialog = android.app.Dialog(this, R.style.Theme_SpatialPlayer_Glass)
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(20))
-        }
-        column.addView(TextView(this).apply {
-            text = "Stereo stage"
-            textSize = 24f
-            setTextColor(android.graphics.Color.WHITE)
-            setPadding(dp(6), 0, 0, dp(12))
-        })
+        val panel = org.spatialplayer.ui.GlassSheetLayout(this, "Stereo stage", { dialog.dismiss() })
+        val column = panel.content
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun renderEditor() {
             content.removeAllViews()
@@ -229,10 +236,12 @@ class SettingsActivity : AppCompatActivity() {
         })
         column.addView(content)
         renderEditor()
-        dialog.setContentView(ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(column) })
+        activeSheet = panel
+        dialog.setOnDismissListener { activeSheet = null }
+        dialog.setContentView(panel)
         dialog.show()
         org.spatialplayer.ui.GlassTheme.configureSheet(dialog, minOf(dp(680), (resources.displayMetrics.heightPixels * .82f).toInt()))
-        GlassInstaller.apply(column)
+        GlassInstaller.apply(panel)
     }
 
     /** What the selected preset actually does; shown inside the same card as the options. */
@@ -263,11 +272,15 @@ class SettingsActivity : AppCompatActivity() {
         fun render() {
             editor.removeAllViews()
             channelButtons.forEachIndexed { index, view ->
-                view.background = org.spatialplayer.ui.GlassTheme.control(this, index == selected)
+                view.setTag(R.id.glass_role, if (index == selected) R.id.glass_role_button_active else R.id.glass_role_button)
+                view.isSelected = index == selected
+                GlassInstaller.apply(view)
             }
             val sources = listOf("Left" to (100 to 0), "Right" to (0 to 100),
                 "Both" to (50 to 50), "Difference" to (100 to -100), "Mute" to (0 to 0))
-            editor.addView(segmentedRow("Source", sources.map { it.first to it.first }, "") { label ->
+            val currentGains = matrix.gains[selected]
+            val source = sources.firstOrNull { it.second == currentGains }?.first.orEmpty()
+            editor.addView(segmentedRow("Source", sources.map { it.first to it.first }, source) { label ->
                 val gains = sources.first { it.first == label }.second
                 matrix = matrix.withChannel(selected, gains.first, gains.second)
                 save()
@@ -287,6 +300,7 @@ class SettingsActivity : AppCompatActivity() {
             val row = LinearLayout(this)
             for (index in group) {
                 val button = TextView(this).apply {
+                    setTag(R.id.glass_role, if (index == selected) R.id.glass_role_button_active else R.id.glass_role_button)
                     text = names[index]
                     textSize = 14f
                     gravity = Gravity.CENTER
@@ -297,7 +311,7 @@ class SettingsActivity : AppCompatActivity() {
                 channelButtons += button
                 row.addView(button, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
             }
-            column.addView(row)
+            column.addView(row, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(4) })
         }
         column.addView(editor)
         render()
@@ -459,6 +473,7 @@ class SettingsActivity : AppCompatActivity() {
                 value = settings.verticalGain,
                 reading = { "%.0f%%".format(it * 100f) },
                 default = SettingsStore.DEFAULT_VERTICAL_GAIN,
+                inputScale = 100f,
             ) { settings.verticalGain = it },
         )
 
@@ -597,7 +612,7 @@ class SettingsActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
         )
         trailing?.let { titleRow.addView(it) }
-        row.addView(titleRow)
+        if (title.isNotBlank() || trailing != null) row.addView(titleRow)
 
         subtitle?.let {
             row.addView(
@@ -661,6 +676,8 @@ class SettingsActivity : AppCompatActivity() {
 
         fun restyle(active: String) {
             for ((value, view) in buttons) {
+                view.isSelected = value == active
+                view.setTextColor(if (value == active) 0xFFFFFFFF.toInt() else 0xC7FFFFFF.toInt())
                 view.tag = if (value == active) R.id.glass_role_button_active else R.id.glass_role_button
                 GlassInstaller.apply(view)
             }
@@ -686,6 +703,7 @@ class SettingsActivity : AppCompatActivity() {
             Haptics.attachTo(button)
             buttons[value] = button
             button.maxLines = 1
+            button.minHeight = dp(44)
             strip.addView(
                 button,
                 LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
@@ -709,16 +727,17 @@ class SettingsActivity : AppCompatActivity() {
         value: Float,
         reading: (Float) -> String,
         default: Float? = null,
+        inputScale: Float = 1f,
         onChange: (Float) -> Unit,
     ): View {
-        val steps = (((to - from) / step).toInt()).coerceAtLeast(1)
+        val steps = (((to - from) / step).roundToInt()).coerceAtLeast(1)
         val label = valuePill(reading(value), false)
 
         val bar = org.spatialplayer.ui.GlassSlider(this).apply {
                 progressTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
                 thumbTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
             max = steps
-            progress = ((value - from) / step).toInt().coerceIn(0, steps)
+            progress = ((value - from) / step).roundToInt().coerceIn(0, steps)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (!fromUser) return
@@ -739,14 +758,14 @@ class SettingsActivity : AppCompatActivity() {
         // to put the setting back where it shipped.
         SliderReading.attach(
             view = label,
-            current = { from + bar.progress * step },
-            range = from..to,
-            step = step,
-            format = reading,
-            default = default,
+            current = { (from + bar.progress * step) * inputScale },
+            range = (from * inputScale)..(to * inputScale),
+            step = step * inputScale,
+            format = { reading(it / inputScale) },
+            default = default?.times(inputScale),
         ) { applied ->
-            val snapped = (from + ((applied - from) / step).toInt().coerceIn(0, steps) * step)
-            bar.progress = ((snapped - from) / step).toInt().coerceIn(0, steps)
+            val snapped = (from + ((applied / inputScale - from) / step).roundToInt().coerceIn(0, steps) * step)
+            bar.progress = ((snapped - from) / step).roundToInt().coerceIn(0, steps)
             label.text = reading(snapped)
             onChange(snapped)
         }

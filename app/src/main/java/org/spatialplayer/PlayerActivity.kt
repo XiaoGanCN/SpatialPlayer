@@ -998,7 +998,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      */
     private fun updateVideoRect() {
         val container = binding.playerView
-        val size = videoSize
+        val size = videoSize?.takeIf { it.width > 0 && it.height > 0 }
+            ?: engine.player?.videoSize?.takeIf { it.width > 0 && it.height > 0 }
         val width = size?.width ?: 0
         val height = size?.height ?: 0
 
@@ -1035,11 +1036,30 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             val bars = ViewCompat.getRootWindowInsets(overlay)?.getInsetsIgnoringVisibility(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             overlay.setPadding(bars?.left ?: 0, bars?.top ?: 0, bars?.right ?: 0, bars?.bottom ?: 0)
+            val availableWidth = overlay.width - overlay.paddingLeft - overlay.paddingRight - dp(32f)
+            if (availableWidth <= 0) return@post
+            val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val inline = landscape && availableWidth >= dp(600f)
+            val glass = binding.controlGlass
+            val targetOrientation = if (inline) android.widget.LinearLayout.HORIZONTAL else android.widget.LinearLayout.VERTICAL
+            val buttonSize = dp(if (landscape) 44f else 52f)
+            if (glass.orientation != targetOrientation || binding.buttonPlayPause.layoutParams.width != buttonSize) {
+                glass.orientation = targetOrientation
+                binding.timelineRow.layoutParams = android.widget.LinearLayout.LayoutParams(
+                    if (inline) 0 else ViewGroup.LayoutParams.MATCH_PARENT, dp(44f), if (inline) 1f else 0f)
+                binding.transportRow.layoutParams = android.widget.LinearLayout.LayoutParams(
+                    if (inline) dp(268f) else ViewGroup.LayoutParams.MATCH_PARENT, buttonSize).apply { marginStart = if (inline) dp(12f) else 0 }
+                binding.buttonPlayPause.layoutParams = (binding.buttonPlayPause.layoutParams as android.widget.LinearLayout.LayoutParams).apply {
+                    width = buttonSize; height = buttonSize
+                }
+            }
+            val padding = dp(if (landscape) 8f else 14f)
+            if (glass.paddingTop != padding) glass.setPadding(padding,padding,padding,padding)
             val params = binding.controlGlass.layoutParams as FrameLayout.LayoutParams
-            val width = minOf(overlay.width - overlay.paddingLeft - overlay.paddingRight - dp(32f), dp(640f)).coerceAtLeast(dp(240f))
-            if (params.width != width || params.bottomMargin != dp(16f)) {
+            val width = minOf(availableWidth, dp(if (landscape) 820f else 640f))
+            if (params.width != width || params.bottomMargin != dp(if (landscape) 8f else 16f)) {
                 params.width = width
-                params.bottomMargin = dp(16f)
+                params.bottomMargin = dp(if (landscape) 8f else 16f)
                 binding.controlGlass.layoutParams = params
             }
         }
@@ -1093,6 +1113,9 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         deferredBackgroundDecision = false
         applySettings()
         engine.play()
+        engine.player?.videoSize?.takeIf { it.width > 0 && it.height > 0 }?.let { videoSize = it }
+        attachGlassBackdrop()
+        updateVideoRect()
         startAmbientSampling()
         // Debug builds only: lets `tools/verify-panels.sh` open an inspector panel on this instance
         // and read back what it rendered, because neither a screenshot nor `uiautomator dump` can.
@@ -1162,6 +1185,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * says nothing, and the answer is only known once the tracks are known.
      */
     private fun shouldPauseForBackground(): Boolean {
+        // Old screens can finish their transitions after the shared engine loads a new item.
+        if (engine.listener !== this || engine.currentMediaUri != mediaUri) return false
         if (isInPictureInPictureMode) {
             Log.i(TAG, "background: in PiP, so playback is left alone")
             return false
@@ -1214,6 +1239,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      */
     private fun rememberPlaybackPosition() {
         val uri = mediaUri ?: return
+        if (engine.currentMediaUri != uri) return
         val player = engine.player ?: return
         val position = player.currentPosition
         val duration = player.duration
@@ -1337,6 +1363,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      */
     private fun resolveDeferredBackgroundDecision(hasVideo: Boolean) {
         deferredBackgroundDecision = false
+        if (engine.listener !== this || engine.currentMediaUri != mediaUri) return
         if (!hasVideo || settings.backgroundVideo) return
         if (isInPictureInPictureMode) return
         Log.i(TAG, "background: deferred decision resolved to video; pausing")
@@ -1367,6 +1394,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     override fun onEngineFirstFrame() {
+        engine.player?.videoSize?.takeIf { it.width > 0 && it.height > 0 }?.let { videoSize = it }
         updateVideoRect()
         attachGlassBackdrop()
         // Only meaningful once the surface actually has a frame in it.

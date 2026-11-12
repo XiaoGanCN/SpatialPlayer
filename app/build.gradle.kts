@@ -1,11 +1,12 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "org.spatialplayer"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "org.spatialplayer"
@@ -48,6 +49,7 @@ android {
     }
 
     buildFeatures {
+        compose = true
         viewBinding = true
         buildConfig = true
     }
@@ -69,6 +71,13 @@ android {
 }
 
 dependencies {
+    // Isolated comparison playground; production playback stays on native Views / SurfaceView.
+    implementation("io.github.kyant0:backdrop:1.0.6")
+    implementation("io.github.kyant0:shapes:1.2.0")
+    implementation("androidx.compose.foundation:foundation:1.10.3")
+    implementation("androidx.compose.ui:ui:1.10.3")
+    implementation("androidx.compose.material:material:1.10.3")
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity)

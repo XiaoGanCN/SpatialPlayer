@@ -94,7 +94,14 @@ internal class GlassLensRenderer {
             float sdRoundedBox4(float2 p, float2 b, float4 r) {
                 float rx = (p.x > 0.0) ? ((p.y > 0.0) ? r.z : r.y) : ((p.y > 0.0) ? r.w : r.x);
                 float2 q = abs(p) - b + rx;
-                return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - rx;
+                float2 v = max(q, float2(0.0));
+                // The curvature tends to zero where a corner meets a straight edge.
+                // Round buttons/capsules keep their exact circular distance function.
+                if (rx < min(b.x, b.y) - 0.5 && rx > 0.5) {
+                    float norm = pow(pow(v.x, 2.4) + pow(v.y, 2.4), 1.0 / 2.4);
+                    return norm + min(max(q.x, q.y), 0.0) - rx;
+                }
+                return length(v) + min(max(q.x, q.y), 0.0) - rx;
             }
 
             float sminPoly(float a, float b, float k) {

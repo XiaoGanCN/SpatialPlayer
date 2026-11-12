@@ -26,9 +26,9 @@ def main():
         adb('shell','am','force-stop',ui.PKG);launch('MainActivity');time.sleep(1)
         state=snap('LIBRARY');jump=state['skipMs']
         verify(state['source']=='NONE' and not state['views']['libraryBody']['visible'],'both collections are collapsed on launch')
-        verify(state['views']['buttonOpenFile']['height']<160 and not state['views']['buttonOpenFolder']['visible'],'compact home keeps folder management out of the primary actions')
+        verify(state['views']['buttonOpenFile']['height']<160 and 'buttonOpenFolder' not in state['views'],'compact home keeps folder management out of the primary actions')
         tap(state['views']['buttonLibrary']['bounds']);state=snap('LIBRARY')
-        verify(state['views']['buttonOpenFolder']['visible'] and state['views']['buttonOpenFolder']['text']=='Add folder','Videos explains its folder action with a label')
+        verify('buttonOpenFolder' not in state['views'],'Videos no longer adds a folder button')
         adb('shell','am','force-stop',ui.PKG);launch('MainActivity');time.sleep(.7)
         state=snap('LIBRARY');verify(state['source']=='NONE','an expanded collection is not restored on a new launch')
         ui.shot('home.png');tap(state['views']['buttonSettings']['bounds']);time.sleep(.5)

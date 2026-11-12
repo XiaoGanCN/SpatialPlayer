@@ -7,9 +7,10 @@ and Android spatial audio with head tracking on supported headsets.
 - Embedded and external subtitles, Matroska chapters, decoder selection, and scaling controls.
 - Poweramp integration, picked folders, and MediaStore files.
 - Background music with media controls; separate music/video background settings.
-- GPU glass controls, live scrubbing and gesture values, glass sliders and switches.
+- GPU glass controls, progressive scroll-edge blur, live scrubbing and gesture values.
+- Settings → Glass playground compares Kyant0 Backdrop with the current glass controls.
 
-Build with **JDK 21** and **Android SDK 35**. Media3 and nextlib remain pinned in the version catalog.
+Build with **JDK 21** and **Android SDK 36**. Media3 and nextlib remain pinned in the version catalog.
 
 ```sh
 ./gradlew :app:assembleDebug :app:assembleRelease :app:lintDebug
@@ -29,3 +30,5 @@ App source: MIT ([LICENSE](LICENSE)). Distributed builds bundle GPL-3.0 nextlib 
 Inter typeface is distributed under the SIL Open Font License; its license is bundled in the app.
 
 Glass lens renderer adapted from [Liquid-Glass-Android](https://github.com/QWEA0/Liquid-Glass-Android) under MIT; license and revision are bundled.
+
+The isolated Backdrop playground and Shapes use Apache-2.0; upstream licenses and revision are bundled.

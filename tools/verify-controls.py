@@ -15,7 +15,13 @@ adb=ui.adb;launch=ui.launch;snapshot=ui.snapshot;tap=ui.tap;verify=ui.verify
 PKG=ui.PKG
 
 def motion(kind,x,y): adb('shell','input','motionevent',kind,str(round(x)),str(round(y)))
-def focus(): return adb('shell','dumpsys','activity','activities')
+def focus():
+    return '\n'.join(line for line in adb('shell','dumpsys','activity','activities').splitlines() if 'topResumedActivity=' in line or 'mResumedActivity:' in line)
+def close_picker():
+    for _ in range(4):
+        if PKG in focus():return
+        adb('shell','input','keyevent','KEYCODE_BACK');time.sleep(.5)
+    raise AssertionError('System picker did not return to Spatial Player')
 def current_volume(): return int(re.search(r'- STREAM_MUSIC:.*?streamVolume:(\d+)',adb('shell','dumpsys','audio'),re.S).group(1))
 def restore_volume(value):
     for _ in range(32):
@@ -55,16 +61,17 @@ def main():
             state=snapshot('LIBRARY')
         v=state['views']
         verify(v['buttonOpenFile']['width']>v['buttonLibrary']['width'] and v['buttonOpenFile']['height']>v['buttonLibrary']['height'],'external-file action is larger than each library action')
-        verify(state['source']=='NONE' and not v['buttonOpenFolder']['visible'],'collections start collapsed and folder management stays inside Videos')
+        verify(state['source']=='NONE' and 'buttonOpenFolder' not in v,'collections start collapsed without Add folder chrome')
         tap(v['buttonOpenFile']['bounds']);time.sleep(.8)
         verify('documentsui' in focus().lower(),'file action opens the real system picker')
-        adb('shell','input','keyevent','KEYCODE_BACK');time.sleep(.5)
+        close_picker()
         tap(snapshot('LIBRARY')['views']['buttonLibrary']['bounds'])
         state=snapshot('LIBRARY')
-        verify(state['views']['buttonOpenFolder']['visible'] and state['views']['buttonOpenFolder']['text']=='Add folder','folder management has an explicit Add folder label')
-        tap(state['views']['buttonOpenFolder']['bounds']);time.sleep(.8)
+        verify('buttonOpenFolder' not in state['views'],'folder action is removed from the home layout')
+        b=state['views']['buttonOpenFile']['bounds'];x=(b[0]+b[2])//2;y=(b[1]+b[3])//2
+        adb('shell','input','swipe',str(x),str(y),str(x),str(y),'750');time.sleep(.8)
         verify('documentsui' in focus().lower(),'folder action opens the real system picker')
-        adb('shell','input','keyevent','KEYCODE_BACK');time.sleep(.5)
+        close_picker()
         tap(snapshot('LIBRARY')['views']['buttonLibrary']['bounds'])
         state=snapshot('LIBRARY')
         verify(not state['views']['libraryBody']['visible'] and state['views']['buttonOpenFile']['visible'],'library can collapse without hiding external-file opening')

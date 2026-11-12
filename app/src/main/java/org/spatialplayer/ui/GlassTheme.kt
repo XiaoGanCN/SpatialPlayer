@@ -29,15 +29,11 @@ object GlassTheme {
     fun configureSheet(dialog: Dialog, height: Int) {
         val window = dialog.window ?: return
         val ctx = dialog.context
-        val blurEnabled = ctx.getSystemService(WindowManager::class.java).isCrossWindowBlurEnabled
-        window.setBackgroundDrawable(GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-            if (blurEnabled) intArrayOf(0xA62C3037.toInt(), 0xCE14171B.toInt()) else intArrayOf(0xF22C3037.toInt(), 0xFA14171B.toInt())).apply {
-            cornerRadius = dp(ctx, 30f).toFloat()
-            setStroke(1, 0x42FFFFFF)
-        })
+        // The shell owns the GPU lens; a second compositor frost makes it opaque and doubles blur.
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        window.setBackgroundBlurRadius(0)
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window.setDimAmount(0.22f)
-        window.setBackgroundBlurRadius(dp(ctx, 32f))
         window.setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
         val width = minOf(ctx.resources.displayMetrics.widthPixels - dp(ctx, 24f), dp(ctx, 620f))
         window.setLayout(width, height)

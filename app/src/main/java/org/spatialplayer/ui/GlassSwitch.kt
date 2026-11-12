@@ -19,6 +19,7 @@ class GlassSwitch(context: Context) : CompoundButton(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shape = RectF()
     private val lens = GlassLensRenderer()
+    internal var previewBackdrop: ((Canvas) -> Unit)? = null
     private var position = 0f
     private var expansion = 0f
     private var travel: ValueAnimator? = null
@@ -64,7 +65,7 @@ class GlassSwitch(context: Context) : CompoundButton(context) {
         if (canvas.isHardwareAccelerated && expansion>.01f && !GlassBackdrop.capturing) {
             val style=GlassStyle(cornerRadiusPx=hh,blurRadiusPx=dp(4f),tint=0x25FFFFFF,bevelWidthPx=dp(10f),specularStrength=1.2f)
             lens.draw(canvas,this,GlassOptics.parameters(this,style,expansion,x,cy,shape),GlassOptics.margin(style)) { backdrop ->
-                GlassBackdrop.draw(backdrop,this)
+                previewBackdrop?.invoke(backdrop) ?: GlassBackdrop.draw(backdrop,this)
                 drawTrack(backdrop)
             }
         }

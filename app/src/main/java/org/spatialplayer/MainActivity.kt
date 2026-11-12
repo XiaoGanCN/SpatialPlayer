@@ -12,7 +12,6 @@ import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -293,6 +292,7 @@ class MainActivity : AppCompatActivity() {
         binding.fileList.layoutManager = LinearLayoutManager(this)
         binding.fileList.adapter = adapter
         binding.fileList.itemAnimator = null
+        binding.listTopFade.sourceView = binding.fileList
     }
 
     /**
@@ -307,7 +307,6 @@ class MainActivity : AppCompatActivity() {
         binding.buttonSettings.tag = R.id.glass_role_button
         binding.buttonSpatialStatus.tag = R.id.glass_role_button
         binding.buttonRefresh.tag = R.id.glass_role_button
-        binding.buttonOpenFolder.tag = R.id.glass_role_button
         binding.buttonOpenFile.tag = R.id.glass_role_button_active
         binding.buttonPoweramp.tag = if (folded == Fold.POWERAMP) R.id.glass_role_button_active else R.id.glass_role_button
         binding.buttonLibrary.tag = if (folded == Fold.LIBRARY) R.id.glass_role_button_active else R.id.glass_role_button
@@ -319,7 +318,6 @@ class MainActivity : AppCompatActivity() {
             pickFile.launch(MediaRepository.PICKER_MIME_TYPES)
         }
 
-        binding.buttonOpenFolder.setOnClickListener { pickFolder.launch(null) }
 
         // Long-press opens a folder instead of a single file.
         binding.buttonOpenFile.setOnLongClickListener {
@@ -480,8 +478,7 @@ class MainActivity : AppCompatActivity() {
         binding.buttonLibrary.tag = if (folded == Fold.LIBRARY) R.id.glass_role_button_active else R.id.glass_role_button
         binding.buttonPoweramp.tag = if (folded == Fold.POWERAMP) R.id.glass_role_button_active else R.id.glass_role_button
         GlassInstaller.apply(binding.actionBar)
-        binding.collectionActions.visibility = if (folded == Fold.LIBRARY) View.VISIBLE else View.GONE
-        binding.buttonRefresh.visibility = if (folded == Fold.NONE) View.GONE else View.VISIBLE
+        binding.buttonRefresh.visibility = if (folded == Fold.NONE) View.INVISIBLE else View.VISIBLE
         adapter.submit(visibleEntries())
         binding.libraryBody.apply {
             visibility = if (folded == Fold.NONE) View.GONE else View.VISIBLE
@@ -515,8 +512,8 @@ class MainActivity : AppCompatActivity() {
     /** Count only the selected media source. */
     private fun updateLibrarySummary() {
         val count = visibleEntries().size
-        binding.headerSubtitle.visibility = if (folded == Fold.NONE) View.GONE else View.VISIBLE
-        binding.headerSubtitle.text = if (count == 0) getString(R.string.library_empty)
+        binding.headerSubtitle.visibility = View.GONE
+        binding.collectionSummary.text = if (count == 0) getString(R.string.library_empty)
             else "$count ${if (folded == Fold.POWERAMP) "songs" else "videos"}"
     }
 
@@ -533,7 +530,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setScanning(scanning: Boolean) {
-        binding.scanProgress.visibility = if (scanning) View.VISIBLE else View.GONE
+        binding.scanProgress.visibility = if (scanning) View.VISIBLE else View.INVISIBLE
     }
 
     private fun updateEmptyState() {
@@ -561,23 +558,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSpatialSummary() {
         val spatial = DeviceCapabilities.spatialSnapshot(this)
-        val message = buildString {
-            append("spatializer available : ").append(spatial.available).append('\n')
-            append("enabled               : ").append(spatial.enabled).append('\n')
-            append("immersive level       : ").append(spatial.immersiveLevelLabel).append('\n')
-            append("head tracker          : ").append(spatial.headTrackerAvailable).append('\n')
-            append("output can spatialize : ").append(spatial.outputCanSpatialize).append('\n')
-            append("output device         : ").append(spatial.outputDeviceName ?: "—").append('\n')
-            append("output type           : ").append(spatial.outputDeviceTypeLabel ?: "—")
+        val dialog = android.app.Dialog(this, R.style.Theme_SpatialPlayer_Glass)
+        val panel = org.spatialplayer.ui.GlassSheetLayout(this, "Audio output", { dialog.dismiss() })
+        val details = listOf(
+            "Spatial audio" to if (spatial.available) "Available" else "Unavailable",
+            "System spatializer" to if (spatial.enabled) "Enabled" else "Off",
+            "Head tracker" to if (spatial.headTrackerAvailable) "Available" else "Unavailable",
+            "Output compatibility" to if (spatial.outputCanSpatialize) "Spatial audio" else "Stereo",
+            "Immersive level" to spatial.immersiveLevelLabel,
+            "Device" to (spatial.outputDeviceName ?: "No output device"),
+            "Connection" to (spatial.outputDeviceTypeLabel ?: "Unknown"),
+        )
+        details.forEach { (label, value) ->
+            panel.content.addView(android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                setTag(R.id.glass_role, R.id.glass_role_panel)
+                addView(android.widget.TextView(this@MainActivity).apply { text = label; textSize=12f;setTextColor(0xBFFFFFFF.toInt()) })
+                addView(android.widget.TextView(this@MainActivity).apply { text = value; textSize=16f;setTextColor(android.graphics.Color.WHITE) })
+            }, android.widget.LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(6) })
         }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.audio_settings)
-            .setMessage(message)
-            .setPositiveButton(R.string.close, null)
-            .setNeutralButton(R.string.open_settings) { _, _ ->
-                runCatching { startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)) }
-            }
-            .show()
+        panel.content.addView(android.widget.TextView(this).apply {
+            text = getString(R.string.open_settings); textSize=16f; gravity=android.view.Gravity.CENTER
+            setTextColor(android.graphics.Color.WHITE)
+            background=org.spatialplayer.ui.GlassTheme.control(this@MainActivity)
+            setTag(R.id.glass_role,R.id.glass_role_button_active)
+            setOnClickListener { runCatching { startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)) } }
+        },android.widget.LinearLayout.LayoutParams(-1,dp(48)).apply { topMargin=dp(8) })
+        dialog.setContentView(panel);dialog.show()
+        org.spatialplayer.ui.GlassTheme.configureSheet(dialog,minOf(dp(660),(resources.displayMetrics.heightPixels*.78f).toInt()))
+        GlassInstaller.apply(panel)
     }
 
     // ------------------------------------------------------------------ helpers

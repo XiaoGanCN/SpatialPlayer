@@ -9,17 +9,18 @@ import java.util.IdentityHashMap
 
 /** Record the backdrop without drawing active ancestors or replaying ScrollView edge effects. */
 internal class BackdropCapture {
-    fun draw(canvas: Canvas, source: View, glass: View) {
+    fun draw(canvas: Canvas, source: View, glass: View, includeGlass: Boolean = false) {
         val ancestors = Collections.newSetFromMap(IdentityHashMap<View, Boolean>())
         var parent = glass.parent
         while (parent is View) { ancestors.add(parent); parent = parent.parent }
-        record(canvas, source, glass, ancestors)
+        record(canvas, source, glass, ancestors, includeGlass)
     }
 
-    private fun record(canvas: Canvas, view: View, glass: View, ancestors: Set<View>) {
-        if (view === glass || view.visibility != View.VISIBLE || view.alpha <= 0f) return
+    private fun record(canvas: Canvas, view: View, glass: View, ancestors: Set<View>, includeGlass: Boolean) {
+        if (view is TopFadeBlurView || view === glass || view.visibility != View.VISIBLE || view.alpha <= 0f) return
+        if (canvas.quickReject(0f,0f,view.width.toFloat(),view.height.toFloat())) return
         // A neighboring glass display list can refer back to this pane. Never sample it.
-        if (GlassInstaller.isGlass(view) && view !in ancestors) return
+        if (!includeGlass && GlassInstaller.isGlass(view) && view !in ancestors) return
         if (view !is ViewGroup) {
             val dirty = view.isDirty
             view.draw(canvas)
@@ -42,7 +43,7 @@ internal class BackdropCapture {
             canvas.translate((child.left-view.scrollX).toFloat(), (child.top-view.scrollY).toFloat())
             canvas.concat(child.matrix)
             if (child.alpha < 1f) canvas.saveLayerAlpha(0f, 0f, child.width.toFloat(), child.height.toFloat(), (child.alpha*255).toInt())
-            record(canvas, child, glass, ancestors)
+            record(canvas, child, glass, ancestors, includeGlass)
             canvas.restoreToCount(childSave)
         }
         canvas.restoreToCount(save)

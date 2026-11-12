@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Optional direction C. One spatial orbit, a rounded play head, and stronger small-size contrast.
+     Proposal only; the installed launcher icon is unchanged. Adaptive-icon safe area: 66/108. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 108 108">
+  <defs>
+    <linearGradient id="bg" x2="0.45" y2="1"><stop stop-color="#1B2332"/><stop offset="1" stop-color="#080D16"/></linearGradient>
+    <linearGradient id="orbit" x1="28" y1="28" x2="81" y2="76" gradientUnits="userSpaceOnUse"><stop stop-color="#B3EAFF"/><stop offset="0.48" stop-color="#4CB8FF"/><stop offset="1" stop-color="#0A84FF"/></linearGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="url(#bg)"/>
+  <path d="M79 65 A27 27 0 1 1 74 35" fill="none" stroke="url(#orbit)" stroke-width="5.5" stroke-linecap="round"/>
+  <path d="M47 40.8 Q44.5 39.3 44.5 42.4 V65.6 Q44.5 68.7 47 67.2 L67.6 55.6 Q70.3 54 67.6 52.4 Z" fill="#E6F4FF"/>
+</svg>

@@ -39,12 +39,12 @@ class LiquidGlassView @JvmOverloads constructor(
         setWillNotDraw(false)
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, width, height, cornerRadiusPx)
+                outline.setPath(SmoothCorners.path(android.graphics.RectF(0f,0f,width.toFloat(),height.toFloat()),cornerRadiusPx))
             }
         }
         clipToOutline = true
     }
-    fun setBackdropFrameSize(width: Int, height: Int) { video.frameWidth = width; video.frameHeight = height; start() }
+    fun setBackdropFrameSize(width: Int, height: Int) { video.setFrameSize(width,height); start() }
     fun start() { if (isAttachedToWindow) video.start() }
     fun stop() = video.stop()
     override fun onAttachedToWindow() {
