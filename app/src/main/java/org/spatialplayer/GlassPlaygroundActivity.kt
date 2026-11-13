@@ -30,9 +30,9 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.shapes.RoundedRectangle
-import org.spatialplayer.playground.LiquidButton
-import org.spatialplayer.playground.LiquidSlider
-import org.spatialplayer.playground.LiquidToggle
+import org.spatialplayer.ui.components.LiquidButton
+import org.spatialplayer.ui.components.LiquidSlider
+import org.spatialplayer.ui.components.LiquidToggle
 import org.spatialplayer.ui.GlassSlider
 import org.spatialplayer.ui.GlassSwitch
 import kotlin.math.roundToInt
@@ -102,18 +102,18 @@ private fun Playground(close: () -> Unit) {
                 LiquidButton({ moving = !moving }, backdrop, Modifier.fillMaxWidth()) { Text(if (moving) "Pause backdrop" else "Animate backdrop", color = Color.White) }
             }
             Column(Modifier.fillMaxWidth().drawBackdrop(backdrop, shape = { RoundedRectangle(28.dp) }, effects = { blur(12.dp.toPx()) }).padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Current Spatial Player", color = Color.White, fontSize = 18.sp)
+                Text("Production controls", color = Color.White, fontSize = 18.sp)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Our switch", Modifier.weight(1f), color = Color.White)
-                    AndroidView(factory = { context -> GlassSwitch(context).apply { org.spatialplayer.ui.GlassInstaller.watch(this); isChecked = currentToggled; setOnCheckedChangeListener { _, checked -> currentToggled = checked } } }, update = { control -> control.previewBackdrop = { canvas -> drawPreviewPattern(canvas,control,view,phase) }; control.invalidate() }, modifier = Modifier.width(76.dp).height(48.dp))
+                    AndroidView(factory = { context -> GlassSwitch(context).apply { org.spatialplayer.ui.GlassInstaller.watch(this); isChecked = currentToggled; setOnCheckedChangeListener { _, checked -> currentToggled = checked } } }, update = { control -> control.invalidate() }, modifier = Modifier.width(76.dp).height(48.dp))
                 }
                 Text("Our slider · ${(currentValue*100).roundToInt()}%", color = Color.White)
                 AndroidView(factory = { context -> GlassSlider(context).apply { org.spatialplayer.ui.GlassInstaller.watch(this); max = 100; progress = (currentValue*100).roundToInt(); setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(bar: android.widget.SeekBar?, progress: Int, user: Boolean) { if (user) currentValue = progress/100f }
                     override fun onStartTrackingTouch(bar: android.widget.SeekBar?) = Unit
                     override fun onStopTrackingTouch(bar: android.widget.SeekBar?) = Unit
-                }) } }, update = { control -> control.previewBackdrop = { canvas -> drawPreviewPattern(canvas,control,view,phase) }; control.invalidate() }, modifier = Modifier.fillMaxWidth().height(48.dp))
-                Text("Our controls keep the sensor highlight. Hold each thumb to compare.", color = Color(0xFFDEE5F4), fontSize = 13.sp)
+                }) } }, update = { control -> control.invalidate() }, modifier = Modifier.fillMaxWidth().height(48.dp))
+                Text("Production controls use the same library with sensor-driven highlights.", color = Color(0xFFDEE5F4), fontSize = 13.sp)
             }
             Text("Optics", color = Color.White, fontSize = 18.sp)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -128,26 +128,4 @@ private fun Playground(close: () -> Unit) {
             Spacer(Modifier.height(16.dp))
         }
     }
-}
-
-/** A local native adapter for the comparison controls: identical pattern, no capture of Compose. */
-private fun drawPreviewPattern(canvas: android.graphics.Canvas, owner: android.view.View, root: android.view.View, phase: Float) {
-    val origin = IntArray(2); val position = IntArray(2)
-    root.getLocationOnScreen(origin); owner.getLocationOnScreen(position)
-    val save = canvas.save()
-    canvas.translate((origin[0]-position[0]).toFloat(), (origin[1]-position[1]).toFloat())
-    val width = root.width.toFloat(); val height = root.height.toFloat(); val density = root.resources.displayMetrics.density
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-    paint.shader = android.graphics.LinearGradient(0f,0f,width,height,intArrayOf(0xFF18264A.toInt(),0xFF3D183C.toInt(),0xFF101522.toInt()),null,android.graphics.Shader.TileMode.CLAMP)
-    canvas.drawRect(0f,0f,width,height,paint)
-    val colors = intArrayOf(0xCC428FFF.toInt(),0xCCF476AF.toInt(),0xCC54D8D3.toInt(),0xCCFFBB7C.toInt())
-    repeat(8) { i ->
-        val x = width*(.15f+(i%3)*.35f)+sin(phase+i)*width*.15f
-        val y = height*((i+.5f)/8f)+sin(phase*.7f+i)*55*density
-        paint.shader = android.graphics.RadialGradient(x,y,140*density,intArrayOf(colors[i%4],colors[i%4] and 0xFFFFFF),null,android.graphics.Shader.TileMode.CLAMP)
-        canvas.drawCircle(x,y,140*density,paint)
-    }
-    paint.shader=null;paint.color=0x52FFFFFF;paint.strokeWidth=2*density
-    repeat(20) { i -> val x=i*width/12+sin(phase)*32*density;canvas.drawLine(x,0f,x-height*.2f,height,paint) }
-    canvas.restoreToCount(save)
 }

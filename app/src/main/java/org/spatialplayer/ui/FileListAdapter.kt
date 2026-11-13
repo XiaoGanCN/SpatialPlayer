@@ -60,7 +60,6 @@ class FileListAdapter(
         private val meta: TextView = itemView.findViewById(R.id.rowMeta)
         init {
             icon.clipToOutline = true
-            Haptics.attachTo(itemView)
         }
         private val tags: TextView = itemView.findViewById(R.id.rowTags)
 
@@ -122,7 +121,7 @@ class FileListAdapter(
                 icon.setImageResource(placeholder)
             }
 
-            itemView.setOnClickListener { onClick(entry) }
+            itemView.setOnClickListener { Haptics.release(itemView); onClick(entry) }
         }
 
         private companion object {

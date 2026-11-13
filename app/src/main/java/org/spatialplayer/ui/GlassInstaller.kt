@@ -191,7 +191,7 @@ object GlassInstaller {
         is RippleDrawable -> (0 until bg.numberOfLayers).map { bg.getDrawable(it) }.filterIsInstance<GlassDrawable>().firstOrNull()
         else -> null
     }
-    internal fun isGlass(view: View): Boolean = view is LiquidGlassView || material(view) != null
+    internal fun isGlass(view: View): Boolean = view is LiquidGlassView || view is GlassSwitch || view is GlassSlider || view is SeekBarView || material(view) != null
 
     private fun walk(view: View, visit: (View) -> Unit) {
         visit(view)

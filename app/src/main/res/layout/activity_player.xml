@@ -167,6 +167,7 @@
                     android:contentDescription="@string/seek_back" />
                 <ImageButton
                     android:id="@+id/buttonPlayPause"
+                    android:layout_marginHorizontal="8dp"
                     android:layout_width="52dp"
                     android:layout_height="52dp"
                     android:background="@drawable/bg_glass_button"

@@ -1,5 +1,5 @@
 // From Kyant0/AndroidLiquidGlass 1.0.6 (Apache-2.0). See assets/licenses/Backdrop-NOTICE.txt.
-package org.spatialplayer.playground
+package org.spatialplayer.ui.components
 
 import android.graphics.RuntimeShader
 import android.os.Build

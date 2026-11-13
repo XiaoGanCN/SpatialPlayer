@@ -14,6 +14,8 @@ object GlassBackdrop {
         val panes = LinkedHashSet<View>()
         var video: VideoGlassBackdrop? = null
         var videoOwner: View? = null
+        val visibleBounds = android.graphics.Rect()
+        lateinit var redraw: ViewTreeObserver.OnPreDrawListener
         lateinit var scroll: ViewTreeObserver.OnScrollChangedListener
     }
     private val scenes = IdentityHashMap<View, Scene>()
@@ -28,8 +30,13 @@ object GlassBackdrop {
         if (owners.containsKey(view)) unwatch(view)
         val scene = scenes[root] ?: Scene(root, activityRoot(view)).also { scene ->
             scenes[root] = scene
-            scene.scroll = ViewTreeObserver.OnScrollChangedListener { scene.panes.forEach { it.invalidate() } }
+            scene.scroll = ViewTreeObserver.OnScrollChangedListener { invalidatePanes(scene) }
             root.viewTreeObserver.addOnScrollChangedListener(scene.scroll)
+            scene.redraw=ViewTreeObserver.OnPreDrawListener {
+                if(capture.contentDirty(root))invalidatePanes(scene)
+                true
+            }
+            root.viewTreeObserver.addOnPreDrawListener(scene.redraw)
         }
         scene.panes.add(view)
         owners[view] = scene
@@ -39,7 +46,10 @@ object GlassBackdrop {
         val root = scene.root
         scene.panes.remove(view)
         if (scene.panes.isNotEmpty() || scene.video != null) return
-        if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnScrollChangedListener(scene.scroll)
+        if (root.viewTreeObserver.isAlive) {
+            root.viewTreeObserver.removeOnScrollChangedListener(scene.scroll)
+            root.viewTreeObserver.removeOnPreDrawListener(scene.redraw)
+        }
         scenes.remove(root)
     }
     internal fun video(owner: View, video: VideoGlassBackdrop?) {
@@ -55,10 +65,18 @@ object GlassBackdrop {
         private set
     private fun related(owner: View) = scenes.values.filter { it.root === owner.rootView || it.activityRoot === owner.rootView }
     internal fun videoDebug(owner: View) = related(owner).mapNotNull { it.video?.debugState() }.joinToString()
-    internal fun videoReady(owner: View): Boolean = related(owner).any { it.video?.hasFrame == true }
+    internal fun videoReady(owner: View): Boolean = (scenes[owner.rootView]?.video ?: activityRoot(owner)?.let { scenes[it]?.video })?.hasFrame == true
     internal fun invalidateVideo(owner: View) {
         videoPreviewFrames++
-        related(owner).forEach { scene -> scene.panes.forEach { if (it.isShown) it.invalidate() } }
+        related(owner).forEach { invalidatePanes(it) }
+    }
+    private fun invalidatePanes(scene: Scene) {
+        scene.panes.forEach { pane ->
+            if(pane.isShown && pane.getLocalVisibleRect(scene.visibleBounds)) {
+                org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidate(pane)
+                pane.invalidate()
+            }
+        }
     }
     internal fun hasVisiblePanes(owner: View): Boolean = related(owner).any { scene -> scene.panes.any { it.isShown && it.alpha > .01f } }
 

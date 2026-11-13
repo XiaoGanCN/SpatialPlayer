@@ -47,6 +47,7 @@ class LiquidGlassView @JvmOverloads constructor(
     fun setBackdropFrameSize(width: Int, height: Int) { video.setFrameSize(width,height); start() }
     fun start() { if (isAttachedToWindow) video.start() }
     fun stop() = video.stop()
+    fun setAmbientColors(listener: ((Int,Int,Int,Int)->Unit)?) { video.ambientColors=listener;if(listener!=null)start() }
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         GlassBackdrop.watch(this)

@@ -38,6 +38,7 @@ class AmbientGlowView @JvmOverloads constructor(
     /** The rectangle actually occupied by the picture, in this view's coordinates. */
     private var videoRect: Rect? = null
 
+    internal var colorUpdates=0L;private set
     private var topColor = Color.TRANSPARENT
     private var bottomColor = Color.TRANSPARENT
     private var leftColor = Color.TRANSPARENT
@@ -92,6 +93,7 @@ class AmbientGlowView @JvmOverloads constructor(
     /** New edge samples. Colours are blended over [DURATION_MS] so the wash drifts. */
     fun setEdgeColors(top: Int, bottom: Int, left: Int, right: Int) {
         if (!glowEnabled) return
+        colorUpdates++
         topColor = top
         bottomColor = bottom
         leftColor = left

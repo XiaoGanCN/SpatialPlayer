@@ -121,8 +121,8 @@ class InspectorSheet @JvmOverloads constructor(
         buildDialog()?.also { d ->
             dialog = d
             d.show()
-            applyWindowFlags(d)
             render()
+            applyWindowFlags(d)
             GlassInstaller.apply(sheet!!)
             animateIn()
             // `show` must happen before the window exists to configure blur reliably.
@@ -202,7 +202,10 @@ class InspectorSheet @JvmOverloads constructor(
     }
 
     private fun render() {
-        try { renderContent() } finally { sheet?.let { GlassInstaller.apply(it) } }
+        try { renderContent() } finally {
+            sheet?.let { GlassInstaller.apply(it) }
+            dialog?.takeIf { it.isShowing }?.let { applyWindowFlags(it) }
+        }
     }
 
     private fun renderContent() {

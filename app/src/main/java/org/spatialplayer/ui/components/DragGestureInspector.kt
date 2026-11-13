@@ -1,5 +1,5 @@
 // From Kyant0/AndroidLiquidGlass 1.0.6 (Apache-2.0). See bundled notice.
-package org.spatialplayer.playground
+package org.spatialplayer.ui.components
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown

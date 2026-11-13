@@ -22,6 +22,8 @@ internal class VideoGlassBackdrop(private val owner: View) {
             front = null; back = null
         }
     val hasFrame: Boolean get() = front != null && frameWidth > 0 && frameHeight > 0 && source?.holder?.surface?.isValid == true
+    var ambientColors: ((Int,Int,Int,Int)->Unit)?=null
+    private var lastAmbient=0L
     private var lastCopyResult = -1
     internal fun debugState() = "running=$running inFlight=$inFlight frame=${frameWidth}x$frameHeight source=${source?.width}x${source?.height} valid=${source?.holder?.surface?.isValid} shown=${source?.isShown} window=${owner.windowVisibility} panes=${GlassBackdrop.hasVisiblePanes(owner)} result=$lastCopyResult"
     private var generation = 0
@@ -44,9 +46,10 @@ internal class VideoGlassBackdrop(private val owner: View) {
     private val destination = RectF()
     private val tick = object : Runnable {
         override fun run() {
-            val visible = owner.windowVisibility == View.VISIBLE && GlassBackdrop.hasVisiblePanes(owner)
-            if (visible) copy()
-            if (running) handler.postDelayed(this, if (visible) 33L else 150L)
+            val visible = owner.windowVisibility == View.VISIBLE
+            val panes=visible && GlassBackdrop.hasVisiblePanes(owner)
+            if (panes || (visible && ambientColors!=null)) copy()
+            if (running) handler.postDelayed(this, if (panes) 33L else if(ambientColors!=null) 900L else 150L)
         }
     }
     fun start() {
@@ -58,6 +61,7 @@ internal class VideoGlassBackdrop(private val owner: View) {
     fun stop() { running = false; handler.removeCallbacks(tick) }
     fun release() {
         stop()
+        ambientColors=null
         GlassBackdrop.video(owner, null)
         // Render-thread display lists may still retain the previous bitmap; let GC release it.
         front = null
@@ -81,6 +85,20 @@ internal class VideoGlassBackdrop(private val owner: View) {
                     back = front
                     front = target
                     GlassBackdrop.invalidateVideo(owner)
+                    val now=android.os.SystemClock.uptimeMillis()
+                    if(ambientColors!=null && now-lastAmbient>=850) {
+                        lastAmbient=now
+                        fun edge(horizontal:Boolean,far:Boolean):Int {
+                            var r=0;var g=0;var b=0
+                            for(i in 0 until 24) {
+                                val x=if(horizontal)i*(target.width-1)/23 else if(far)target.width-1 else 0
+                                val y=if(!horizontal)i*(target.height-1)/23 else if(far)target.height-1 else 0
+                                val color=target.getPixel(x,y);r+=android.graphics.Color.red(color);g+=android.graphics.Color.green(color);b+=android.graphics.Color.blue(color)
+                            }
+                            return android.graphics.Color.rgb(r/24,g/24,b/24)
+                        }
+                        ambientColors?.invoke(edge(true,false),edge(true,true),edge(false,false),edge(false,true))
+                    }
                 }
             }, handler)
         } catch (_: IllegalArgumentException) { inFlight = false }

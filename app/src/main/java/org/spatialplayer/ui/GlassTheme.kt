@@ -35,9 +35,29 @@ object GlassTheme {
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window.setDimAmount(0.22f)
         window.setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        val width = minOf(ctx.resources.displayMetrics.widthPixels - dp(ctx, 24f), dp(ctx, 620f))
-        window.setLayout(width, height)
-        window.attributes = window.attributes.apply { y = dp(ctx, 12f) }
+        val metrics=ctx.getSystemService(WindowManager::class.java).currentWindowMetrics
+        val bars=metrics.windowInsets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+        val safeWidth=metrics.bounds.width()-bars.left-bars.right
+        val safeHeight=metrics.bounds.height()-bars.top-bars.bottom
+        val width=minOf(safeWidth-dp(ctx,24f),dp(ctx,620f)).coerceAtLeast(1)
+        val panel=window.decorView.findViewById<GlassSheetLayout>(org.spatialplayer.R.id.sheet_panel)
+        val natural=panel?.preferredHeight(width) ?: height
+        val cap=minOf(safeHeight-dp(ctx,24f),dp(ctx,860f)).coerceAtLeast(1)
+        val bounded=natural.coerceIn(dp(ctx,120f).coerceAtMost(cap),cap)
+        window.setLayout(width,bounded)
+        window.attributes=window.attributes.apply {y=bars.bottom+dp(ctx,12f)}
+        val key=metrics.bounds.width().toLong().shl(32) or metrics.bounds.height().toLong()
+        if(window.decorView.getTag(org.spatialplayer.R.id.sheet_resize)==null) {
+            window.decorView.setTag(org.spatialplayer.R.id.sheet_resize,key)
+            window.decorView.addOnLayoutChangeListener { view,_,_,_,_,_,_,_,_ ->
+                val bounds=ctx.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
+                val next=bounds.width().toLong().shl(32) or bounds.height().toLong()
+                if(view.getTag(org.spatialplayer.R.id.sheet_resize)!=next) {
+                    view.setTag(org.spatialplayer.R.id.sheet_resize,next)
+                    view.post { if(dialog.isShowing)configureSheet(dialog,height) }
+                }
+            }
+        }
         dialog.setCanceledOnTouchOutside(true)
     }
 }

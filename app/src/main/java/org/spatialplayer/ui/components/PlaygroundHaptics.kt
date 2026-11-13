@@ -1,4 +1,4 @@
-package org.spatialplayer.playground
+package org.spatialplayer.ui.components
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown

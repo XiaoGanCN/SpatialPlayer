@@ -3,6 +3,8 @@ https://github.com/Kyant0/AndroidLiquidGlass
 Pinned Android release: 1.0.6, revision 896a94a3ade1cc1a940b92365f942a34971fecda
 Library consumed from Maven Central. Catalog LiquidButton, LiquidToggle, LiquidSlider,
 DampedDragAnimation, InteractiveHighlight and InspectDragGestures are adapted into
-org.spatialplayer.playground; package names and haptic/accessibility integration changed.
-Shapes by Kyant0 (Apache-2.0) supplies G2 corners in the playground.
-Production playback does not use Compose capture; native HDR SurfaceView is preserved.
+org.spatialplayer.ui.components; package names, haptic/accessibility integration, live-size
+gesture handling, continuous drag accumulation and sensor highlight direction changed.
+Shapes by Kyant0 (Apache-2.0) supplies G2 corners throughout the app.
+Production glass uses Backdrop compositions through native View adapters. Native HDR
+SurfaceView is preserved; the glass receives a separate downscaled video preview.

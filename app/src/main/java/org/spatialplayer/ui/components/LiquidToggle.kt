@@ -1,5 +1,5 @@
 // From Kyant0/AndroidLiquidGlass 1.0.6 (Apache-2.0). See assets/licenses/Backdrop-NOTICE.txt.
-package org.spatialplayer.playground
+package org.spatialplayer.ui.components
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -38,7 +38,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import org.spatialplayer.playground.DampedDragAnimation
+import org.spatialplayer.ui.components.DampedDragAnimation
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -55,10 +55,11 @@ fun LiquidToggle(
     backdrop: Backdrop,
     modifier: Modifier = Modifier
 ) {
+    val light = org.spatialplayer.ui.backdrop.LocalGlassAngle.current
     val isLightTheme = !isSystemInDarkTheme()
     val accentColor =
-        if (isLightTheme) Color(0xFF34C759)
-        else Color(0xFF30D158)
+        if (isLightTheme) Color(0xFF0A84FF)
+        else Color(0xFF0A84FF)
     val trackColor =
         if (isLightTheme) Color(0xFF787878).copy(0.2f)
         else Color(0xFF787880).copy(0.36f)
@@ -120,7 +121,7 @@ fun LiquidToggle(
     val trackBackdrop = rememberLayerBackdrop()
 
     Box(
-        modifier.then(playgroundHaptics()),
+        modifier.then(playgroundHaptics()).then(dampedDragAnimation.modifier),
         contentAlignment = Alignment.CenterStart
     ) {
         Box(
@@ -148,7 +149,6 @@ fun LiquidToggle(
                     toggleableState = if (selected()) ToggleableState.On else ToggleableState.Off
                     onClick { onSelect(!selected()); true }
                 }
-                .then(dampedDragAnimation.modifier)
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(
                         backdrop,
@@ -173,7 +173,8 @@ fun LiquidToggle(
                     },
                     highlight = {
                         val progress = dampedDragAnimation.pressProgress
-                        Highlight.Ambient.copy(
+                        Highlight.Default.copy(
+                            style = com.kyant.backdrop.highlight.HighlightStyle.Default(angle=light()),
                             width = Highlight.Ambient.width / 1.5f,
                             blurRadius = Highlight.Ambient.blurRadius / 1.5f,
                             alpha = progress

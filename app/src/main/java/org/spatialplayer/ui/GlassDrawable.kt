@@ -1,153 +1,51 @@
 package org.spatialplayer.ui
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.view.View
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
+import org.spatialplayer.ui.backdrop.BackdropSurface
+import org.spatialplayer.ui.backdrop.NativeBackdropRenderer
 
-/** Reference GPU lens material for ordinary controls; bitmap/software canvases get a safe fill. */
-class GlassDrawable(
-    private val owner: View,
-    material: GlassStyle = GlassStyle(),
-) : Drawable() {
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1f
-        color = 0x40FFFFFF
+/** Native drawable contract around Backdrop's actual effects; software masks use a safe G2 fill. */
+class GlassDrawable(private val owner:View,material:GlassStyle=GlassStyle()):Drawable() {
+    private val fallbackPaint=Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rimPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply {style=Paint.Style.STROKE;strokeWidth=1f;color=0x40FFFFFF}
+    private val rect=RectF()
+    private val path=Path()
+    private var pathRadius=Float.NaN
+    private val materialState=mutableStateOf(material)
+    private val pressed=mutableStateOf(false)
+    private val touch=mutableStateOf(Offset.Zero)
+    private val renderer=NativeBackdropRenderer(owner) {backdrop->BackdropSurface(backdrop,materialState.value,pressed.value,owner.resources.displayMetrics.density,touch.value)}
+    internal var renderedFrames=0L;private set
+    var radiusPx=material.cornerRadiusPx
+    var style:GlassStyle=material
+        set(value){if(field==value)return;field=value;materialState.value=value;radiusPx=value.cornerRadiusPx;invalidateSelf()}
+    fun setTouchPoint(x:Float,y:Float){touch.value=Offset(x,y)}
+    override fun isStateful()=true
+    override fun onStateChange(state:IntArray):Boolean {
+        val changed=pressed.value!=state.contains(android.R.attr.state_pressed)
+        pressed.value=state.contains(android.R.attr.state_pressed)
+        return changed
     }
-    private val rect = RectF()
-    private val fallbackPath = android.graphics.Path()
-    private val renderer = GlassLensRenderer()
-    internal var renderedFrames = 0L
-        private set
-
-    /**
-     * Press state, in two parts.
-     *
-     * [pressAmount] is what the shader sees (0..1, ramped); [touchAmp] is separate because the local
-     * bulge under the finger only exists while the finger does, so releasing must fade the bulge with
-     * the ramp rather than leaving it behind.
-     *
-     * The press is driven by the drawable's own state, not by a touch listener: `RippleDrawable`
-     * above it reports the press through `setState`, so this needs no hook in the view's touch path
-     * and cannot steal a gesture from a control.
-     */
-    private var pressAmount = 0f
-    private var touchX = 0f
-    private var touchY = 0f
-    private var touchAmp = 0f
-    private var pressAnimator: ValueAnimator? = null
-    private var pressedState = false
-
-    /** Latched rather than read per press: it is a settings-provider query. */
-    private var animationsDisabled: Boolean? = null
-
-    /** Where the finger is, in this pane's coordinates. Ignored unless it is down. */
-    fun setTouchPoint(x: Float, y: Float) {
-        if (touchX == x && touchY == y) return
-        touchX = x
-        touchY = y
-        invalidateSelf()
-    }
-
-    override fun isStateful(): Boolean = true
-
-    override fun onStateChange(state: IntArray): Boolean {
-        val pressed = state.contains(android.R.attr.state_pressed)
-        val wasPressed = pressedState
-        pressedState = pressed
-        if (pressed != wasPressed) animatePress(pressed)
-        return super.onStateChange(state)
-    }
-
-    private fun animatePress(pressed: Boolean) {
-        pressAnimator?.cancel()
-        val disabled = animationsDisabled
-            ?: LightSourceController.animationsDisabled(owner.context).also { animationsDisabled = it }
-        if (disabled) {
-            touchAmp = if (pressed) 1f else 0f
-            pressAmount = if (pressed) 1f else 0f
-            invalidateSelf()
-            return
+    override fun onBoundsChange(bounds:android.graphics.Rect){rect.set(bounds);path.rewind()}
+    override fun draw(canvas:Canvas){
+        if(bounds.isEmpty)return
+        if(canvas.isHardwareAccelerated && !GlassBackdrop.capturing && renderer.draw(canvas)){renderedFrames++;return}
+        fallbackPaint.color=style.fallbackFill
+        if(path.isEmpty || pathRadius!=radiusPx) {
+            SmoothCorners.path(rect,radiusPx,path)
+            pathRadius=radiusPx
         }
-        if (pressed) touchAmp = 1f
-        pressAnimator = ValueAnimator.ofFloat(pressAmount, if (pressed) 1f else 0f).apply {
-            // Asymmetric: down is a displacement, up is a spring. See LiquidGlassView.animatePress.
-            duration = if (pressed) 180L else 320L
-            interpolator = android.view.animation.DecelerateInterpolator()
-            addUpdateListener {
-                pressAmount = it.animatedValue as Float
-                invalidateSelf()
-            }
-            if (!pressed) {
-                addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        touchAmp = 0f
-                        invalidateSelf()
-                    }
-                })
-            }
-            start()
-        }
+        canvas.drawPath(path,fallbackPaint);canvas.drawPath(path,rimPaint)
     }
-
-    /** Corner radius in px; a pill passes half its height. */
-    var radiusPx: Float = material.cornerRadiusPx
-
-    /** The tunable look; reassigning it restyles the pane in place. */
-    var style: GlassStyle = material
-        set(value) {
-            if (field == value) return
-            field = value
-            radiusPx = value.cornerRadiusPx
-            invalidateSelf()
-        }
-
-    override fun onBoundsChange(bounds: android.graphics.Rect) {
-        super.onBoundsChange(bounds)
-        rect.set(bounds)
-    }
-
-    override fun draw(canvas: Canvas) {
-        if (bounds.isEmpty) return
-        if (!canvas.isHardwareAccelerated || GlassBackdrop.capturing) {
-            drawFallback(canvas)
-            return
-        }
-        val params = GlassOptics.parameters(owner, style, pressAmount, touchX, touchY)
-        if (renderer.draw(canvas, owner, params, GlassOptics.margin(style))) renderedFrames++ else drawFallback(canvas)
-    }
-
-    fun release() { pressAnimator?.cancel(); renderer.release() }
-
-    private fun drawFallback(canvas: Canvas) {
-        fallbackPaint.color = style.fallbackFill
-        val radius = radiusPx.coerceAtMost(minOf(rect.width(), rect.height()) / 2f)
-        SmoothCorners.path(rect,radius,fallbackPath)
-        canvas.drawPath(fallbackPath,fallbackPaint)
-        canvas.drawPath(fallbackPath,rimPaint)
-    }
-
-    override fun setAlpha(alpha: Int) {
-        paint.alpha = alpha
-        fallbackPaint.alpha = alpha
-        invalidateSelf()
-    }
-
-    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
-        paint.colorFilter = colorFilter
-        fallbackPaint.colorFilter = colorFilter
-        invalidateSelf()
-    }
-
-    @Deprecated("Deprecated in Drawable", ReplaceWith("PixelFormat.TRANSLUCENT"))
-    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
-
+    fun release()=renderer.detach()
+    override fun setAlpha(alpha:Int){fallbackPaint.alpha=alpha;invalidateSelf()}
+    override fun setColorFilter(filter:android.graphics.ColorFilter?){fallbackPaint.colorFilter=filter;invalidateSelf()}
+    @Deprecated("Deprecated in Drawable")override fun getOpacity()=android.graphics.PixelFormat.TRANSLUCENT
 }

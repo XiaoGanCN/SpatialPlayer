@@ -20,6 +20,12 @@ object UiStateProbe {
     const val PLAYER = "org.spatialplayer.debug.UI_PLAYER"
     const val LIBRARY = "org.spatialplayer.debug.UI_LIBRARY"
     fun report(activity: Activity, intent: Intent) {
+        if(intent.hasExtra("restore_ambient")) {
+            val value=intent.getBooleanExtra("restore_ambient",true)
+            SettingsStore(activity).ambientEnabled=value
+            (activity as? PlayerActivity)?.onChoiceSelected(org.spatialplayer.ui.InspectorSheet.Panel.SCALING,
+                org.spatialplayer.ui.InspectorSheet.Choice(org.spatialplayer.ui.InspectorSheet.Panel.SCALING,if(value)"ambient_on" else "ambient_off","Ambient glow"))
+        }
         if (intent.getBooleanExtra("mutate_backdrop",false)) (activity as? TopFadeProbeActivity)?.changePattern()
         intent.getStringExtra("restore_upmix")?.let {
             val state = runCatching { JSONObject(it) }.getOrElse { error -> Log.e("UiStateProbe", "Invalid restore payload", error); return }
@@ -33,7 +39,7 @@ object UiStateProbe {
         intent.getStringExtra("restore_source")?.let { (activity as? MainActivity)?.restoreSourceForTest(it) }
         if (intent.hasExtra("restore_spatial")) SettingsStore(activity).spatialEnabled = intent.getBooleanExtra("restore_spatial", true)
         val views = JSONObject()
-        val names = listOf("buttonOpenFile", "headerTitle", "collectionSummary", "listTopFade", "scanProgress", "timelineRow", "transportRow", "buttonPlayPause", "buttonRewind", "buttonForward", "seekFeedback", "timeCurrent", "timeRemaining", "playerChips", "chipStrip", "buttonBack", "buttonInspect", "buttonMetadata", "buttonMore", "buttonSpeed",
+        val names = listOf("ambientGlow", "buttonOpenFile", "headerTitle", "collectionSummary", "listTopFade", "scanProgress", "timelineRow", "transportRow", "buttonPlayPause", "buttonRewind", "buttonForward", "seekFeedback", "timeCurrent", "timeRemaining", "playerChips", "chipStrip", "buttonBack", "buttonInspect", "buttonMetadata", "buttonMore", "buttonSpeed",
             "seekBar", "controlGlass", "playerHeader", "buttonLibrary", "buttonPoweramp", "buttonSettings", "buttonRefresh", "libraryBody", "fileList")
         fun add(name: String, view: View) {
             val pos = IntArray(2)
@@ -62,6 +68,7 @@ object UiStateProbe {
         val nodes = JSONArray()
         fun scan(view: View, path: String) {
             val glass = org.spatialplayer.ui.GlassInstaller.material(view)
+            if(intent.getBooleanExtra("redraw_fade",false) && view is org.spatialplayer.ui.TopFadeBlurView)view.invalidate()
             if (intent.getBooleanExtra("refresh_glass", false) && glass != null) view.invalidate()
             if ((intent.getBooleanExtra("include_text",false) && view is android.widget.TextView) || view is org.spatialplayer.ui.TopFadeBlurView || glass != null || view is org.spatialplayer.ui.GlassSlider || view is org.spatialplayer.ui.GlassSwitch || view is android.widget.ScrollView) {
                 val position = IntArray(2); view.getLocationOnScreen(position)
@@ -70,6 +77,8 @@ object UiStateProbe {
                     .put("text",(view as? android.widget.TextView)?.text?.toString())
                     .put("selected", view.isSelected).put("tint",glass?.style?.body ?: 0)
                     .put("tag", view.tag?.toString()).put("scrollY", view.scrollY).put("height", view.height).put("width", view.width)
+                    .put("clip",view.clipToOutline)
+                    .put("scrollRange",(view as? android.widget.ScrollView)?.let { ((it.getChildAt(0)?.height ?: 0)+it.paddingTop+it.paddingBottom-it.height).coerceAtLeast(0) } ?: 0)
                     .put("translationY", view.translationY).put("scaleY", view.scaleY)
                     .put("frames", glass?.renderedFrames ?: (view as? org.spatialplayer.ui.TopFadeBlurView)?.renderedFrames ?: 0).put("pressed", view.isPressed)
                     .put("engaged", (view as? org.spatialplayer.ui.GlassSlider)?.glassEngaged ?: false)
@@ -85,6 +94,7 @@ object UiStateProbe {
         if (overflow?.isOpen == true) overflow.rootForTest()?.let { scan(it, "sheet") }
         val sample = PlaybackEngine.peek()?.sample()
         val seek = activity.findViewById<org.spatialplayer.ui.SeekBarView>(R.id.seekBar)
+        val ambient = activity.findViewById<org.spatialplayer.ui.AmbientGlowView>(R.id.ambientGlow)
         val settings = SettingsStore(activity)
         val pass = StereoUpmixProcessor()
         val native = AudioProcessor.AudioFormat(48000, 6, C.ENCODING_PCM_16BIT)
@@ -111,6 +121,12 @@ object UiStateProbe {
             .put("videoBackdropReady", org.spatialplayer.ui.GlassBackdrop.videoReady(activity.window.decorView))
             .put("videoPreviewFrames", org.spatialplayer.ui.GlassBackdrop.videoPreviewFrames)
             .put("glassFrames", org.spatialplayer.ui.GlassLensRenderer.framesRendered)
+            .put("timelineGlass",seek?.glassEngagement ?: 0f)
+            .put("backdropRecords",org.spatialplayer.ui.backdrop.NativeBackdropRenderer.recordings)
+            .put("backdropHosts",org.spatialplayer.ui.backdrop.NativeBackdropRenderer.hostCount)
+            .put("ambientSetting",settings.ambientEnabled)
+            .put("ambientVisible",ambient?.isShown ?: false)
+            .put("ambientUpdates",ambient?.colorUpdates ?: 0)
             .put("surroundBypass", bypass)
             .put("upmixSettings", JSONObject().put("advanced", settings.upmixAdvanced).put("mode", settings.upmixMode).put("matrix", settings.upmixMatrix))
         val bytes = java.io.ByteArrayOutputStream().also { buffer ->

@@ -51,4 +51,5 @@
     <item name="glass_role" type="id" />
     <item name="glass_role_sheet" type="id" />
     <item name="glass_role_panel_active" type="id" />
+    <item name="sheet_resize" type="id" />
 </resources>

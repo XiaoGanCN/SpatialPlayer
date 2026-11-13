@@ -61,6 +61,7 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:minHeight="24dp"
             android:visibility="visible"
             android:layout_marginHorizontal="16dp"
             android:layout_marginBottom="12dp">
@@ -152,12 +153,38 @@
             android:indeterminate="true"
             android:layout_marginTop="8dp"
             android:visibility="invisible" />
-        <LinearLayout
+        <FrameLayout
             android:id="@+id/libraryBody"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:layout_weight="1">
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/fileList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:paddingHorizontal="16dp"
+                    android:paddingTop="56dp"
+                    android:paddingBottom="20dp"
+                    android:clipToPadding="false"
+                    android:overScrollMode="never" />
+
+                <TextView
+                    android:id="@+id/emptyState"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="32dp"
+                    android:text="Open a file to get started."
+                    android:textSize="17sp"
+                    android:textColor="@color/text_secondary" />
+            </FrameLayout>
+                <org.spatialplayer.ui.TopFadeBlurView
+                    android:id="@+id/listTopFade"
+                    android:layout_width="match_parent"
+                    android:layout_height="68dp" />
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
@@ -183,33 +210,6 @@
                 android:src="@drawable/ic_refresh"
                 android:contentDescription="@string/refresh" />
             </LinearLayout>
-            <FrameLayout
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1">
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/fileList"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:paddingHorizontal="16dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="20dp"
-                    android:clipToPadding="false"
-                    android:overScrollMode="never" />
-                <org.spatialplayer.ui.TopFadeBlurView
-                    android:id="@+id/listTopFade"
-                    android:layout_width="match_parent"
-                    android:layout_height="36dp" />
-                <TextView
-                    android:id="@+id/emptyState"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:gravity="center"
-                    android:padding="32dp"
-                    android:text="Open a file to get started."
-                    android:textSize="17sp"
-                    android:textColor="@color/text_secondary" />
-            </FrameLayout>
-        </LinearLayout>
+        </FrameLayout>
     </LinearLayout>
 </FrameLayout>

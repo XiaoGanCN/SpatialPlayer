@@ -7,38 +7,35 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
-import kotlin.math.*
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import com.kyant.shapes.RoundedRectangle
 
-/** Continuous-curvature corner profile, shared with the lens SDF. Capsules remain circular. */
+/** The exact Kyant0 Shapes G2 contour, also used for native clipping and ripple masks. */
 internal object SmoothCorners {
-    fun path(rect: RectF, radius: Float, result: Path = Path()): Path {
+    fun path(rect: RectF, radius: Float, result: Path=Path()): Path {
         result.rewind()
-        val r = radius.coerceIn(0f, min(rect.width(),rect.height())/2f)
-        if (r == 0f || r >= min(rect.width(),rect.height())/2f - .5f) {
-            result.addRoundRect(rect,r,r,Path.Direction.CW)
-            return result
+        if(rect.isEmpty)return result
+        val outline=RoundedRectangle(radius.dp).createOutline(Size(rect.width(),rect.height()),LayoutDirection.Ltr,Density(1f))
+        when(outline) {
+            is Outline.Generic -> result.set(outline.path.asAndroidPath())
+            is Outline.Rectangle -> result.addRect(0f,0f,rect.width(),rect.height(),Path.Direction.CW)
+            is Outline.Rounded -> result.addRoundRect(RectF(0f,0f,rect.width(),rect.height()),radius,radius,Path.Direction.CW)
         }
-        val centres = arrayOf(rect.right-r to rect.top+r, rect.right-r to rect.bottom-r,
-            rect.left+r to rect.bottom-r, rect.left+r to rect.top+r)
-        centres.forEachIndexed { corner, (cx,cy) ->
-            for (i in 0..32) {
-                val angle = (-PI/2 + corner*PI/2 + i*PI/64)
-                val c = cos(angle); val s = sin(angle)
-                val x = cx + r * (sign(c)*abs(c).pow(2.0/2.4)).toFloat()
-                val y = cy + r * (sign(s)*abs(s).pow(2.0/2.4)).toFloat()
-                if (corner==0 && i==0) result.moveTo(x,y) else result.lineTo(x,y)
-            }
-        }
-        result.close()
+        result.offset(rect.left,rect.top)
         return result
     }
 }
-internal class SmoothMask(private val radius: Float) : Drawable() {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE }
-    private val path = Path()
-    override fun onBoundsChange(bounds: android.graphics.Rect) { SmoothCorners.path(RectF(bounds),radius,path) }
-    override fun draw(canvas: Canvas) { canvas.drawPath(path,paint) }
-    override fun setAlpha(alpha: Int) { paint.alpha=alpha; invalidateSelf() }
-    override fun setColorFilter(filter: ColorFilter?) { paint.colorFilter=filter;invalidateSelf() }
+internal class SmoothMask(private val radius: Float):Drawable() {
+    private val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply {color=android.graphics.Color.WHITE}
+    private val path=Path()
+    override fun onBoundsChange(bounds:android.graphics.Rect) {SmoothCorners.path(RectF(bounds),radius,path)}
+    override fun draw(canvas:Canvas){canvas.drawPath(path,paint)}
+    override fun setAlpha(alpha:Int){paint.alpha=alpha;invalidateSelf()}
+    override fun setColorFilter(filter:ColorFilter?){paint.colorFilter=filter;invalidateSelf()}
     @Deprecated("Deprecated in Drawable") override fun getOpacity()=PixelFormat.TRANSLUCENT
 }

@@ -47,7 +47,6 @@ import org.spatialplayer.media.PlayerEngine
 import org.spatialplayer.media.PlayerSample
 import org.spatialplayer.media.UpmixMatrix
 import org.spatialplayer.media.UpmixMode
-import org.spatialplayer.ui.AmbientSampler
 import org.spatialplayer.ui.ChipFade
 import org.spatialplayer.ui.ChipStrip
 import org.spatialplayer.ui.GlassInstaller
@@ -98,7 +97,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
     /** The capsule's overflow: speed, scaling, subtitles and audio. */
     private lateinit var overflowSheet: OverflowSheet
-    private var ambientSampler: AmbientSampler? = null
     private val ambientHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private var displayName: String = ""
@@ -809,8 +807,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         }
         val inside = touchOnControl
         if (!inside) {
-            if (ev.actionMasked == MotionEvent.ACTION_DOWN) Haptics.touch(binding.gestureLayer)
-            if (ev.actionMasked == MotionEvent.ACTION_UP) Haptics.release(binding.gestureLayer)
             if (gestures.onTouchEvent(ev)) return true
         }
         return super.dispatchTouchEvent(ev)
@@ -988,8 +984,13 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     }
 
     private fun startAmbientSampling() {
-        ambientSampler?.stop()
-        binding.ambientGlow.visibility = View.GONE
+        val enabled=ambientEnabled && engine.hasVideo && !isInPictureInPictureMode
+        binding.ambientGlow.visibility=if(enabled)View.VISIBLE else View.GONE
+        binding.ambientGlow.glowEnabled=enabled
+        binding.ambientGlow.intensity=.45f
+        binding.controlGlass.setAmbientColors(if(enabled) { top,bottom,left,right ->
+            binding.ambientGlow.setEdgeColors(top,bottom,left,right)
+        } else null)
     }
 
     /**
@@ -1020,7 +1021,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         templateRect = rect
         binding.ambientGlow.setVideoRect(rect)
-        ambientSampler?.setVideoRect(rect)
         // The glass reads its backdrop out of the surface's own buffer, whose geometry the decoder
         // set to the frame size. PixelCopy addresses that rectangle in buffer pixels, so the glass
         // cannot work out where the pane sits in the picture without it.
@@ -1225,7 +1225,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             engine.pause()
         }
         rememberPlaybackPosition()
-        ambientSampler?.stop()
+        binding.controlGlass.setAmbientColors(null)
     }
 
     /**
@@ -1255,8 +1255,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         rememberPlaybackPosition()
         refreshJob?.cancel()
         gestures.release()
-        ambientSampler?.release()
-        ambientSampler = null
+        binding.controlGlass.setAmbientColors(null)
         hideControlsRunnable?.let { ambientHandler.removeCallbacks(it) }
         deferredBackgroundDecision = false
         // Both are references to this activity; leaving either set would keep a destroyed view tree
@@ -1314,6 +1313,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         binding.controlsOverlay.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
         binding.ambientGlow.visibility = View.GONE
+        if(isInPictureInPictureMode)binding.controlGlass.setAmbientColors(null) else startAmbientSampling()
     }
 
     // ------------------------------------------------------------------ engine callbacks
@@ -1954,6 +1954,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                 binding.ambientGlow.glowEnabled = true
             }
         }
+        startAmbientSampling()
         populateScalingPanel()
     }
 

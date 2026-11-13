@@ -1,5 +1,5 @@
 // From Kyant0/AndroidLiquidGlass 1.0.6 (Apache-2.0). See assets/licenses/Backdrop-NOTICE.txt.
-package org.spatialplayer.playground
+package org.spatialplayer.ui.components
 
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceAtMost
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
-import org.spatialplayer.playground.InteractiveHighlight
+import org.spatialplayer.ui.components.InteractiveHighlight
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens

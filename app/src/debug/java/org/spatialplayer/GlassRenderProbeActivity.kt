@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
-import org.spatialplayer.ui.GlassLensRenderer
 import org.spatialplayer.ui.GlassInstaller
 
 /** Exercises bitmap rendering with a real initialized backdrop, not just an empty fallback. */
@@ -21,7 +20,7 @@ class GlassRenderProbeActivity : AppCompatActivity() {
         setContentView(pane)
         GlassInstaller.apply(pane)
         pane.postDelayed({
-            check(GlassLensRenderer.framesRendered > 0) { "GPU lens was not initialized" }
+            check(org.spatialplayer.ui.backdrop.NativeBackdropRenderer.recordings > 0) { "GPU lens was not initialized" }
             val ripple = pane.background as RippleDrawable
             check(ripple.findDrawableByLayerId(android.R.id.mask) != null) { "No explicit ripple mask" }
             val bitmap = Bitmap.createBitmap(160, 100, Bitmap.Config.ARGB_8888)

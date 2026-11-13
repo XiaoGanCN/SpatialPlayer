@@ -1,5 +1,5 @@
 // From Kyant0/AndroidLiquidGlass 1.0.6 (Apache-2.0). See assets/licenses/Backdrop-NOTICE.txt.
-package org.spatialplayer.playground
+package org.spatialplayer.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,7 +42,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import org.spatialplayer.playground.DampedDragAnimation
+import org.spatialplayer.ui.components.DampedDragAnimation
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -67,6 +69,7 @@ fun LiquidSlider(
         if (nextStep != previousStep) org.spatialplayer.ui.Haptics.tick(feedbackView)
         onValueChange(newValue)
     }
+    val light = org.spatialplayer.ui.backdrop.LocalGlassAngle.current
     val isLightTheme = !isSystemInDarkTheme()
     val accentColor =
         if (isLightTheme) Color(0xFF0088FF)
@@ -85,11 +88,15 @@ fun LiquidSlider(
         contentAlignment = Alignment.CenterStart
     ) {
         val trackWidth = constraints.maxWidth
+        val liveWidth by rememberUpdatedState(trackWidth)
+        val liveRange by rememberUpdatedState(valueRange)
+        val change by rememberUpdatedState<(Float)->Unit> { update(it) }
+        var dragValue by remember { mutableFloatStateOf(value()) }
 
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
         var didDrag by remember { mutableStateOf(false) }
-        val dampedDragAnimation = remember(animationScope) {
+        val dampedDragAnimation = remember(animationScope,valueRange,visibilityThreshold) {
             DampedDragAnimation(
                 animationScope = animationScope,
                 initialValue = value(),
@@ -97,21 +104,20 @@ fun LiquidSlider(
                 visibilityThreshold = visibilityThreshold,
                 initialScale = 1f,
                 pressedScale = 1.5f,
-                onDragStarted = {},
+                onDragStarted = { dragValue=value();didDrag=false },
                 onDragStopped = {
                     if (didDrag) {
-                        update(targetValue)
+                        change(dragValue)
                     }
                 },
                 onDrag = { _, dragAmount ->
                     if (!didDrag) {
                         didDrag = dragAmount.x != 0f
                     }
-                    val delta = (valueRange.endInclusive - valueRange.start) * (dragAmount.x / trackWidth)
-                    update(
-                        if (isLtr) (targetValue + delta).coerceIn(valueRange)
-                        else (targetValue - delta).coerceIn(valueRange)
-                    )
+                    val range=liveRange
+                    val delta=(range.endInclusive-range.start)*(dragAmount.x/liveWidth.coerceAtLeast(1))
+                    dragValue=(if(isLtr)dragValue+delta else dragValue-delta).coerceIn(range)
+                    change(dragValue)
                 }
             )
         }
@@ -131,13 +137,15 @@ fun LiquidSlider(
                     .background(trackColor)
                     .pointerInput(animationScope) {
                         detectTapGestures { position ->
-                            val delta = (valueRange.endInclusive - valueRange.start) * (position.x / trackWidth)
+                            val range = liveRange
+                            val delta = (range.endInclusive - range.start) * (position.x / liveWidth.coerceAtLeast(1))
                             val targetValue =
-                                (if (isLtr) valueRange.start + delta
-                                else valueRange.endInclusive - delta)
-                                    .coerceIn(valueRange)
+                                (if (isLtr) range.start + delta
+                                else range.endInclusive - delta)
+                                    .coerceIn(range)
                             dampedDragAnimation.animateToValue(targetValue)
-                            update(targetValue)
+                            dragValue = targetValue
+                            change(targetValue)
                         }
                     }
                     .height(6f.dp)
@@ -191,7 +199,8 @@ fun LiquidSlider(
                     },
                     highlight = {
                         val progress = dampedDragAnimation.pressProgress
-                        Highlight.Ambient.copy(
+                        Highlight.Default.copy(
+                            style = com.kyant.backdrop.highlight.HighlightStyle.Default(angle=light()),
                             width = Highlight.Ambient.width / 1.5f,
                             blurRadius = Highlight.Ambient.blurRadius / 1.5f,
                             alpha = progress

@@ -21,9 +21,10 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
     private val masks = Array(4) { RuntimeShader("""
         uniform shader image;
         uniform float height;
+        uniform float margin;
         uniform float level;
         half4 main(float2 p) {
-            float y = clamp(p.y / height, 0.0, 1.0);
+            float y = clamp((p.y-margin) / height, 0.0, 1.0);
             float ramp = 1.0 - smoothstep(0.0, 1.0, y);
             float weight = max(0.0, 1.0 - abs(ramp * 3.0 - level));
             float fade = 1.0 - smoothstep(0.60, 1.0, y);
@@ -58,15 +59,17 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
         if (!canvas.isHardwareAccelerated || width == 0 || height == 0 || GlassBackdrop.capturing) return
         val scale = 1f / 3f
         val w = ceil(width * scale).toInt(); val h = ceil(height * scale).toInt()
+        val margin=ceil(72f*resources.displayMetrics.density*scale).toInt()
+        val recW=w+margin*2;val recH=h+margin*2
         val key = (w.toLong() shl 32) or h.toLong()
         if (key != sizeKey) {
             sizeKey = key
-            source.setPosition(0, 0, w, h)
+            source.setPosition(0,0,recW,recH)
             levels.forEachIndexed { i, node ->
-                node.setPosition(0, 0, w, h)
+                node.setPosition(-margin,-margin,w+margin,h+margin)
                 node.setUseCompositingLayer(true, additive)
                 val mask = masks[i]
-                mask.setFloatUniform("height", h.toFloat()); mask.setFloatUniform("level", i.toFloat())
+                mask.setFloatUniform("height", h.toFloat()); mask.setFloatUniform("margin",margin.toFloat()); mask.setFloatUniform("level", i.toFloat())
                 val opacity = RenderEffect.createRuntimeShaderEffect(mask, "image")
                 val radius = 24f * resources.displayMetrics.density * scale * i / 3f
                 node.setRenderEffect(if (i == 0) opacity else RenderEffect.createChainEffect(opacity,
@@ -75,16 +78,19 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
         }
         val a = IntArray(2); val b = IntArray(2)
         backdrop.getLocationOnScreen(a); getLocationOnScreen(b)
-        val recording = source.beginRecording(w, h)
+        val recording = source.beginRecording(recW,recH)
         try {
+            recording.drawColor(androidx.core.content.ContextCompat.getColor(context,org.spatialplayer.R.color.bg_deep))
+            recording.translate(margin.toFloat(),margin.toFloat())
             recording.scale(scale, scale)
+            if(GlassBackdrop.videoReady(this))GlassBackdrop.draw(recording,this)
             recording.translate((a[0]-b[0]).toFloat(), (a[1]-b[1]).toFloat())
             capture.draw(recording, backdrop, this, includeGlass = true)
         } finally { source.endRecording() }
-        val save = canvas.save(); canvas.scale(1f/scale, 1f/scale)
+        val save = canvas.save(); canvas.clipRect(0,0,width,height);canvas.scale(1f/scale, 1f/scale)
         val blend = canvas.saveLayer(0f,0f,w.toFloat(),h.toFloat(),null)
         for (node in levels) {
-            val content = node.beginRecording(w,h)
+            val content = node.beginRecording(recW,recH)
             try { content.drawRenderNode(source) } finally { node.endRecording() }
             canvas.drawRenderNode(node)
         }

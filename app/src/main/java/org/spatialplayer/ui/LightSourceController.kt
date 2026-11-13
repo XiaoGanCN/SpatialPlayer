@@ -229,7 +229,7 @@ object LightSourceController : SensorEventListener {
             lastLoggedAt = now
             Log.i(TAG, "light dir ${"%.3f".format(nx)}, ${"%.3f".format(ny)} tilt=${"%.2f".format(tilt)}")
         }
-        synchronized(listeners) { listeners.toList() }.forEach { it.postInvalidateOnAnimation() }
+        synchronized(listeners) { listeners.toList() }.forEach { org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidate(it); it.postInvalidateOnAnimation() }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

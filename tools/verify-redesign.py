@@ -21,10 +21,11 @@ checks = 0
 def adb(*args):
     if args and args[0] == "shell":
         args = ("shell", shlex.join(args[1:]))
-    return subprocess.check_output([ADB, *args], text=True, timeout=35).strip()
+    # Vendor logcat can contain malformed UTF-8. Preserve the report without aborting cleanup.
+    return subprocess.check_output([ADB, *args], text=True, errors="replace", timeout=35).strip()
 
 def launch(name, *args):
-    adb("shell", "am", "start", "-n", PKG + "/org.spatialplayer." + name, *args)
+    adb("shell", "am", "start", "-W", "-n", PKG + "/org.spatialplayer." + name, *args)
 
 def snapshot(screen="PLAYER", **extras):
     request_id = str(time.monotonic_ns())

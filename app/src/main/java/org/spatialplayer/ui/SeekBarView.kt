@@ -74,6 +74,7 @@ class SeekBarView @JvmOverloads constructor(
     private var hoverFraction = 0f
 
     /** Grows on touch for a tangible handle. */
+    internal val glassEngagement:Float get()=((thumbScale-1f)/.25f).coerceIn(0f,1f)
     private var thumbScale = 1f
     private var thumbAnimator: ValueAnimator? = null
 
@@ -207,17 +208,20 @@ class SeekBarView @JvmOverloads constructor(
         }
 
         // Thumb: a plain white dot that grows on touch.
-        val radius = if (scrubbing) scrubThumbRadiusPx else thumbRadiusPx * thumbScale
+        val engagement = ((thumbScale-1f)/.25f).coerceIn(0f,1f)
+        val radius = thumbRadiusPx+(scrubThumbRadiusPx-thumbRadiusPx)*engagement
         val handle = RectF(playedX-radius*1.4f, centerY-radius, playedX+radius*1.4f, centerY+radius)
         canvas.drawRoundRect(handle, radius, radius, thumbPaint)
-        if (scrubbing && canvas.isHardwareAccelerated && !GlassBackdrop.capturing) {
+        if (engagement > .001f && canvas.isHardwareAccelerated && !GlassBackdrop.capturing) {
             val style = GlassStyle(cornerRadiusPx = radius, blurRadiusPx = 10f, tint = 0x30FFFFFF)
-            lens.draw(canvas,this,GlassOptics.parameters(this,style,1f,playedX,centerY,handle),GlassOptics.margin(style)) { backdrop ->
+            val fade = canvas.saveLayerAlpha(handle.left-2,handle.top-2,handle.right+2,handle.bottom+2,(engagement*255).toInt())
+            lens.draw(canvas,this,GlassOptics.parameters(this,style,engagement,playedX,centerY,handle),GlassOptics.margin(style)) { backdrop ->
                 GlassBackdrop.draw(backdrop,this)
                 backdrop.drawRoundRect(trackRect,halfTrack,halfTrack,trackPaint)
                 if (bufferedX > left) backdrop.drawRoundRect(bufferedRect,halfTrack,halfTrack,bufferedPaint)
                 if (playedX > left) backdrop.drawRoundRect(playedRect,playedHalf,playedHalf,playedPaint)
             }
+            canvas.restoreToCount(fade)
         }
     }
 

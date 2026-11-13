@@ -9,6 +9,11 @@ import java.util.IdentityHashMap
 
 /** Record the backdrop without drawing active ancestors or replaying ScrollView edge effects. */
 internal class BackdropCapture {
+    fun contentDirty(view: View): Boolean {
+        if(!view.isShown || view.alpha<=0f || view is androidx.compose.ui.platform.AbstractComposeView || view is TopFadeBlurView || GlassInstaller.isGlass(view))return false
+        if(view is ViewGroup)return (0 until view.childCount).any { contentDirty(view.getChildAt(it)) }
+        return view.isDirty || view.isLayoutRequested
+    }
     fun draw(canvas: Canvas, source: View, glass: View, includeGlass: Boolean = false) {
         val ancestors = Collections.newSetFromMap(IdentityHashMap<View, Boolean>())
         var parent = glass.parent
@@ -17,7 +22,7 @@ internal class BackdropCapture {
     }
 
     private fun record(canvas: Canvas, view: View, glass: View, ancestors: Set<View>, includeGlass: Boolean) {
-        if (view is TopFadeBlurView || view === glass || view.visibility != View.VISIBLE || view.alpha <= 0f) return
+        if (view is androidx.compose.ui.platform.AbstractComposeView || view is TopFadeBlurView || view === glass || view.visibility != View.VISIBLE || view.alpha <= 0f) return
         if (canvas.quickReject(0f,0f,view.width.toFloat(),view.height.toFloat())) return
         // A neighboring glass display list can refer back to this pane. Never sample it.
         if (!includeGlass && GlassInstaller.isGlass(view) && view !in ancestors) return
