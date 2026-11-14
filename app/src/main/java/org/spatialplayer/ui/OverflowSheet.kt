@@ -66,10 +66,8 @@ class OverflowSheet(private val context: Context) {
         d.setOnDismissListener { dialog = null; panel = null; dismissed() }
         dialog = d
         GlassTheme.configureSheet(d, minOf(dp(actions.size * 64 + 92), (context.resources.displayMetrics.heightPixels * .78f).toInt()))
-        if(!d.isShowing)d.show()
-        GlassInstaller.apply(layout)
-        column.alpha = 0f
-        column.animate().alpha(1f).setDuration(180).start()
+        if(!d.isShowing)GlassTheme.showSheet(d,layout)
+        else GlassInstaller.apply(layout)
     }
     private fun dp(value: Int) = GlassTheme.dp(context, value.toFloat())
 }

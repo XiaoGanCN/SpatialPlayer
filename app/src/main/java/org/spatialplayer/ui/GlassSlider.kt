@@ -40,7 +40,12 @@ class GlassSlider @JvmOverloads constructor(context: Context, attrs: AttributeSe
         setPadding(0,0,0,0)
         GlassInstaller.watch(this)
     }
-    override fun setProgress(progress: Int) { super.setProgress(progress);if(!fromCompose)model?.floatValue=super.getProgress().toFloat();invalidate() }
+    override fun setProgress(progress: Int) {
+        super.setProgress(progress)
+        if(!fromCompose)model?.floatValue=super.getProgress().toFloat()
+        GlassBackdrop.materialChanged(this)
+        invalidate()
+    }
     override fun setOnSeekBarChangeListener(listener: SeekBar.OnSeekBarChangeListener?) {
         callback=listener
         super.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
@@ -54,7 +59,9 @@ class GlassSlider @JvmOverloads constructor(context: Context, attrs: AttributeSe
     }
     override fun onMeasure(w: Int,h: Int) { super.onMeasure(w,h);setMeasuredDimension(measuredWidth,resolveSize(dp(48f),h)) }
     override fun onDraw(canvas: Canvas) {
-        if(!GlassBackdrop.capturing && canvas.isHardwareAccelerated)renderer.draw(canvas)
+        if(!GlassBackdrop.capturing && canvas.isHardwareAccelerated) {
+            if(GlassBackdrop.snapshotting)renderer.drawCached(canvas) else renderer.draw(canvas)
+        }
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if(!isEnabled)return false

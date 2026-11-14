@@ -114,8 +114,8 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   only align the host's physical position for input. Dialog decor needs ViewTree lifecycle owners.
   Preserve layout-parameter types on resize, dispose
   on detach, and defer removing decor siblings until root detachment finishes.
-  Button hosts/display lists reserve drawing space for the spring expansion. Ordinary parent rows
-  allow overflow; scrolling viewports and explicit sheet outlines retain their clips.
+  Native buttons scale their full View around an explicit center pivot; keep Compose material
+  coordinates untransformed. Ordinary parent rows allow expansion; viewports/sheet outlines clip it.
 - Forwarded touches must rebase both raw and local coordinates. Slider taps and drags use live track
   width after rotation; continuous movement accumulates before the native integer value snaps.
   One full-track gesture handles DOWN and MOVE immediately. Native sliders reserve 32 dp at each
@@ -131,15 +131,23 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   caps and clipping keep live-rotated landscape drawers inside the window. `SheetWindow` transfers
   one dialog and shell between Overflow and Inspector: no dismiss/reopen or chrome flash on navigation.
   The window has a fixed safe cap; its bottom-aligned pane animates natural height. Configure before
-  showing, disable platform window motion, and fade content in place. The wrapper uses the actual
-  visible display frame to keep numeric entry above vendor keyboards without double IME padding.
-  Headers remain fully blurred through their height, with a 32 dp fade over the content beneath.
+  showing and disable platform window motion. A shared 260 ms shell entrance supplies popup motion;
+  submenu navigation retains the shell. Option changes update existing rows and callbacks in place.
+  Stereo stage also retains its channel/source/slider views. The wrapper uses the actual visible
+  display frame for IME space. Numeric actions sit in a footer; very short landscape IME space uses
+  one row containing the field and both actions. Cancel competing height morphs when IME space changes.
+  Header frosting fades within its own bounds, keeping resting content sharp.
   Transparent windows have compositor blur disabled to avoid double frost.
 - Native cards, clips and ripple masks use the exact Kyant0 Shapes G2 path; circles/capsules remain circular.
 - `TopFadeBlurView` uses a one-third-size GPU recording and four Gaussian levels with additive masks:
   blur intensity eases down the strip and opacity fades at the foot, with no scrim. It excludes itself
   from recording and never calls live scrolling ancestors' `draw()`. Three-sigma recording outsets
   prevent the top-edge flash. Keep the contrast and repeated source-change fixtures.
+  Its base includes the physical scene even without video; padding must not paint a black slab.
+  Capture completed glass/slider/switch display lists for the fade, never run nested live lenses.
+  Cache scrolling foreground separately from live video and retain all four blur-level display lists.
+  Check visible native descendants inside glass containers for updates. Plain label stamps include
+  presentation/geometry; explicit layout requests always bypass them. Editable/spanned text stays live.
 - Video previews clear stale frames on source/size changes and discard old PixelCopy callbacks.
 - Player overlay is a FrameLayout: independent safe-area header, useful stream chips, width-capped
   two-row transport. Button radii derive from half the measured short side; square controls are circles.
@@ -159,7 +167,8 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   Media-list scrolling and hiding player controls are silent; actual buttons retain feedback.
 - Switches use the library's deforming glass thumb, a full-track gesture target, and active blue #0A84FF.
   Active options use blue tint and native selected state, with no checkmark. Native glass buttons
-  share the catalog's `InteractiveHighlight` spring, finger highlight and deformation with the playground.
+  use the catalog finger highlight plus centered native spring scaling of material and foreground.
+  The obsolete Regular/Clear material selector and old circular seek icons have been removed.
 - `SpatialPlayerApplication` / `HighRefreshRate` request up to 120Hz at the current resolution for
   activity and dialog UI windows; API 35+ also receives the high frame-rate category. This is a UI
   vote, not a resolution or HDR-surface mode change. OS thermal/power/vendor policy still applies.
@@ -204,6 +213,10 @@ Original movie (73 GB; never push the whole file):
   live bar grabs, both held endpoints, high-refresh vote, stable drawer identity/bottom anchor,
   tint selection, and gap-free header fades in both orientations. Artifacts: `smoke/out/glass-followup/`.
 - Crash regression: `python3 tools/verify-glass-touch.py` (real held presses + software-canvas rendering).
+- Drawer regression: `python3 tools/verify-drawers.py` checks stable selection/slider identities,
+  actual matrix gains, centered held presses, header bounds and field/actions above the real IME.
+  Preview-liveness harnesses use a small moving 60fps fixture; the SMPTE grid has static pixels,
+  so correct duplicate suppression can stop its distinct-preview counter while decoding continues.
 - Codec/identity regression: `tools/verify-multichannel.sh`; spatial tests: `tools/verify-spatial-audio.sh`.
 - Other harnesses cover Poweramp refresh, chapters, background policy, panels, gestures, rotation and glass.
   Update geometry assumptions when the design changes; do not lower thresholds to conceal a failure.
@@ -213,6 +226,10 @@ Original movie (73 GB; never push the whole file):
 ## Current verification / remaining work
 
 - Debug/release builds and debug lint pass with production Backdrop; **36 host checks pass**.
+- **22 drawer checks pass**, including real GPU cache freshness inside a glass container, idle
+  settling, retained option/matrix controls, centered presses and full numeric field/actions above
+  the keyboard in portrait/landscape. A device recording confirms whole-shell popup motion.
+  Astra's stale-descendant and text-layout cache findings are fixed and reviewed.
 - **33 glass experiment checks** and **23 UI polish checks** pass, including
   progressive blur contrast, 150% / typed sensitivity, Stereo stage, new library interaction, stable
   collections, repeated music → video preview recovery, glass holds and menu navigation.
@@ -235,10 +252,9 @@ Original movie (73 GB; never push the whole file):
   **one effect recording**; numeric input remains usable above the keyboard. A 60fps video fixture
   delivered ~60 distinct preview frames/s after exact native bitmap deduplication. The reference phone reports a
   120Hz window vote and 120Hz display refresh; this does not guarantee 120 rendered UI fps.
-- Six alternating scrolls: library p95 **20 → 14 ms**, Settings **36 → 24 ms**; Settings missed-frame
-  rate **17% → 1.6%** after source/sensor decoupling. Use current artifacts, not historical counts,
-  to assess performance. HDR drawer scroll misses **33% → 8%**, p95 **28 → 20 ms**, with zero
-  video drops; full-sheet blur no longer refreshes just because its child rows move. Fast scrolling
-  can still miss individual deadlines.
+- Final six alternating landscape HDR drawer scrolls: missed frames **7.3% → 5.7%**, p95 **20 → 21 ms**,
+  with hardware HEVC and zero video drops. Source/sensor separation, stable controls and separately
+  cached header content avoid repeated lens/foreground work. Artifacts: `smoke/out/drawer-fixes/`.
+  These are sampled device results; fast scrolling can still miss individual deadlines.
 - Physical HDR color accuracy / full original movies and physical tilt remain manual checks.
 - HDMV PGS subtitle extraction, Sony recentering and the lock-screen test limitation remain open.

@@ -330,7 +330,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         binding.controlGlass.specularStrength = 1f
         binding.controlGlass.blurRadiusPx = 14f
         binding.controlGlass.saturation = 1.06f
-        applyGlassMaterial()
 
         // The buttons and cards around the picture become the same material as the capsule. Their
         // views exist by now, so the roles are set here and the walk runs after the first layout.
@@ -460,24 +459,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * landscape window, and a TV-style layout at once - and squashed or clipped subtitles are worse
      * than none.
      */
-    /**
-     * Applies the chosen glass material to every pane on this screen.
-     *
-     * Two materials, because one cannot serve both cases. REGULAR is the brighter, more opaque pane
-     * that reads as a solid object; CLEAR dims what is behind it and transmits more of it, which is
-     * the one to reach for over a bright picture, where REGULAR's white fill simply washes out.
-     *
-     * Re-applied rather than set once because the setting can change while the player is open.
-     */
-    private fun applyGlassMaterial() {
-        val clear = settings.glassMaterial == SettingsStore.GLASS_CLEAR
-        for (pane in listOf(binding.controlGlass)) {
-            pane.tintColor = if (clear) GLASS_CLEAR_TINT else GLASS_REGULAR_TINT
-            pane.glassTintColor = if (clear) GLASS_CLEAR_BODY else GLASS_REGULAR_BODY
-            pane.dimAmount = if (clear) GLASS_CLEAR_DIM else 0f
-        }
-    }
-
     private fun applySubtitleStyle() {
         binding.playerView.subtitleView?.apply {
             setApplyEmbeddedStyles(true)
@@ -1172,7 +1153,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         if (::gestures.isInitialized) gestures.verticalGain = settings.verticalGain
 
-        applyGlassMaterial()
     }
 
     /**
@@ -2104,19 +2084,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         /** Corner radius of the floating control capsule. */
         private const val CONTROL_GLASS_RADIUS_DP = 30f
-
-        /**
-         * The two materials as straight-alpha tints.
-         *
-         * CLEAR carries a dark body and a little dim, so it darkens the picture instead of lightening
-         * it - the opposite of REGULAR, which is a white fill. Both are deliberately weak: the pane
-         * is a control surface, and anything heavier stops the picture reading through it.
-         */
-        private const val GLASS_REGULAR_TINT = 0x12FFFFFF
-        private const val GLASS_REGULAR_BODY = 0x00000000
-        private const val GLASS_CLEAR_TINT = 0x0AFFFFFF
-        private const val GLASS_CLEAR_BODY = 0x33000000
-        private const val GLASS_CLEAR_DIM = 0.22f
 
         private const val CONTROL_GLASS_BEVEL_DP = 18f
         private const val CONTROL_GLASS_REFRACT_DP = 55f

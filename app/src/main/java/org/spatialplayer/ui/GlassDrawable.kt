@@ -21,22 +21,25 @@ class GlassDrawable(private val owner:View,material:GlassStyle=GlassStyle()):Dra
     private val materialState=mutableStateOf(material)
     private val pressed=mutableStateOf(false)
     private val touch=mutableStateOf(Offset.Zero)
+    private val motion=GlassPressMotion(owner)
     private val renderer=NativeBackdropRenderer(owner) {backdrop->BackdropSurface(backdrop,materialState.value,pressed.value,owner.resources.displayMetrics.density,touch.value,owner.isClickable)}
     internal var renderedFrames=0L;private set
     var radiusPx=material.cornerRadiusPx
     var style:GlassStyle=material
-        set(value){if(field==value)return;field=value;materialState.value=value;radiusPx=value.cornerRadiusPx;GlassBackdrop.invalidateSource(owner);invalidateSelf()}
+        set(value){if(field==value)return;field=value;materialState.value=value;radiusPx=value.cornerRadiusPx;GlassBackdrop.materialChanged(owner);invalidateSelf()}
     fun setTouchPoint(x:Float,y:Float){touch.value=Offset(x,y)}
     override fun isStateful()=true
     override fun onStateChange(state:IntArray):Boolean {
         val changed=pressed.value!=state.contains(android.R.attr.state_pressed)
         pressed.value=state.contains(android.R.attr.state_pressed)
+        if(changed && owner.isClickable)motion.setPressed(pressed.value)
         return changed
     }
     override fun onBoundsChange(bounds:android.graphics.Rect){rect.set(bounds);path.rewind()}
     override fun draw(canvas:Canvas){
         if(bounds.isEmpty)return
-        if(canvas.isHardwareAccelerated && !GlassBackdrop.capturing && renderer.draw(canvas)){renderedFrames++;return}
+        if(canvas.isHardwareAccelerated && GlassBackdrop.snapshotting && renderer.drawCached(canvas))return
+        if(canvas.isHardwareAccelerated && !GlassBackdrop.capturing && !GlassBackdrop.snapshotting && renderer.draw(canvas)){renderedFrames++;return}
         fallbackPaint.color=style.fallbackFill
         if(path.isEmpty || pathRadius!=radiusPx) {
             SmoothCorners.path(rect,radiusPx,path)

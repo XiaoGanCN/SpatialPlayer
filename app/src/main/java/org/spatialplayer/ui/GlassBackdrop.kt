@@ -23,6 +23,9 @@ object GlassBackdrop {
     private val capture = BackdropCapture()
     private var depth = 0
     val capturing: Boolean get() = depth > 0
+    private var snapshotDepth=0
+    internal val snapshotting:Boolean get()=snapshotDepth>0
+    internal fun snapshot(block:()->Unit) {snapshotDepth++;try {block()}finally {snapshotDepth--}}
 
     fun watch(view: View) {
         val root = view.rootView
@@ -82,7 +85,10 @@ object GlassBackdrop {
             }
         }
     }
-    internal fun invalidateSource(owner:View) {owners[owner]?.let {invalidatePanes(it)}}
+    internal fun materialChanged(owner:View) {
+        // Selection changes affect the header snapshot, not the physical scene behind every lens.
+        owners[owner]?.panes?.filterIsInstance<TopFadeBlurView>()?.forEach {it.invalidateContent()}
+    }
     internal fun hasVisiblePanes(owner: View): Boolean = related(owner).any { scene -> scene.panes.any { it.isShown && it.alpha > .01f } }
 
     internal fun draw(canvas: Canvas, owner: View) {

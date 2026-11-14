@@ -16,6 +16,7 @@ adb=ui.adb;snap=ui.snapshot;tap=ui.tap;verify=ui.verify;launch=ui.launch
 
 def motion(kind,x,y):adb('shell','input','motionevent',kind,str(round(x)),str(round(y)))
 def main():
+    moving=ui.moving_fixture()
     old_timeout=adb('shell','settings','get','system','screen_off_timeout')
     old_volume=control.current_volume();jump=None
     log=(OUT/'runtime.log').open('w')
@@ -55,7 +56,7 @@ def main():
         snap('SETTINGS',refresh_glass=True);time.sleep(.2);fresh=snap('SETTINGS')
         verify(next(n for n in fresh['nodes'] if n['path']==outer['path'])['frames']>outer['frames'],'outer decoder glass continues GPU redraw after its nested controls draw')
         adb('shell','input','keyevent','KEYCODE_BACK')
-        launch('SmokeTestActivity','--es','smoke_path','/sdcard/Movies/SpatialPlayerTest/grid_720p.mp4','--es','smoke_mime','video/mp4','--ez','smoke_muted','true');time.sleep(1)
+        launch('SmokeTestActivity','--es','smoke_path',moving,'--es','smoke_mime','video/mp4','--ez','smoke_muted','true');time.sleep(1)
         adb('shell','am','broadcast','-p',ui.PKG,'-a',ui.PKG+'.GLASS_CAPTURE','--ez','visible','true');time.sleep(.3)
         state=snap(controls=True)
         for name in ['buttonRewind','buttonForward']:

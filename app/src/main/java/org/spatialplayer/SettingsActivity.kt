@@ -100,7 +100,6 @@ class SettingsActivity : AppCompatActivity() {
         buildPlayback(column)
         buildDecoding(column)
         buildGestures(column)
-        buildAppearance(column)
         column.addView(infoRow("Playback diagnostics", "Device, decoder and output details").apply {
             setOnClickListener {
                 val dialog = android.app.Dialog(this@SettingsActivity, R.style.Theme_SpatialPlayer_Glass)
@@ -108,13 +107,12 @@ class SettingsActivity : AppCompatActivity() {
                 buildDevice(panel.content)
                 buildDiagnostics(panel.content)
                 org.spatialplayer.ui.GlassTheme.setSheetContent(dialog,panel)
-                dialog.show()
                 org.spatialplayer.ui.GlassTheme.configureSheet(dialog, (resources.displayMetrics.heightPixels * .75f).toInt())
-                GlassInstaller.apply(panel)
+                org.spatialplayer.ui.GlassTheme.showSheet(dialog,panel)
             }
         })
 
-        column.addView(infoRow("Glass playground", "Try Backdrop alongside our current controls").apply {
+        column.addView(infoRow("Glass playground", "Explore blur, refraction and motion").apply {
             setOnClickListener { startActivity(android.content.Intent(this@SettingsActivity, GlassPlaygroundActivity::class.java)) }
         })
         setContentView(root)
@@ -217,31 +215,33 @@ class SettingsActivity : AppCompatActivity() {
         val dialog = android.app.Dialog(this, R.style.Theme_SpatialPlayer_Glass)
         val panel = org.spatialplayer.ui.GlassSheetLayout(this, "Stereo stage", { dialog.dismiss() })
         val column = panel.content
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun renderEditor() {
-            content.removeAllViews()
-            if (settings.upmixAdvanced) buildAdvancedUpmix(content)
-            else content.addView(segmentedRow("Sound field", listOf(
-                "Surround" to UpmixMode.SURROUND.name, "Wide" to UpmixMode.WIDE.name,
-                "Front" to UpmixMode.FRONT.name), settings.upmixMode, ::upmixHint) {
-                settings.upmixMode = it; applyUpmixNow()
-            })
-            GlassInstaller.apply(content)
+        val simple = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val advanced = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        simple.addView(segmentedRow("Sound field", listOf(
+            "Surround" to UpmixMode.SURROUND.name, "Wide" to UpmixMode.WIDE.name,
+            "Front" to UpmixMode.FRONT.name), settings.upmixMode, ::upmixHint) {
+            settings.upmixMode = it; applyUpmixNow()
+        })
+        buildAdvancedUpmix(advanced)
+        fun selectEditor() {
+            simple.visibility=if(settings.upmixAdvanced)View.GONE else View.VISIBLE
+            advanced.visibility=if(settings.upmixAdvanced)View.VISIBLE else View.GONE
         }
         column.addView(segmentedRow("", listOf("Presets" to "simple", "Matrix" to "advanced"),
             if (settings.upmixAdvanced) "advanced" else "simple") {
             settings.upmixAdvanced = it == "advanced"
             applyUpmixNow()
-            renderEditor()
+            selectEditor()
+            org.spatialplayer.ui.GlassTheme.configureSheet(dialog,dp(680))
         })
-        column.addView(content)
-        renderEditor()
+        column.addView(simple)
+        column.addView(advanced)
+        selectEditor()
         activeSheet = panel
         dialog.setOnDismissListener { activeSheet = null }
         org.spatialplayer.ui.GlassTheme.setSheetContent(dialog,panel)
-        dialog.show()
         org.spatialplayer.ui.GlassTheme.configureSheet(dialog, minOf(dp(680), (resources.displayMetrics.heightPixels * .82f).toInt()))
-        GlassInstaller.apply(panel)
+        org.spatialplayer.ui.GlassTheme.showSheet(dialog,panel)
     }
 
     /** What the selected preset actually does; shown inside the same card as the options. */
@@ -269,31 +269,31 @@ class SettingsActivity : AppCompatActivity() {
             upmixHandler.removeCallbacks(applyMatrix)
             upmixHandler.postDelayed(applyMatrix, 250L)
         }
-        fun render() {
-            editor.removeAllViews()
+        val sources = listOf("Left" to (100 to 0), "Right" to (0 to 100),
+            "Both" to (50 to 50), "Difference" to (100 to -100), "Mute" to (0 to 0))
+        var selectSource:(String)->Unit={}
+        lateinit var mix:MatrixControls
+        fun refresh() {
             channelButtons.forEachIndexed { index, view ->
                 view.setTag(R.id.glass_role, if (index == selected) R.id.glass_role_button_active else R.id.glass_role_button)
                 view.isSelected = index == selected
                 GlassInstaller.apply(view)
             }
-            val sources = listOf("Left" to (100 to 0), "Right" to (0 to 100),
-                "Both" to (50 to 50), "Difference" to (100 to -100), "Mute" to (0 to 0))
-            val currentGains = matrix.gains[selected]
-            val source = sources.firstOrNull { it.second == currentGains }?.first.orEmpty()
-            editor.addView(segmentedRow("Source", sources.map { it.first to it.first }, source) { label ->
-                val gains = sources.first { it.first == label }.second
-                matrix = matrix.withChannel(selected, gains.first, gains.second)
-                save()
-                render()
-            })
-            val gains = matrix.gains[selected]
-            editor.addView(matrixRow(
-                title = "Input mix",
-                fromLeft = gains.first, fromRight = gains.second,
-                defaults = UpmixMatrix.DEFAULT_GAINS[selected],
-            ) { left, right -> matrix = matrix.withChannel(selected, left, right); save() })
-            GlassInstaller.apply(editor)
+            val gains=matrix.gains[selected]
+            selectSource(sources.firstOrNull {it.second==gains}?.first.orEmpty())
+            mix.update(gains,UpmixMatrix.DEFAULT_GAINS[selected])
         }
+        editor.addView(segmentedRow("Source",sources.map {it.first to it.first},"",bind={selectSource=it}) {label ->
+            val gains=sources.first {it.first==label}.second
+            matrix=matrix.withChannel(selected,gains.first,gains.second)
+            save();refresh()
+        })
+        val initial=matrix.gains[selected]
+        mix=matrixRow("Input mix",initial.first,initial.second,UpmixMatrix.DEFAULT_GAINS[selected]) {left,right ->
+            matrix=matrix.withChannel(selected,left,right);save()
+            selectSource(sources.firstOrNull {it.second==(left to right)}?.first.orEmpty())
+        }
+        editor.addView(mix.view)
 
         val names = listOf("Front L", "Front R", "Centre", "Sub", "Rear L", "Rear R")
         for (group in listOf(0..2, 3..5)) {
@@ -306,7 +306,7 @@ class SettingsActivity : AppCompatActivity() {
                     gravity = Gravity.CENTER
                     setTextColor(android.graphics.Color.WHITE)
                     background = org.spatialplayer.ui.GlassTheme.control(this@SettingsActivity, index == selected)
-                    setOnClickListener { selected = index; render() }
+                    setOnClickListener { selected = index; refresh() }
                 }
                 channelButtons += button
                 row.addView(button, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
@@ -314,12 +314,12 @@ class SettingsActivity : AppCompatActivity() {
             column.addView(row, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(4) })
         }
         column.addView(editor)
-        render()
+        refresh()
         column.addView(toggleRow("Subwoofer low-pass", "Keep bass below 120 Hz", matrix.subwooferLowPass) {
             matrix = matrix.copy(subwooferLowPass = it); save()
         })
         column.addView(infoRow("Reset matrix", "Restore the original six-channel mapping").apply {
-            setOnClickListener { matrix = UpmixMatrix.DEFAULT.copy(subwooferLowPass = matrix.subwooferLowPass); save(); render() }
+            setOnClickListener { matrix = UpmixMatrix.DEFAULT.copy(subwooferLowPass = matrix.subwooferLowPass); save(); refresh() }
         })
     }
 
@@ -330,15 +330,18 @@ class SettingsActivity : AppCompatActivity() {
      * signal in phase reads as one wide source behind the listener instead of as a space - which is
      * why the presets fill their two rears with opposite signs.
      */
+    private data class MatrixControls(val view:View,val update:(Pair<Int,Int>,Pair<Int,Int>)->Unit)
+
     private fun matrixRow(
         title: String,
         fromLeft: Int,
         fromRight: Int,
         defaults: Pair<Int, Int>,
         onChange: (Int, Int) -> Unit,
-    ): View {
+    ): MatrixControls {
         var left = fromLeft
         var right = fromRight
+        var updating=false
 
         val leftReading = valuePill(percent(fromLeft), false)
         val rightReading = valuePill(percent(fromRight), false)
@@ -353,7 +356,7 @@ class SettingsActivity : AppCompatActivity() {
                     override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                         val current = progress + UpmixMatrix.MIN_GAIN
                         reading.text = percent(current)
-                        onValue(current)
+                        if(!updating)onValue(current)
                     }
 
                     override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
@@ -423,9 +426,18 @@ class SettingsActivity : AppCompatActivity() {
             return row
         }
 
-        return rowShell(title, null, null).apply {
+        val view=rowShell(title, null, null).apply {
             addView(labelled("L", leftBar, leftReading))
             addView(labelled("R", rightBar, rightReading))
+        }
+        return MatrixControls(view) {gains,defaultsNow ->
+            updating=true
+            left=gains.first;right=gains.second
+            leftBar.progress=left-UpmixMatrix.MIN_GAIN
+            rightBar.progress=right-UpmixMatrix.MIN_GAIN
+            updating=false
+            editable(leftBar,leftReading,defaultsNow.first) {value ->left=value;onChange(left,right)}
+            editable(rightBar,rightReading,defaultsNow.second) {value ->right=value;onChange(left,right)}
         }
     }
 
@@ -438,27 +450,17 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun buildDecoding(column: LinearLayout) {
         column.addView(sectionHeader(R.string.settings_decoding))
-
-        column.addView(
-            segmentedRow(
-                title = getString(R.string.decoder_settings),
-                options = DecoderProfile.entries.map { it.label to it.name },
-                selected = settings.decoderProfile,
-            ) { settings.decoderProfile = it },
-        )
-
-        column.addView(
-            infoRow(
-                getString(R.string.decoder_policy),
-                if (FfmpegCodecs.isAvailable(androidx.media3.common.MimeTypes.AUDIO_TRUEHD)) {
-                    DecoderProfile.entries.firstOrNull { it.name == settings.decoderProfile }
-                        ?.detail
-                        ?: DecoderPolicy.describeRoute(null, DecoderProfile.AUTO)
-                } else {
-                    "FFmpeg extension unavailable; AC3, EAC3, TrueHD and DTS will not decode"
-                },
-            ),
-        )
+        column.addView(segmentedRow(
+            title=getString(R.string.decoder_settings),
+            options=DecoderProfile.entries.map {it.label to it.name},
+            selected=settings.decoderProfile,
+            hint={profile ->
+                if(FfmpegCodecs.isAvailable(androidx.media3.common.MimeTypes.AUDIO_TRUEHD)) {
+                    DecoderProfile.entries.firstOrNull {it.name==profile}?.detail
+                        ?: DecoderPolicy.describeRoute(null,DecoderProfile.AUTO)
+                } else "FFmpeg extension unavailable; AC3, EAC3, TrueHD and DTS will not decode"
+            },
+        ) {settings.decoderProfile=it})
     }
 
     private fun buildGestures(column: LinearLayout) {
@@ -482,21 +484,6 @@ class SettingsActivity : AppCompatActivity() {
                 getString(R.string.double_tap_jump),
                 "Left half seeks back, right half forward; the capsule's skip buttons match",
             ),
-        )
-    }
-
-    private fun buildAppearance(column: LinearLayout) {
-        column.addView(sectionHeader(R.string.settings_appearance))
-
-        column.addView(
-            segmentedRow(
-                title = getString(R.string.settings_glass_material),
-                options = listOf(
-                    getString(R.string.settings_glass_regular) to SettingsStore.GLASS_REGULAR,
-                    getString(R.string.settings_glass_clear) to SettingsStore.GLASS_CLEAR,
-                ),
-                selected = settings.glassMaterial,
-            ) { settings.glassMaterial = it },
         )
     }
 
@@ -568,7 +555,6 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("jump: ${settings.doubleTapJumpMs} ms")
             appendLine("vertical gain: ${settings.verticalGain}")
             appendLine("subtitle cap: ${settings.subtitleTrackLimit}")
-            appendLine("glass: ${settings.glassMaterial}")
         }
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Spatial Player", report))
@@ -641,6 +627,7 @@ class SettingsActivity : AppCompatActivity() {
         options: List<Pair<String, String>>,
         selected: String,
         hint: ((String) -> CharSequence)? = null,
+        bind: (((String)->Unit)->Unit)? = null,
         onSelect: (String) -> Unit,
     ): View {
         val strip = LinearLayout(this).apply {
@@ -712,6 +699,7 @@ class SettingsActivity : AppCompatActivity() {
             )
         }
         restyle(selected)
+        bind?.invoke(::restyle)
 
         return rowShell(title, null, null).apply {
             addView(scroller)

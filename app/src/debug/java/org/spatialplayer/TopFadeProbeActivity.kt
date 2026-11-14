@@ -22,6 +22,10 @@ class TopFadeProbeActivity : Activity() {
         pattern = object : View(this) {
             val paint = Paint()
             override fun onDraw(canvas: Canvas) {
+                if(intent.getBooleanExtra("solid_color",false)) {
+                    canvas.drawColor(if(reversed)Color.BLUE else Color.RED)
+                    return
+                }
                 val step = 6*resources.displayMetrics.density
                 for (i in 0..(width/step).toInt()) {
                     paint.color = if((i%2==0) != reversed) Color.WHITE else Color.BLACK
@@ -31,7 +35,10 @@ class TopFadeProbeActivity : Activity() {
         }
         // Invalidate a descendant, as a loaded thumbnail would inside RecyclerView.
         val sourceGroup = FrameLayout(this).apply {
-            addView(FrameLayout(this@TopFadeProbeActivity).apply { addView(pattern,FrameLayout.LayoutParams(-1,-1)) },FrameLayout.LayoutParams(-1,-1))
+            addView(FrameLayout(this@TopFadeProbeActivity).apply {
+                if(intent.getBooleanExtra("nested_glass",false))background=org.spatialplayer.ui.GlassDrawable(this)
+                addView(pattern,FrameLayout.LayoutParams(-1,-1))
+            },FrameLayout.LayoutParams(-1,-1))
         }
         setContentView(FrameLayout(this).apply {
             addView(sourceGroup,FrameLayout.LayoutParams(-1,-1))

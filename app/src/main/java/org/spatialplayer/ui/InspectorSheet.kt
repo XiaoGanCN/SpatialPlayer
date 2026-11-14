@@ -92,6 +92,10 @@ class InspectorSheet @JvmOverloads constructor(
 
     private var currentPanel: Panel = Panel.INSPECTION
     private var choices: Map<Panel, List<Choice>> = emptyMap()
+    private var renderedChoices:List<Choice> = emptyList()
+    private var renderedPanel:Panel?=null
+    private val choiceUpdates=ArrayList<(Choice)->Unit>()
+    private var loadingPanel=false
 
     init {
         visibility = View.GONE
@@ -104,7 +108,17 @@ class InspectorSheet @JvmOverloads constructor(
     /** Supplies the option rows a panel should display. */
     fun setChoices(panel: Panel, list: List<Choice>) {
         choices = choices + (panel to list)
-        if (panel == currentPanel) render()
+        if (loadingPanel || panel != currentPanel || contentContainer==null) return
+        val stable=renderedPanel==panel && renderedChoices.size==list.size &&
+            renderedChoices.zip(list).all { (old,next) ->
+                old.copy(value=next.value,selected=next.selected,enabled=next.enabled,subtitle=next.subtitle)==next &&
+                    (old.subtitle==null)==(next.subtitle==null)
+            }
+        if(stable) {
+            list.zip(choiceUpdates).forEach {(choice,update)->update(choice)}
+            if(renderedChoices!=list)sheet?.let {GlassBackdrop.materialChanged(it)}
+            renderedChoices=list
+        } else render()
     }
 
     fun show(panel:Panel)=show(panel,null)
@@ -112,7 +126,8 @@ class InspectorSheet @JvmOverloads constructor(
         currentPanel = panel
         // Before anything is drawn, and whatever route reached here - a tab, an overflow row, a
         // long-press - so the rows always describe the panel that is about to appear.
-        callback?.onPanelShown(panel)
+        loadingPanel=true
+        try {callback?.onPanelShown(panel)}finally {loadingPanel=false}
         val existing = dialog
         if (existing != null && existing.isShowing) {
             render()
@@ -123,9 +138,8 @@ class InspectorSheet @JvmOverloads constructor(
             dialog = d
             render()
             applyWindowFlags(d)
-            if(!d.isShowing)d.show()
-            GlassInstaller.apply(sheet!!)
-            animateIn()
+            if(!d.isShowing)GlassTheme.showSheet(d,sheet as GlassSheetLayout)
+            else GlassInstaller.apply(sheet!!)
         }
     }
 
@@ -189,14 +203,6 @@ class InspectorSheet @JvmOverloads constructor(
 
     // ------------------------------------------------------------------ rendering
 
-    private fun animateIn() {
-        contentContainer?.apply {
-            animate().setListener(null).cancel()
-            alpha=0f
-            animate().alpha(1f).setDuration(180L).start()
-        }
-    }
-
     private fun render() {
         try { renderContent() } finally {
             sheet?.let { GlassInstaller.apply(it) }
@@ -208,6 +214,9 @@ class InspectorSheet @JvmOverloads constructor(
         titleView?.text = context.getString(currentPanel.titleRes)
         val container = contentContainer ?: return
         container.removeAllViews()
+        choiceUpdates.clear()
+        renderedPanel=currentPanel
+        renderedChoices=choices[currentPanel].orEmpty()
 
         when (currentPanel) {
             Panel.INSPECTION, Panel.METADATA -> {
@@ -344,6 +353,7 @@ class InspectorSheet @JvmOverloads constructor(
     }
 
     private fun optionRow(choice: Choice): View {
+        var current=choice
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(11), dp(14), dp(11))
@@ -353,9 +363,8 @@ class InspectorSheet @JvmOverloads constructor(
             isSelected = choice.selected
             isClickable = choice.enabled
             isFocusable = choice.enabled
-            if (choice.enabled) {
-                setOnClickListener { callback?.onChoiceSelected(currentPanel, choice) }
-            }
+            setOnClickListener { if(current.enabled)callback?.onChoiceSelected(currentPanel,current) }
+            isClickable=choice.enabled
         }
 
         val titleRow = LinearLayout(context).apply {
@@ -373,16 +382,24 @@ class InspectorSheet @JvmOverloads constructor(
         )
         container.addView(titleRow)
 
-        choice.subtitle?.let { subtitle ->
-            container.addView(
+        val subtitleView=choice.subtitle?.let { subtitle ->
                 TextView(context).apply {
                     text = subtitle
                     typeface = UiTypography.body(context)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     setTextColor(0xD9FFFFFF.toInt())
                     setPadding(0, dp(4), 0, 0)
-                },
-            )
+                }.also {container.addView(it)}
+        }
+        choiceUpdates.add {next ->
+            current=next
+            container.isSelected=next.selected
+            container.isClickable=next.enabled
+            container.isFocusable=next.enabled
+            container.alpha=if(next.enabled || next.value.endsWith("_header"))1f else .42f
+            subtitleView?.let {if(it.text.toString()!=next.subtitle)it.text=next.subtitle}
+            container.setTag(R.id.glass_role,if(next.selected)R.id.glass_role_panel_active else R.id.glass_role_panel)
+            GlassInstaller.apply(container)
         }
 
         container.layoutParams = LinearLayout.LayoutParams(
@@ -520,6 +537,12 @@ class InspectorSheet @JvmOverloads constructor(
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
         ).apply { bottomMargin = dp(6) }
+        choiceUpdates.add {next ->
+            val value=next.value.toFloatOrNull() ?: range.start
+            slider.progress=kotlin.math.round((value-range.start)/choice.stepSize).toInt().coerceIn(0,steps)
+            slider.isEnabled=next.enabled
+            reading.text=formatReading(range.start+slider.progress*choice.stepSize)
+        }
         return wrapper
     }
 

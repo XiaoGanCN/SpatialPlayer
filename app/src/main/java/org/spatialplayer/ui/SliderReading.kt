@@ -100,7 +100,8 @@ object SliderReading {
                 InputType.TYPE_NUMBER_FLAG_DECIMAL or
                 InputType.TYPE_NUMBER_FLAG_SIGNED
             // Keep units outside the numeric input so the initial value can be submitted unchanged.
-            text = android.text.Editable.Factory.getInstance().newEditable(current.toString())
+            val numeric=String.format(java.util.Locale.US,"%.6f",snap(current,range,step)).trimEnd('0').trimEnd('.')
+            text = android.text.Editable.Factory.getInstance().newEditable(numeric)
             setSelection(text.length)
             // Numbers without chrome: the range is printed below the field instead.
             background = null
@@ -144,8 +145,37 @@ object SliderReading {
                 setOnClickListener { action() }
             }, android.widget.LinearLayout.LayoutParams(0,(48*density).toInt(),1f).apply { setMargins(gap/2,gap,gap/2,0) })
         }
-        panel.content.addView(actions)
-        input.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+        panel.setFooter(actions)
+        // A landscape keyboard can leave less than 120 dp. Keep the field and both actions on
+        // one line instead of allowing a pinned footer to consume the entire input viewport.
+        var compact=false
+        panel.adaptToSpace={width,height ->
+            val next=width>500*density && height<220*density
+            if(next==compact)false else {
+                compact=next
+                (input.parent as? android.view.ViewGroup)?.removeView(input)
+                (actions.parent as? android.view.ViewGroup)?.removeView(actions)
+                panel.setBodyVisible(!next)
+                for(i in 0 until actions.childCount) {
+                    actions.getChildAt(i).layoutParams=(actions.getChildAt(i).layoutParams as android.widget.LinearLayout.LayoutParams).apply {topMargin=if(next)0 else gap}
+                }
+                if(next) {
+                    val inline=android.widget.LinearLayout(context).apply {gravity=android.view.Gravity.CENTER_VERTICAL}
+                    inline.addView(input,android.widget.LinearLayout.LayoutParams(0,(64*density).toInt(),1f))
+                    inline.addView(actions,android.widget.LinearLayout.LayoutParams((240*density).toInt(),-2).apply {marginStart=gap})
+                    panel.setFooter(inline)
+                } else {
+                    panel.content.addView(input,android.widget.LinearLayout.LayoutParams(-1,-2))
+                    panel.setFooter(actions)
+                }
+                input.requestFocus()
+                true
+            }
+        }
+        input.contentDescription=context.getString(R.string.slider_edit_value)
+        dialog.setTitle(R.string.slider_edit_value)
+        input.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE or
+            android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
         input.setOnEditorActionListener { _, action, _ ->
             if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) { submit(); true } else false
         }
@@ -153,12 +183,11 @@ object SliderReading {
         dialog.setOnDismissListener { activeEditor = null }
         org.spatialplayer.ui.GlassTheme.setSheetContent(dialog,panel)
         GlassTheme.configureSheet(dialog, minOf((310*density).toInt(), (context.resources.displayMetrics.heightPixels*.60f).toInt()))
-        dialog.show()
-        GlassInstaller.apply(panel)
-        input.requestFocus()
-        input.selectAll()
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
             android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        GlassTheme.showSheet(dialog,panel)
+        input.requestFocus()
+        input.selectAll()
         input.post { context.getSystemService(android.view.inputmethod.InputMethodManager::class.java).showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
     }
 }

@@ -2,8 +2,6 @@ package org.spatialplayer.ui
 
 import android.app.Dialog
 import android.content.Context
-import android.widget.FrameLayout
-import android.view.Gravity
 import org.spatialplayer.R
 
 /** One stable window and glass shell survive player drawer navigation. */

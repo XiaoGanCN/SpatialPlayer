@@ -13,10 +13,7 @@ adb=ui.adb;snap=ui.snapshot;tap=ui.tap;verify=ui.verify;launch=ui.launch
 def motion(kind,x,y):adb('shell','input','motionevent',kind,str(round(x)),str(round(y)))
 def home():adb('shell','am','force-stop',ui.PKG);launch('MainActivity');time.sleep(.4)
 def main():
- import subprocess
- fixture=ROOT/'smoke/media/glass_60fps.mp4'
- if not fixture.exists():subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=640x360:rate=60','-t','20','-an','-c:v','libx264','-preset','fast','-crf','25',str(fixture)],check=True)
- adb('push',str(fixture),'/sdcard/Movies/SpatialPlayerTest/glass_60fps.mp4')
+ ui.moving_fixture()
  original={k:adb('shell','settings','get','system',k) for k in ['screen_off_timeout','user_rotation','accelerometer_rotation']};jump=None
  try:
   adb('shell','input','keyevent','KEYCODE_WAKEUP');adb('shell','wm','dismiss-keyguard')
@@ -59,7 +56,7 @@ def main():
   for rotation in [0,1]:
    adb('shell','settings','put','system','user_rotation',str(rotation));time.sleep(.6);s=snap()
    fade=next(n for n in s['nodes'] if n['path'].startswith('sheet') and n['kind']=='TopFadeBlurView');scroll=next(n for n in s['nodes'] if n['path'].startswith('sheet') and n['kind']=='ScrollView')
-   verify(abs(fade['solidHeight']-scroll['paddingTop'])<1 and fade['height']>scroll['paddingTop']+40,'drawer fade covers its header and overlaps content in rotation '+str(rotation));ui.shot('drawer-'+str(rotation)+'.png')
+   verify(abs(fade['height']-scroll['paddingTop'])<1 and 0<fade['solidHeight']<fade['height'],'drawer fade ends at its header without blurring resting controls in rotation '+str(rotation));ui.shot('drawer-'+str(rotation)+'.png')
   print(f'PASS: {ui.checks} glass follow-up checks',flush=True)
  finally:
   try:motion('UP',1,1)

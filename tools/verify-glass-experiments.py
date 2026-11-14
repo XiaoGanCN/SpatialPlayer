@@ -29,6 +29,7 @@ def main():
         with wave.open(str(fixture),'wb') as file:
             file.setnchannels(2);file.setsampwidth(2);file.setframerate(48000);file.writeframes(b'\0'*48000*4*12)
     adb('push',str(fixture),'/sdcard/Movies/SpatialPlayerTest/playground_stereo.wav')
+    moving=ui.moving_fixture()
     old={k:adb('shell','settings','get','system',k) for k in ['screen_off_timeout','user_rotation','accelerometer_rotation']}
     old_volume=control.current_volume();gain=None;upmix=None
     log=(OUT/'runtime.log').open('w');stream=subprocess.Popen([ui.ADB,'logcat','-T','1','-v','brief','AndroidRuntime:E','GlassLensRenderer:E','*:S'],stdout=log)
@@ -111,7 +112,7 @@ def main():
             launch('SmokeTestActivity','--es','smoke_path','/sdcard/Movies/SpatialPlayerTest/playground_stereo.wav','--es','smoke_mime','audio/wav','--ez','smoke_muted','true');time.sleep(.8)
             audio=snap(controls=True);verify(audio['channels']==2,'audio-only fixture has a real stereo stream')
             adb('shell','input','keyevent','KEYCODE_BACK');time.sleep(.3)
-            launch('SmokeTestActivity','--es','smoke_path','/sdcard/Movies/SpatialPlayerTest/grid_720p.mp4','--es','smoke_mime','video/mp4','--ez','smoke_muted','true');time.sleep(1)
+            launch('SmokeTestActivity','--es','smoke_path',moving,'--es','smoke_mime','video/mp4','--ez','smoke_muted','true');time.sleep(1)
             s=snap(controls=True);f=s['videoPreviewFrames'];time.sleep(.5);s=snap()
             verify(s['videoBackdropReady'] and s['videoPreviewFrames']>f,'music-to-video transition '+str(i+1)+' restores a live glass preview')
             if i==0:

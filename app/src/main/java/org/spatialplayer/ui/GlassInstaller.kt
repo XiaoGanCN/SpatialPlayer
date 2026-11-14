@@ -121,7 +121,7 @@ object GlassInstaller {
             installed++
         }
         installedCount += installed
-        Log.i(
+        if(installed>0)Log.i(
             TAG,
             "glass installed on $installed pane(s) in this tree ($installedCount this session), " +
                 "$untagged painted view(s) left alone; sensor=${LightSourceController.status()}",
@@ -130,8 +130,8 @@ object GlassInstaller {
 
     private fun installInteraction(view:View) {
         if(!view.isClickable)return
-        // The catalog spring expands past the hit rectangle. Keep outer scroll/sheet clips,
-        // while letting each button draw through its immediate row's padding.
+        // Native spring scaling expands past the hit rectangle. Keep scroll/sheet clips,
+        // while letting buttons draw through ordinary row/column padding.
         var parent=view.parent as? ViewGroup
         while(parent!=null && !parent.clipToOutline && parent !is android.widget.ScrollView &&
             parent !is android.widget.HorizontalScrollView && parent !is androidx.core.widget.NestedScrollView &&

@@ -38,15 +38,31 @@ object GlassTheme {
             // Floating dialogs do not consistently receive IME resize/insets on vendor ROMs.
             // Use the actual visible frame; this also avoids double-padding when resize worked.
             val overlap=(position[1]+frame.height-visible.bottom).coerceAtLeast(0)
-            if(frame.paddingBottom!=overlap) {
+            val available=(frame.height-overlap).coerceAtLeast(1)
+            val adapted=panel.adaptToSpace?.invoke(frame.width,available)==true
+            if(frame.paddingBottom!=overlap || adapted) {
+                (panel.getTag(org.spatialplayer.R.id.sheet_height_animation) as? android.animation.ValueAnimator)?.cancel()
                 frame.setPadding(0,0,0,overlap)
-                val available=(frame.height-overlap).coerceAtLeast(1)
                 val target=panel.preferredHeight(frame.width).coerceAtMost(available)
                 panel.layoutParams=panel.layoutParams.apply {height=target}
             }
         }
         panel.setOnTouchListener {_,_->true}
         dialog.setContentView(frame)
+    }
+    /** Animate the whole shell once; submenu navigation keeps its existing window and material. */
+    internal fun showSheet(dialog:Dialog,panel:GlassSheetLayout) {
+        GlassInstaller.apply(panel)
+        panel.alpha=0f
+        panel.translationY=dp(dialog.context,28f).toFloat()
+        dialog.show()
+        panel.postOnAnimation {
+            if(dialog.isShowing) {
+                panel.animate().setListener(null).cancel()
+                panel.animate().alpha(1f).translationY(0f).setDuration(260L)
+                    .setInterpolator(android.view.animation.PathInterpolator(.2f,.8f,.2f,1f)).start()
+            }
+        }
     }
     fun configureSheet(dialog: Dialog, height: Int) {
         val window = dialog.window ?: return
@@ -67,7 +83,8 @@ object GlassTheme {
         val panel=window.decorView.findViewById<GlassSheetLayout>(org.spatialplayer.R.id.sheet_panel)
         val natural=panel?.preferredHeight(width) ?: height
         val cap=minOf(safeHeight-dp(ctx,24f),dp(ctx,860f)).coerceAtLeast(1)
-        val bounded=natural.coerceIn(dp(ctx,120f).coerceAtMost(cap),cap)
+        val available=(cap-((panel?.parent as? android.view.View)?.paddingBottom ?: 0)).coerceAtLeast(1)
+        val bounded=natural.coerceIn(dp(ctx,120f).coerceAtMost(available),available)
         val targetY=bars.bottom+dp(ctx,12f)
         if(window.attributes.width!=width || window.attributes.height!=cap || window.attributes.y!=targetY) {
             window.attributes=window.attributes.apply {this.width=width;this.height=cap;y=targetY}

@@ -160,10 +160,6 @@ class SettingsStore(context: Context) {
             ?: UpmixMatrix.DEFAULT.encode()
         set(value) = prefs.edit().putString(KEY_UPMIX_MATRIX, value).apply()
 
-    var glassMaterial: String
-        get() = prefs.getString(KEY_GLASS_MATERIAL, null) ?: GLASS_REGULAR
-        set(value) = prefs.edit().putString(KEY_GLASS_MATERIAL, value).apply()
-
     companion object {
         const val FILE = "spatial_player"
 
@@ -184,11 +180,6 @@ class SettingsStore(context: Context) {
         const val KEY_BACKGROUND_AUDIO = "background_audio"
 
         const val KEY_BACKGROUND_VIDEO = "background_video"
-
-        const val KEY_GLASS_MATERIAL = "glass_material"
-
-        const val GLASS_REGULAR = "REGULAR"
-        const val GLASS_CLEAR = "CLEAR"
 
         const val DEFAULT_JUMP_MS = 10_000L
         const val MIN_JUMP_MS = 1_000L

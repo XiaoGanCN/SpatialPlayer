@@ -14,11 +14,15 @@ import kotlin.math.ceil
 /** Scroll-edge frosting: four GPU Gaussian levels blend continuously toward a transparent foot. */
 class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
     var sourceView: View? = null
-        set(value) { field = value; invalidate() }
+        set(value) { field = value; invalidateContent() }
     var solidHeightPx=0f
         set(value) {if(field!=value){field=value;sizeKey=0L;invalidate()}}
     private val capture = BackdropCapture()
     private val source = RenderNode("scroll-edge-source")
+    private val foreground=RenderNode("scroll-edge-content")
+    private var contentDirty=true
+    private var contentX=Int.MIN_VALUE
+    private var contentY=Int.MIN_VALUE
     private val levels = Array(4) { RenderNode("scroll-edge-$it") }
     private val masks = Array(4) { RuntimeShader("""
         uniform shader image;
@@ -38,23 +42,27 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
     private var sizeKey = 0L
     // Observe frames already scheduled by source changes; do not schedule an idle polling loop.
     private val redraw = ViewTreeObserver.OnPreDrawListener {
-        sourceView?.let { if (it.isDirty || it.isLayoutRequested) invalidate() }
+        sourceView?.let { if (it.isLayoutRequested || capture.foregroundDirty(it)) invalidateContent() }
         true
     }
-    private val scroll = ViewTreeObserver.OnScrollChangedListener { invalidate() }
+    private val scroll = ViewTreeObserver.OnScrollChangedListener { invalidateContent() }
+    internal fun invalidateContent() {contentDirty=true;invalidate()}
     internal var renderedFrames = 0L; private set
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO; isClickable = false }
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         rootView.viewTreeObserver.addOnScrollChangedListener(scroll)
         rootView.viewTreeObserver.addOnPreDrawListener(redraw)
+        GlassBackdrop.watch(this)
     }
     override fun onDetachedFromWindow() {
+        GlassBackdrop.unwatch(this)
         if (rootView.viewTreeObserver.isAlive) {
             rootView.viewTreeObserver.removeOnScrollChangedListener(scroll)
             rootView.viewTreeObserver.removeOnPreDrawListener(redraw)
         }
-        source.discardDisplayList(); levels.forEach { it.discardDisplayList() }
+        source.discardDisplayList();foreground.discardDisplayList(); levels.forEach { it.discardDisplayList() }
+        sizeKey=0L;contentDirty=true
         super.onDetachedFromWindow()
     }
     override fun onDraw(canvas: Canvas) {
@@ -67,7 +75,9 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
         val key = (w.toLong() shl 32) or h.toLong()
         if (key != sizeKey) {
             sizeKey = key
+            contentDirty=true
             source.setPosition(0,0,recW,recH)
+            foreground.setPosition(0,0,recW,recH)
             levels.forEachIndexed { i, node ->
                 node.setPosition(-margin,-margin,w+margin,h+margin)
                 node.setUseCompositingLayer(true, additive)
@@ -77,26 +87,39 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
                 val radius = 24f * resources.displayMetrics.density * scale * i / 3f
                 node.setRenderEffect(if (i == 0) opacity else RenderEffect.createChainEffect(opacity,
                     RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)))
+                // These commands only reference a stable live source node. Re-recording all four
+                // effect display lists for every video frame needlessly dirties the effect graph.
+                val content=node.beginRecording(recW,recH)
+                try {content.drawRenderNode(source)}finally {node.endRecording()}
             }
         }
         val a = IntArray(2); val b = IntArray(2)
         backdrop.getLocationOnScreen(a); getLocationOnScreen(b)
+        val x=a[0]-b[0];val y=a[1]-b[1]
+        if(contentDirty || x!=contentX || y!=contentY || !foreground.hasDisplayList()) {
+            contentX=x;contentY=y;contentDirty=false
+            val content=foreground.beginRecording(recW,recH)
+            try {
+                content.translate(margin.toFloat(),margin.toFloat());content.scale(scale,scale)
+                content.translate(x.toFloat(),y.toFloat())
+                GlassBackdrop.snapshot {capture.draw(content,backdrop,this,includeGlass=true)}
+            }finally {foreground.endRecording()}
+        }
         val recording = source.beginRecording(recW,recH)
         try {
             recording.drawColor(androidx.core.content.ContextCompat.getColor(context,org.spatialplayer.R.color.bg_deep))
+            val base=recording.save()
             recording.translate(margin.toFloat(),margin.toFloat())
             recording.scale(scale, scale)
-            if(GlassBackdrop.videoReady(this))GlassBackdrop.draw(recording,this)
-            recording.translate((a[0]-b[0]).toFloat(), (a[1]-b[1]).toFloat())
-            capture.draw(recording, backdrop, this, includeGlass = true)
+            // Transparent header padding still needs the physical scene beneath the sheet.
+            // Filling it with bg_deep made a dark strip that did not join the shell's blur.
+            GlassBackdrop.draw(recording,this)
+            recording.restoreToCount(base)
+            recording.drawRenderNode(foreground)
         } finally { source.endRecording() }
         val save = canvas.save(); canvas.clipRect(0,0,width,height);canvas.scale(1f/scale, 1f/scale)
         val blend = canvas.saveLayer(0f,0f,w.toFloat(),h.toFloat(),null)
-        for (node in levels) {
-            val content = node.beginRecording(recW,recH)
-            try { content.drawRenderNode(source) } finally { node.endRecording() }
-            canvas.drawRenderNode(node)
-        }
+        for (node in levels)canvas.drawRenderNode(node)
         canvas.restoreToCount(blend)
         canvas.restoreToCount(save)
         renderedFrames++

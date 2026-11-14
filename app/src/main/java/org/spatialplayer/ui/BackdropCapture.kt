@@ -9,6 +9,31 @@ import java.util.IdentityHashMap
 
 /** Record the backdrop without drawing active ancestors or replaying ScrollView edge effects. */
 internal class BackdropCapture {
+    private val visible=android.graphics.Rect()
+    private data class TextContent(val text:String,val color:Int,val size:Float,
+        val face:android.graphics.Typeface?,val flags:Int,val spacing:Float,val gravity:Int,
+        val width:Int,val height:Int,val padding:android.graphics.Rect,val layout:android.text.Layout?,
+        val maxLines:Int,val ellipsize:android.text.TextUtils.TruncateAt?,val scaleX:Float)
+    private val textContent=java.util.WeakHashMap<android.widget.TextView,TextContent>()
+    private fun cacheableText(view:android.widget.TextView)=view.text is String &&
+        (view.background==null || GlassInstaller.material(view)!=null) && view.compoundDrawables.all {it==null}
+    private fun textContent(view:android.widget.TextView)=TextContent(view.text.toString(),view.currentTextColor,
+        view.textSize,view.typeface,view.paintFlags,view.letterSpacing,view.gravity,view.width,view.height,
+        android.graphics.Rect(view.paddingLeft,view.paddingTop,view.paddingRight,view.paddingBottom),
+        view.layout,view.maxLines,view.ellipsize,view.textScaleX)
+    /** Ignore container/material invalidation, but inspect text/images inside native glass rows. */
+    fun foregroundDirty(view:View):Boolean {
+        if(!view.isShown || view.alpha<=0f || view is androidx.compose.ui.platform.AbstractComposeView || view is TopFadeBlurView)return false
+        if(view is ViewGroup)return (0 until view.childCount).any {foregroundDirty(view.getChildAt(it))}
+        // Slider/switch display lists reference their live Compose nodes directly.
+        if(view is GlassSlider || view is GlassSwitch)return false
+        if(!(view.isDirty || view.isLayoutRequested) || !view.getLocalVisibleRect(visible))return false
+        if(view.isLayoutRequested)return true
+        // A material redraw can dirty an otherwise unchanged button label. Plain labels have
+        // a stable presentation; editable/spanned text retains full native dirty semantics.
+        if(view is android.widget.TextView && cacheableText(view))return textContent[view]!=textContent(view)
+        return true
+    }
     fun contentDirty(view: View): Boolean {
         if(!view.isShown || view.alpha<=0f || view is androidx.compose.ui.platform.AbstractComposeView || view is TopFadeBlurView || GlassInstaller.isGlass(view))return false
         if(view is ViewGroup)return (0 until view.childCount).any { contentDirty(view.getChildAt(it)) }
@@ -29,6 +54,7 @@ internal class BackdropCapture {
         if (view !is ViewGroup) {
             val dirty = view.isDirty
             view.draw(canvas)
+            if(GlassBackdrop.snapshotting && view is android.widget.TextView && cacheableText(view))textContent[view]=textContent(view)
             // Public draw clears dirty flags. A pending text/image change must still reach its
             // normal display list, rather than being consumed by this offscreen recording.
             if (dirty) view.invalidate()

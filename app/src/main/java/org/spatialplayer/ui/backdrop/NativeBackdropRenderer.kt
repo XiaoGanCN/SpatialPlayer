@@ -9,7 +9,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.GraphicsLayerScope
@@ -21,7 +20,6 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
@@ -49,7 +47,6 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         fun invalidateMoved(view:View) {renderers[view]?.toList()?.forEach {it.checkPosition()}}
         fun invalidateLight(view:View) {renderers[view]?.toList()?.forEach {it.refreshLight()}}
     }
-    private var paintPadding=0
     private var host: BridgeView? = null
     private var hostRoot: ViewGroup? = null
     private var forwardingTouch=false
@@ -70,7 +67,7 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         override fun DrawScope.drawBackdrop(density: Density, coordinates: LayoutCoordinates?, layerBlock: (GraphicsLayerScope.() -> Unit)?) {
             recordings++
             val offset = coordinates?.positionInRoot() ?: androidx.compose.ui.geometry.Offset.Zero
-            withTransform({ translate(-offset.x+paintPadding,-offset.y+paintPadding) }) {
+            withTransform({ translate(-offset.x,-offset.y) }) {
                 drawContext.canvas.nativeCanvas.drawRenderNode(sourceNode)
             }
         }
@@ -85,7 +82,7 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         override fun dispatchTouchEvent(event: MotionEvent): Boolean = if(forwardingTouch) super.dispatchTouchEvent(event) else false
         @Composable override fun Content() {
             CompositionLocalProvider(LocalGlassAngle provides { angle }) {
-                Box(Modifier.fillMaxSize().padding((paintPadding/owner.resources.displayMetrics.density).dp)) { content(backdrop) }
+                Box(Modifier.fillMaxSize()) { content(backdrop) }
             }
         }
         override fun onDescendantInvalidated(child: View, target: View) {
@@ -114,7 +111,6 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
             decor.setViewTreeSavedStateRegistryOwner(activity)
             decor.setViewTreeViewModelStoreOwner(activity)
         }
-        paintPadding=if(owner.isClickable && owner !is android.widget.SeekBar && owner !is android.widget.CompoundButton)outset else 0
         val view = BridgeView(owner.context)
         view.setViewTreeLifecycleOwner(activity)
         view.setViewTreeSavedStateRegistryOwner(activity)
@@ -122,7 +118,7 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         view.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         view.alpha=0f
         view.importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-        decor.addView(view,android.widget.FrameLayout.LayoutParams(owner.width.coerceAtLeast(1)+paintPadding*2,owner.height.coerceAtLeast(1)+paintPadding*2))
+        decor.addView(view,android.widget.FrameLayout.LayoutParams(owner.width.coerceAtLeast(1),owner.height.coerceAtLeast(1)))
         hostRoot=decor
         host=view
         renderers.getOrPut(owner) { LinkedHashSet() }.add(this)
@@ -176,16 +172,15 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
             } finally {sourceNode.endRecording()}
             sourceDirty=false
         }
-        val paintOutset=paintPadding
-        if(displayList.width!=owner.width+paintOutset*2 || displayList.height!=owner.height+paintOutset*2) {
-            displayList.setPosition(-paintOutset,-paintOutset,owner.width+paintOutset,owner.height+paintOutset)
+        if(displayList.width!=owner.width || displayList.height!=owner.height) {
+            displayList.setPosition(0,0,owner.width,owner.height)
             displayListDirty=true
         }
         // A pane can be drawn normally and sampled again by the fade in the same frame.
         // Reuse its GPU display list; do not traverse the Compose tree for every sample.
         if(displayListDirty || !displayList.hasDisplayList()) {
             displayListDirty=false
-            val recording=displayList.beginRecording(owner.width+paintOutset*2,owner.height+paintOutset*2)
+            val recording=displayList.beginRecording(owner.width,owner.height)
             drawing=true
             try { view.draw(recording) } finally {drawing=false;displayList.endRecording()}
         }
@@ -193,8 +188,14 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         frames++
         return true
     }
+    fun drawCached(canvas:Canvas):Boolean {
+        if(!canvas.isHardwareAccelerated || !displayList.hasDisplayList() ||
+            displayList.width!=owner.width || displayList.height!=owner.height)return false
+        canvas.drawRenderNode(displayList)
+        return true
+    }
     private fun layoutHost(view: BridgeView, forTouch: Boolean = false) {
-        val width=owner.width+paintPadding*2;val height=owner.height+paintPadding*2
+        val width=owner.width;val height=owner.height
         if(view.layoutParams.width!=width || view.layoutParams.height!=height) {
             view.layoutParams=view.layoutParams.apply {this.width=width;this.height=height}
         }
@@ -206,7 +207,7 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         if(forTouch) {
             val position=IntArray(2);val origin=IntArray(2)
             owner.getLocationOnScreen(position);hostRoot?.getLocationOnScreen(origin)
-            x=position[0]-origin[0]-paintPadding;y=position[1]-origin[1]-paintPadding
+            x=position[0]-origin[0];y=position[1]-origin[1]
         }
         if(view.left!=x || view.top!=y || view.width!=width || view.height!=height) {
             view.layout(x,y,x+width,y+height)

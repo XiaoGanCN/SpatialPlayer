@@ -69,15 +69,11 @@
     <string name="upmix_front_hint">Front only: the front pair, with centre, sub and rears left silent. Nothing is invented.</string>
     <string name="settings_decoding">Decoding</string>
     <string name="settings_gestures">Gestures</string>
-    <string name="settings_appearance">Appearance</string>
     <string name="settings_device">Device and build</string>
     <string name="settings_debug">Diagnostics</string>
     <string name="settings_jump_length">Skip and double-tap length</string>
     <string name="settings_subtitle_tracks">Subtitle tracks listed</string>
     <string name="settings_vertical_gain">Drag sensitivity</string>
-    <string name="settings_glass_material">Glass material</string>
-    <string name="settings_glass_regular">Regular</string>
-    <string name="settings_glass_clear">Clear</string>
     <string name="settings_copy_report">Copy a diagnostic report</string>
     <string name="settings_report_copied">Report copied</string>
     <string name="settings_seconds">%1$.1f s</string>

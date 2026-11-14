@@ -23,9 +23,17 @@ class GlassSwitch(context: Context): CompoundButton(context) {
         }
     }
     init { selected=mutableStateOf(isChecked);buttonDrawable=null;background=null;isClickable=true;isFocusable=true;GlassInstaller.watch(this) }
-    override fun setChecked(checked: Boolean) { super.setChecked(checked);selected?.value=checked;invalidate() }
+    override fun setChecked(checked: Boolean) {
+        super.setChecked(checked);selected?.value=checked
+        GlassBackdrop.materialChanged(this)
+        invalidate()
+    }
     override fun onMeasure(w: Int,h: Int) {setMeasuredDimension(resolveSize(dp(80),w),resolveSize(dp(48),h))}
-    override fun onDraw(canvas: Canvas) { if(!GlassBackdrop.capturing && canvas.isHardwareAccelerated)renderer.draw(canvas) }
+    override fun onDraw(canvas: Canvas) {
+        if(!GlassBackdrop.capturing && canvas.isHardwareAccelerated) {
+            if(GlassBackdrop.snapshotting)renderer.drawCached(canvas) else renderer.draw(canvas)
+        }
+    }
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if(!isEnabled)return false
         if(event.actionMasked==MotionEvent.ACTION_DOWN)parent?.requestDisallowInterceptTouchEvent(true)

@@ -163,7 +163,7 @@
                     android:background="@drawable/bg_glass_button"
                     android:padding="12dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/ic_back10"
+                    android:src="@drawable/ic_seek_backward"
                     android:contentDescription="@string/seek_back" />
                 <ImageButton
                     android:id="@+id/buttonPlayPause"
@@ -182,7 +182,7 @@
                     android:background="@drawable/bg_glass_button"
                     android:padding="12dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/ic_forward10"
+                    android:src="@drawable/ic_seek_forward"
                     android:contentDescription="@string/seek_forward" />
                 <Space
                     android:layout_width="0dp"

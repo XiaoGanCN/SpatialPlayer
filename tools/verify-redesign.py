@@ -60,6 +60,17 @@ def shot(name):
     with (OUT / name).open("wb") as output:
         subprocess.run([ADB, "exec-out", "screencap", "-p"], stdout=output, check=True)
 
+def moving_fixture():
+    """Preview-refresh assertions need changing pixels; the grid fixture is static SMPTE bars."""
+    fixture=ROOT/'smoke/media/glass_60fps.mp4'
+    fixture.parent.mkdir(parents=True,exist_ok=True)
+    if not fixture.exists():
+        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=640x360:rate=60',
+                        '-t','20','-an','-c:v','libx264','-preset','fast','-crf','25',str(fixture)],check=True)
+    destination='/sdcard/Movies/SpatialPlayerTest/glass_60fps.mp4'
+    adb('push',str(fixture),destination)
+    return destination
+
 def nodes():
     adb("shell", "uiautomator", "dump", "/data/local/tmp/spatial-redesign.xml")
     return list(ET.fromstring(adb("shell", "cat", "/data/local/tmp/spatial-redesign.xml")).iter("node"))
