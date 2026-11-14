@@ -16,13 +16,16 @@ import org.spatialplayer.R
 
 /** Adaptive clipped Backdrop shell. Content scrolls under a progressive header instead of a slab. */
 internal class GlassSheetLayout(context:Context,label:String,close:()->Unit,back:(()->Unit)?=null):LinearLayout(context) {
-    val title=TextView(context).apply {text=label;textSize=18f;typeface=UiTypography.body(context);setTextColor(Color.WHITE)}
+    val title=TextView(context).apply {text=label;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END;textSize=18f;typeface=UiTypography.body(context);setTextColor(Color.WHITE)}
     val content=LinearLayout(context).apply {orientation=VERTICAL;id=R.id.sheet_content;setPadding(dp(16),dp(4),dp(16),dp(20))}
     val scroll=ScrollView(context).apply {
         overScrollMode=View.OVER_SCROLL_NEVER;isVerticalScrollBarEnabled=false;clipToPadding=false
         setPadding(0,dp(80),0,0)
         addView(content,LayoutParams(-1,-2))
     }
+    private var closeAction=close
+    private var backAction=back
+    private var backButton:ImageButton?=null
     private val header=LinearLayout(context).apply {orientation=VERTICAL}
     private val fade=TopFadeBlurView(context).apply {sourceView=scroll}
     init {
@@ -38,9 +41,10 @@ internal class GlassSheetLayout(context:Context,label:String,close:()->Unit,back
             setImageResource(icon);setColorFilter(Color.WHITE);contentDescription=description
             setPadding(dp(12),dp(12),dp(12),dp(12));setOnClickListener {action()}
         }
-        if(back!=null)row.addView(button(R.drawable.ic_chevron_left,"sheet_back","Back to playback controls",back),LayoutParams(dp(44),dp(44)).apply {marginEnd=dp(12)})
+        backButton=button(R.drawable.ic_chevron_left,"sheet_back","Back to playback controls") {backAction?.invoke()}.apply {visibility=if(back!=null)VISIBLE else GONE}
+        row.addView(backButton,LayoutParams(dp(44),dp(44)).apply {marginEnd=dp(12)})
         row.addView(title,LayoutParams(0,-2,1f))
-        row.addView(button(R.drawable.ic_close,"sheet_close","Close",close),LayoutParams(dp(44),dp(44)).apply {marginStart=dp(12)})
+        row.addView(button(R.drawable.ic_close,"sheet_close","Close") {closeAction()},LayoutParams(dp(44),dp(44)).apply {marginStart=dp(12)})
         header.addView(row,LayoutParams(-1,-2))
         addView(FrameLayout(context).apply {
             addView(scroll,FrameLayout.LayoutParams(-1,-1))
@@ -48,11 +52,19 @@ internal class GlassSheetLayout(context:Context,label:String,close:()->Unit,back
             addView(header,FrameLayout.LayoutParams(-1,-2))
         },LayoutParams(-1,-1))
     }
+    fun configureHeader(label:String,close:()->Unit,back:(()->Unit)?) {
+        title.text=label;closeAction=close;backAction=back
+        backButton?.visibility=if(back!=null)VISIBLE else GONE
+        scroll.scrollTo(0,0)
+    }
     fun preferredHeight(width:Int):Int {
+        val side=if(width>dp(500))dp(24) else dp(16)
+        if(content.paddingLeft!=side)content.setPadding(side,content.paddingTop,side,content.paddingBottom)
         header.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED))
         val top=header.measuredHeight
         if(scroll.paddingTop!=top)scroll.setPadding(0,top,0,0)
-        if(fade.layoutParams.height!=top+dp(16))fade.layoutParams= (fade.layoutParams as FrameLayout.LayoutParams).apply {height=top+dp(16)}
+        fade.solidHeightPx=top.toFloat()
+        if(fade.layoutParams.height!=top+dp(32))fade.layoutParams= (fade.layoutParams as FrameLayout.LayoutParams).apply {height=top+dp(32)}
         content.measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(0,MeasureSpec.UNSPECIFIED))
         return top+content.measuredHeight
     }

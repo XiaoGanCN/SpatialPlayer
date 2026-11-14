@@ -79,6 +79,7 @@ object UiStateProbe {
                     .put("tag", view.tag?.toString()).put("scrollY", view.scrollY).put("height", view.height).put("width", view.width)
                     .put("clip",view.clipToOutline)
                     .put("scrollRange",(view as? android.widget.ScrollView)?.let { ((it.getChildAt(0)?.height ?: 0)+it.paddingTop+it.paddingBottom-it.height).coerceAtLeast(0) } ?: 0)
+                    .put("paddingTop",view.paddingTop).put("solidHeight",(view as? org.spatialplayer.ui.TopFadeBlurView)?.solidHeightPx ?: 0f)
                     .put("translationY", view.translationY).put("scaleY", view.scaleY)
                     .put("frames", glass?.renderedFrames ?: (view as? org.spatialplayer.ui.TopFadeBlurView)?.renderedFrames ?: 0).put("pressed", view.isPressed)
                     .put("engaged", (view as? org.spatialplayer.ui.GlassSlider)?.glassEngaged ?: false)
@@ -92,6 +93,7 @@ object UiStateProbe {
         org.spatialplayer.ui.SliderReading.activeEditor?.let { scan(it, "editor") }
         if (sheet?.isOpen == true) sheet.rootForTest()?.let { scan(it, "sheet") }
         if (overflow?.isOpen == true) overflow.rootForTest()?.let { scan(it, "sheet") }
+        val openSheet=sheet?.takeIf {it.isOpen}?.rootForTest() ?: overflow?.takeIf {it.isOpen}?.rootForTest()
         val sample = PlaybackEngine.peek()?.sample()
         val seek = activity.findViewById<org.spatialplayer.ui.SeekBarView>(R.id.seekBar)
         val ambient = activity.findViewById<org.spatialplayer.ui.AmbientGlowView>(R.id.ambientGlow)
@@ -109,6 +111,8 @@ object UiStateProbe {
             .put("planarGravity", org.spatialplayer.ui.LightSourceController.planarGravity)
             .put("light", JSONArray(org.spatialplayer.ui.LightSourceController.lightDirection()?.let { listOf(it.first,it.second) } ?: emptyList<Float>()))
             .put("volume", (activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager).getStreamVolume(android.media.AudioManager.STREAM_MUSIC))
+            .put("sheetWindow",openSheet?.rootView?.let {System.identityHashCode(it)} ?: 0)
+            .put("uiRefreshRate",activity.window.attributes.preferredRefreshRate).put("displayRefreshRate",activity.display?.refreshRate)
             .put("requestId", intent.getStringExtra("request_id")).put("sheetOpen", sheet?.isOpen ?: false).put("panel", sheet?.shownPanel?.name.orEmpty()).put("views", views).put("width", activity.window.decorView.width).put("height", activity.window.decorView.height)
             .put("media", PlaybackEngine.peek()?.currentMediaUri?.toString()).put("state", sample?.state).put("error", sample?.playerError).put("speed", sample?.playbackSpeed)
             .put("decoder", sample?.videoCodecName).put("rendered", sample?.renderedFrames ?: 0).put("dropped", sample?.droppedFrames ?: 0)

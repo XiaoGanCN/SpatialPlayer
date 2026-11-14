@@ -1,37 +1,13 @@
 package org.spatialplayer.ui
 
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.drawable.RippleDrawable
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import org.spatialplayer.R
 
-/**
- * Turns the app's placeholder backgrounds into real glass.
- *
- * Every control was styled with `bg_glass_button`, `bg_glass_button_active`, `bg_glass_bar` or
- * `bg_glass_panel` - XML gradients that stand in for glass and cannot be more than a tint, because a
- * shape drawable has no idea what is behind it. This walks a view tree once and swaps each of them
- * for a [GlassDrawable] of the matching shape, so the material does not have to be installed by hand
- * in five layouts, two sheet builders and the settings screen.
- *
- * ## A view says what it is, and that is what gets matched
- *
- * The layout tags each surface with its role (`glass_role_button`, `glass_role_bar`, ...) and that
- * tag is the only thing consulted. It used to try to recognise the background instead - load the
- * resource, compare `constantState` - and that **cannot work for a `RippleDrawable`**: every
- * `getDrawable` call returns a fresh drawable with a fresh constant state, even for the same resource
- * id. Measured on the main screen: `glass walk matched nothing: 9 painted view(s)`, with every
- * candidate's constant state a different hash from the background's. So every XML-declared surface in
- * the app was left as the flat gradient this class exists to replace, and only the code-built ones
- * (the settings screen, `InspectorSheet`'s rows) ever became glass.
- *
- * The ripple is kept: it is re-wrapped *around* the glass rather than replaced, because its press
- * state is what the glass reads to run the press animation. Losing that would have been the sort of
- * regression that makes a "revamp" worse than what it replaced.
- */
+/** Installs role-tagged Backdrop materials while preserving native input/accessibility. */
 object GlassInstaller {
 
     /** The material for one role, built per context so dp becomes px. */
@@ -72,7 +48,7 @@ object GlassInstaller {
             GlassStyle(cornerRadiusPx = dp(ctx, 30f), blurRadiusPx = 24f)
         },
         R.id.glass_role_panel_active to Role { ctx ->
-            GlassStyle(cornerRadiusPx = dp(ctx, 26f), blurRadiusPx = 18f, body = 0x12FFFFFF)
+            GlassStyle(cornerRadiusPx = dp(ctx, 26f), blurRadiusPx = 18f, body = 0x660A84FF, adaptiveTint = false)
         },
         R.id.glass_role_panel to Role { ctx ->
             GlassStyle(
@@ -131,23 +107,16 @@ object GlassInstaller {
             }
             if (existing != null) {
                 existing.style = style
-                if (view.isClickable) Haptics.attachTo(view)
+                if(current is RippleDrawable)view.background=existing
+                installInteraction(view)
                 return@walk
             }
             val glass = GlassDrawable(view, style).apply { radiusPx = style.cornerRadiusPx }
-            // A ripple's press state is what the glass drawable reads to run its press animation, so
-            // the ripple is kept and the glass becomes its content.
-            val background = view.background
-            view.background = if (background is RippleDrawable) {
-                // RippleDrawable has no getter for its colour, so the one the XML declared is used.
-                // An explicit alpha mask keeps RippleDrawable from software-rasterizing the
-                // shader-backed content to discover the pressed region.
-                val mask = SmoothMask(style.cornerRadiusPx)
-                RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), glass, mask)
-            } else {
-                glass
-            }
-            if (view.isClickable) Haptics.attachTo(view)
+            // GlassDrawable is stateful: View forwards pressed/focused state directly. A bounded
+            // RippleDrawable clips all content, including an expanding catalog button, even with
+            // transparent ripple ink. The shared InteractiveHighlight supplies visible feedback.
+            view.background=glass
+            installInteraction(view)
             watch(view)
             installed++
         }
@@ -157,6 +126,20 @@ object GlassInstaller {
             "glass installed on $installed pane(s) in this tree ($installedCount this session), " +
                 "$untagged painted view(s) left alone; sensor=${LightSourceController.status()}",
         )
+    }
+
+    private fun installInteraction(view:View) {
+        if(!view.isClickable)return
+        // The catalog spring expands past the hit rectangle. Keep outer scroll/sheet clips,
+        // while letting each button draw through its immediate row's padding.
+        var parent=view.parent as? ViewGroup
+        while(parent!=null && !parent.clipToOutline && parent !is android.widget.ScrollView &&
+            parent !is android.widget.HorizontalScrollView && parent !is androidx.core.widget.NestedScrollView &&
+            parent !is androidx.recyclerview.widget.RecyclerView) {
+            parent.clipChildren=false;parent.clipToPadding=false
+            parent=parent.parent as? ViewGroup
+        }
+        Haptics.attachTo(view)
     }
 
     /** Registers a view with the shared backdrop for as long as it is on screen. */

@@ -30,16 +30,19 @@ object GlassBackdrop {
         if (owners.containsKey(view)) unwatch(view)
         val scene = scenes[root] ?: Scene(root, activityRoot(view)).also { scene ->
             scenes[root] = scene
-            scene.scroll = ViewTreeObserver.OnScrollChangedListener { invalidatePanes(scene) }
+            scene.scroll = ViewTreeObserver.OnScrollChangedListener { invalidatePanes(scene,positionOnly=true) }
             root.viewTreeObserver.addOnScrollChangedListener(scene.scroll)
             scene.redraw=ViewTreeObserver.OnPreDrawListener {
+                if(scene.video?.geometryChanged()==true)related(root).forEach {invalidatePanes(it)}
                 if(capture.contentDirty(root))invalidatePanes(scene)
+                scene.panes.forEach {org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidateMoved(it)}
                 true
             }
             root.viewTreeObserver.addOnPreDrawListener(scene.redraw)
         }
         scene.panes.add(view)
         owners[view] = scene
+        (scene.video ?: scene.activityRoot?.let {scenes[it]?.video})?.wake()
     }
     fun unwatch(view: View) {
         val scene = owners.remove(view) ?: return
@@ -70,14 +73,16 @@ object GlassBackdrop {
         videoPreviewFrames++
         related(owner).forEach { invalidatePanes(it) }
     }
-    private fun invalidatePanes(scene: Scene) {
+    private fun invalidatePanes(scene: Scene,positionOnly:Boolean=false) {
         scene.panes.forEach { pane ->
             if(pane.isShown && pane.getLocalVisibleRect(scene.visibleBounds)) {
-                org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidate(pane)
+                if(positionOnly)org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidatePosition(pane)
+                else org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidate(pane)
                 pane.invalidate()
             }
         }
     }
+    internal fun invalidateSource(owner:View) {owners[owner]?.let {invalidatePanes(it)}}
     internal fun hasVisiblePanes(owner: View): Boolean = related(owner).any { scene -> scene.panes.any { it.isShown && it.alpha > .01f } }
 
     internal fun draw(canvas: Canvas, owner: View) {

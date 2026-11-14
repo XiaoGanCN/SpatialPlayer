@@ -597,6 +597,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * first scaling mode meant cycling through all of them.
      */
     private fun showOverflowSheet() {
+        val reuse=inspectorSheet.takeWindow()
         Log.d(TAG, "overflow sheet requested")
         hideControls()
         val speed = engine.player?.playbackParameters?.speed ?: 1f
@@ -638,6 +639,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             // The sheet covers the capsule; leaving the chrome drawn underneath shows it through the
             // translucent rows. Take it away while the sheet is up and bring it back afterwards.
             dismissed = { showControlsTemporarily() },
+            reuse = reuse,
         )
     }
 
@@ -1439,6 +1441,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun updateProgress() {
         val sample = engine.sample()
         lastSample = sample
+        binding.controlGlass.setBackdropFrameRate(sample.videoFrameRate*sample.playbackSpeed,sample.renderedFrames.toLong())
         binding.seekBar.isEnabled = sample.durationMs > 0 && engine.player?.isCurrentMediaItemSeekable == true
         if (!isScrubbing && sample.durationMs > 0) {
             val fraction = sample.positionMs.toFloat() / sample.durationMs
@@ -1555,7 +1558,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun showInspector(panel: InspectorSheet.Panel) {
         hideControls()
         inspectorSheet.onNavigateBack = { showOverflowSheet() }
-        inspectorSheet.show(panel)
+        inspectorSheet.show(panel,overflowSheet.takeWindow())
     }
 
     // ------------------------------------------------------------------ debug panel probe

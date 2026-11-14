@@ -70,9 +70,12 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   with filtered sensor direction connected to its highlight angle. Catalog controls live in
   `ui/components`; Apache-2.0 license/revision are bundled. The old MIT optical shader remains only
   for the deliberately distinct playback timeline.
-- `VideoGlassBackdrop` supplies a shared double-buffered, downscaled PixelCopy preview. It refreshes
-  rapidly for visible panes and slowly for ambient glow with chrome hidden. Ambient colors share
-  this pipeline. The native HDR video surface is never replaced or modified by the preview.
+- `VideoGlassBackdrop` supplies a shared, downscaled SDR PixelCopy preview on display vsync, with at
+  most two pending copies. Five buffers exclude displayed, previous and pending targets; serial and
+  source-generation checks reject stale callbacks. Duplicate pixel copies do not swap the front or invalidate Gaussian layers. Capture uses up to
+  two opportunities per source frame (declared rate or observed decoder cadence for Matroska),
+  capped at 120; UI animation cadence is independent. Hidden-chrome ambient sampling is slow. New panes
+  wake capture immediately. Native HDR SurfaceView is never replaced or modified by this preview.
 - Blu-ray M2TS: `M2tsDataSource` strips four timestamp bytes from each 192-byte packet and maps virtual
   188-byte seek offsets/lengths back to the original file. Other transport streams pass through.
   `BlurayTsExtractor` distinguishes HDMV's DTS-HD type 0x86 from broadcast SCTE-35, excludes the DV
@@ -96,25 +99,42 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 ### Glass and layout
 
 - `RuntimeShader` cannot draw on a software canvas. Both renderers have a canvas-acceleration guard.
-  RippleDrawable gets an explicit opaque rounded mask; otherwise a held press rasterizes shader content
-  into a software mask and crashes. Keep `verify-glass-touch.py`.
+  Production buttons use the stateful glass drawable directly: `RippleDrawable` clips expanding
+  content even with transparent ink. The debug probe retains an explicitly masked ripple to guard
+  against the historical software-mask crash. Keep `verify-glass-touch.py`.
 - `NativeBackdropRenderer` attaches transparent, inaccessible Compose bridge hosts to window decor;
   native Views retain interaction/accessibility contracts and draw the host's local display list.
-  Pane display lists are cached until source/animation/size invalidation. Skip offscreen controls;
+  Each pane has a live native source RenderNode inside the cached Compose effect. Source pixels and
+  coordinates update synchronously, without rewriting Compose state or re-recording the effect.
+  Scrolls only invalidate position; stationary panes retain their source. Pre-draw catches pane
+  movement during height morphs and native video geometry changes, including paused scaling.
+  Sensor notifications alone update highlight angle (0.1° threshold); do not sample/write the angle
+  on every scroll/video refresh. ART profiling found that caused repeated highlight/shadow recordings.
+  Pane display lists are cached until animation/geometry/style invalidation. Skip offscreen controls;
   only align the host's physical position for input. Dialog decor needs ViewTree lifecycle owners.
   Preserve layout-parameter types on resize, dispose
   on detach, and defer removing decor siblings until root detachment finishes.
+  Button hosts/display lists reserve drawing space for the spring expansion. Ordinary parent rows
+  allow overflow; scrolling viewports and explicit sheet outlines retain their clips.
 - Forwarded touches must rebase both raw and local coordinates. Slider taps and drags use live track
   width after rotation; continuous movement accumulates before the native integer value snaps.
+  One full-track gesture handles DOWN and MOVE immediately. Native sliders reserve 32 dp at each
+  end for the expanded glass handle/shadow; the separate playback timeline keeps its own geometry.
 - `BackdropCapture` records ancestor backgrounds/children explicitly. Never call `draw()` on live
   scrolling or glass ancestors: it replays stateful edge effects and clears pending redraws, causing
   runaway stretch and frozen nested highlights. Preserve dirty leaf state after offscreen drawing.
   UI scrollers disable native stretch; their ordinary scrolling remains intact.
-- Native video copies use decoder buffer coordinates, not view coordinates. Double buffering avoids
+- Native video copies use decoder buffer coordinates, not view coordinates. Buffer exclusions avoid
   writing into the preview currently sampled by the render thread; don't prematurely recycle bitmaps.
 - All sheets (including Stereo stage, value entry, diagnostics and output status) use `GlassSheetLayout`
   and the production Backdrop material. Natural height avoids tiny portrait scroll ranges; safe-area
-  caps and clipping keep live-rotated landscape drawers inside the window. Headers overlay progressive blur. Transparent windows have compositor blur disabled to avoid double frost.
+  caps and clipping keep live-rotated landscape drawers inside the window. `SheetWindow` transfers
+  one dialog and shell between Overflow and Inspector: no dismiss/reopen or chrome flash on navigation.
+  The window has a fixed safe cap; its bottom-aligned pane animates natural height. Configure before
+  showing, disable platform window motion, and fade content in place. The wrapper uses the actual
+  visible display frame to keep numeric entry above vendor keyboards without double IME padding.
+  Headers remain fully blurred through their height, with a 32 dp fade over the content beneath.
+  Transparent windows have compositor blur disabled to avoid double frost.
 - Native cards, clips and ripple masks use the exact Kyant0 Shapes G2 path; circles/capsules remain circular.
 - `TopFadeBlurView` uses a one-third-size GPU recording and four Gaussian levels with additive masks:
   blur intensity eases down the strip and opacity fades at the foot, with no scrim. It excludes itself
@@ -138,6 +158,12 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   Snapping sliders track held state independently of native dragging so a stationary hold becomes glass.
   Media-list scrolling and hiding player controls are silent; actual buttons retain feedback.
 - Switches use the library's deforming glass thumb, a full-track gesture target, and active blue #0A84FF.
+  Active options use blue tint and native selected state, with no checkmark. Native glass buttons
+  share the catalog's `InteractiveHighlight` spring, finger highlight and deformation with the playground.
+- `SpatialPlayerApplication` / `HighRefreshRate` request up to 120Hz at the current resolution for
+  activity and dialog UI windows; API 35+ also receives the high frame-rate category. This is a UI
+  vote, not a resolution or HDR-surface mode change. OS thermal/power/vendor policy still applies.
+  Reference: https://developer.android.com/reference/android/view/WindowManager.LayoutParams#preferredRefreshRate
 - Gesture ownership is decided on DOWN and retained for the gesture. Header buttons, seek bar and speed
   control are included in hit-testing. Alpha zero alone does not remove a touch target: park at INVISIBLE.
 - `View.animate().cancel()` retains listeners. Clear stale listeners before reusing an animator.
@@ -174,6 +200,9 @@ Original movie (73 GB; never push the whole file):
   audio-only → video preview recovery. Generates/pushes only a 2.3 MB silent WAV fixture.
 - Migration: `python3 tools/verify-backdrop-migration.py` (real library execution, quiet gestures,
   live-resized controls/drawers, ambient colors, repeated top-edge pixels and idle behavior).
+- Follow-up: `python3 tools/verify-glass-followup.py` verifies real cached lens pixel changes,
+  live bar grabs, both held endpoints, high-refresh vote, stable drawer identity/bottom anchor,
+  tint selection, and gap-free header fades in both orientations. Artifacts: `smoke/out/glass-followup/`.
 - Crash regression: `python3 tools/verify-glass-touch.py` (real held presses + software-canvas rendering).
 - Codec/identity regression: `tools/verify-multichannel.sh`; spatial tests: `tools/verify-spatial-audio.sh`.
 - Other harnesses cover Poweramp refresh, chapters, background policy, panels, gestures, rotation and glass.
@@ -197,13 +226,19 @@ Original movie (73 GB; never push the whole file):
   volume / brightness feedback, haptics and GPU Gaussian blur. Folder picker tests now verify the
   foreground activity (background broadcasts alone can misleadingly report hidden app geometry).
 - **39 HDR/UI checks** and **7 held presses + software-canvas regression** pass. The timed film
-  sample rendered 59 → 294 frames with **0 dropped**, using hardware HEVC, native PQ video and SDR UI.
+  sample rendered 65 → 300 frames with **0 dropped**, using hardware HEVC, native PQ video and SDR UI.
 - Existing M2TS probe: hardware 4K PQ + FFmpeg DTS-HD 5.1, 205 frames / 0 dropped / 0 underruns.
   `tools/verify-bluray.py` covers ordinary TS and M2TS seeking; extractor / decoder code is unchanged.
 - Optional logo direction: `design/logo-c.svg` simplifies the spatial orbit and increases small-size
   contrast. Proposal only; the installed launcher icon remains unchanged.
-- Six alternating scrolls: library p95 **32 → 20 ms**, Settings **65 → 36 ms** after viewport /
-  host-layout / display-list optimizations. Settings still has measurable fast-scroll frame spikes;
-  do not describe it as perfectly smooth. Idle Settings performs no backdrop work on a stable desk.
+- **21 follow-up checks pass**, including expanded held-button pixels. The live GPU probe displayed four alternating source colours with
+  **one effect recording**; numeric input remains usable above the keyboard. A 60fps video fixture
+  delivered ~60 distinct preview frames/s after exact native bitmap deduplication. The reference phone reports a
+  120Hz window vote and 120Hz display refresh; this does not guarantee 120 rendered UI fps.
+- Six alternating scrolls: library p95 **20 → 14 ms**, Settings **36 → 24 ms**; Settings missed-frame
+  rate **17% → 1.6%** after source/sensor decoupling. Use current artifacts, not historical counts,
+  to assess performance. HDR drawer scroll misses **33% → 8%**, p95 **28 → 20 ms**, with zero
+  video drops; full-sheet blur no longer refreshes just because its child rows move. Fast scrolling
+  can still miss individual deadlines.
 - Physical HDR color accuracy / full original movies and physical tilt remain manual checks.
 - HDMV PGS subtitle extraction, Sony recentering and the lock-screen test limitation remain open.

@@ -34,7 +34,7 @@ def main():
         ui.shot('home.png');tap(state['views']['buttonSettings']['bounds']);time.sleep(.5)
         state=snap('SETTINGS');slider=next(n for n in state['nodes'] if n['kind']=='GlassSlider')
         x0,y0,x1,y1=slider['bounds'];density=state['width']/418
-        left=x0+14*density;right=x1-14*density;x=left+(right-left)*slider['progress']/slider['max'];y=(y0+y1)/2
+        left=x0+32*density;right=x1-32*density;x=left+(right-left)*slider['progress']/slider['max'];y=(y0+y1)/2
         motion('DOWN',x,y);time.sleep(.35);held=snap('SETTINGS');head=next(n for n in held['nodes'] if n['path']==slider['path'])
         verify(head['engaged'] and head['progress']==slider['progress'],'a stationary snapping-slider press becomes glass without changing its value')
         if held['hapticsEnabled']:verify(held['lastHaptic']==3,'press requests KEYBOARD_PRESS')
@@ -65,6 +65,7 @@ def main():
         motion('DOWN',x,y);time.sleep(.1);pressed=snap()
         motion('UP',x,y);released=snap()
         if released['hapticsEnabled']:verify(released['lastHaptic']==7 and released['haptics']==pressed['haptics']+1,'seek button release dispatches exactly one KEYBOARD_RELEASE')
+        if not released['playerPlaying']:tap(released['views']['buttonPlayPause']['bounds'])
         tap(state['views']['buttonMore']['bounds']);time.sleep(.4);state=snap()
         verify(state['overflowOpen'] and any(n['path']=='sheet' and n['frames']>0 for n in state['nodes']),'player drawer uses the real shared glass shell')
         frames=state['videoPreviewFrames'];time.sleep(.5);verify(snap()['videoPreviewFrames']>frames,'video backdrop keeps refreshing while player chrome is hidden behind the drawer')

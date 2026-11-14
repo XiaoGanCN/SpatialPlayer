@@ -17,10 +17,21 @@ class OverflowSheet(private val context: Context) {
     internal fun viewTaggedForTest(tag: String): android.view.View? = panel?.findViewWithTag(tag)
     val isOpen: Boolean get() = dialog?.isShowing == true
     fun hide() { dialog?.dismiss() }
-    fun show(actions: List<Action>, dismissed: () -> Unit = {}) {
+    internal fun takeWindow():SheetWindow? {
+        val window=dialog as? GlassSheetDialog ?: return null
+        val pane=panel as? GlassSheetLayout ?: return null
+        window.setOnDismissListener(null);window.setOnCancelListener(null)
+        dialog=null;panel=null
+        return SheetWindow(window,pane)
+    }
+    fun show(actions:List<Action>,dismissed:()->Unit={})=show(actions,dismissed,null)
+    internal fun show(actions: List<Action>, dismissed: () -> Unit, reuse:SheetWindow?) {
         if (isOpen) return
-        val d = Dialog(context, org.spatialplayer.R.style.Theme_SpatialPlayer_Glass)
-        val layout = GlassSheetLayout(context, "Playback controls", { d.dismiss() })
+        val d = reuse?.dialog ?: GlassSheetDialog(context)
+        val layout = reuse?.panel ?: GlassSheetLayout(context, "Playback controls", {d.dismiss()})
+        layout.configureHeader("Playback controls",{d.dismiss()},null)
+        d.navigateBack={d.dismiss()}
+        layout.content.removeAllViews()
         panel = layout
         val column = layout.content
         for (action in actions) {
@@ -47,19 +58,18 @@ class OverflowSheet(private val context: Context) {
                 maxWidth = dp(140)
                 setTextColor(0xAFFFFFFF.toInt())
             })
-            row.setOnClickListener { d.dismiss(); action.run() }
+            row.setOnClickListener {action.run()}
             Haptics.attachTo(row)
             column.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
-        d.setContentView(layout)
+        if(reuse==null)GlassTheme.setSheetContent(d,layout)
         d.setOnDismissListener { dialog = null; panel = null; dismissed() }
         dialog = d
-        d.show()
         GlassTheme.configureSheet(d, minOf(dp(actions.size * 64 + 92), (context.resources.displayMetrics.heightPixels * .78f).toInt()))
+        if(!d.isShowing)d.show()
         GlassInstaller.apply(layout)
         column.alpha = 0f
-        column.translationY = dp(20).toFloat()
-        column.animate().alpha(1f).translationY(0f).setDuration(240).start()
+        column.animate().alpha(1f).setDuration(180).start()
     }
     private fun dp(value: Int) = GlassTheme.dp(context, value.toFloat())
 }

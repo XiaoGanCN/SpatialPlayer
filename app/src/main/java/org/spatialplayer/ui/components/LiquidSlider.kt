@@ -2,7 +2,6 @@
 package org.spatialplayer.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -29,7 +28,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
@@ -42,7 +40,6 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import org.spatialplayer.ui.components.DampedDragAnimation
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -81,13 +78,14 @@ fun LiquidSlider(
     val trackBackdrop = rememberLayerBackdrop()
 
     BoxWithConstraints(
-        modifier.then(playgroundHaptics()).fillMaxWidth().semantics {
+        modifier.fillMaxWidth().semantics {
             progressBarRangeInfo = ProgressBarRangeInfo(value(),valueRange)
             setProgress { requested -> update(requested.coerceIn(valueRange)); true }
         },
         contentAlignment = Alignment.CenterStart
     ) {
         val trackWidth = constraints.maxWidth
+        val thumbHitRadius=with(androidx.compose.ui.platform.LocalDensity.current) {30.dp.toPx()}
         val liveWidth by rememberUpdatedState(trackWidth)
         val liveRange by rememberUpdatedState(valueRange)
         val change by rememberUpdatedState<(Float)->Unit> { update(it) }
@@ -104,7 +102,17 @@ fun LiquidSlider(
                 visibilityThreshold = visibilityThreshold,
                 initialScale = 1f,
                 pressedScale = 1.5f,
-                onDragStarted = { dragValue=value();didDrag=false },
+                onDragStarted = { position ->
+                    dragValue=value();didDrag=false
+                    val fraction=(position.x/liveWidth.coerceAtLeast(1)).coerceIn(0f,1f)
+                    val range=liveRange
+                    val thumbX=(value()-range.start)/(range.endInclusive-range.start)*liveWidth
+                    // Holding the thumb preserves its value; touching elsewhere grabs the track now.
+                    if(kotlin.math.abs(position.x-(if(isLtr)thumbX else liveWidth-thumbX))>thumbHitRadius) {
+                        dragValue=range.start+(range.endInclusive-range.start)*(if(isLtr)fraction else 1-fraction)
+                        change(dragValue)
+                    }
+                },
                 onDragStopped = {
                     if (didDrag) {
                         change(dragValue)
@@ -130,24 +138,12 @@ fun LiquidSlider(
                 }
         }
 
+        Box(Modifier.fillMaxWidth().height(48.dp).then(playgroundHaptics()).then(dampedDragAnimation.modifier), contentAlignment=Alignment.CenterStart) {
         Box(Modifier.layerBackdrop(trackBackdrop)) {
             Box(
                 Modifier
                     .clip(Capsule())
                     .background(trackColor)
-                    .pointerInput(animationScope) {
-                        detectTapGestures { position ->
-                            val range = liveRange
-                            val delta = (range.endInclusive - range.start) * (position.x / liveWidth.coerceAtLeast(1))
-                            val targetValue =
-                                (if (isLtr) range.start + delta
-                                else range.endInclusive - delta)
-                                    .coerceIn(range)
-                            dampedDragAnimation.animateToValue(targetValue)
-                            dragValue = targetValue
-                            change(targetValue)
-                        }
-                    }
                     .height(6f.dp)
                     .fillMaxWidth()
             )
@@ -174,7 +170,6 @@ fun LiquidSlider(
                         (-size.width / 2f + trackWidth * dampedDragAnimation.progress)
                             .fastCoerceIn(-size.width / 4f, trackWidth - size.width * 3f / 4f) * if (isLtr) 1f else -1f
                 }
-                .then(dampedDragAnimation.modifier)
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(
                         backdrop,
@@ -233,5 +228,6 @@ fun LiquidSlider(
                 )
                 .size(40f.dp, 24f.dp)
         )
+        }
     }
 }

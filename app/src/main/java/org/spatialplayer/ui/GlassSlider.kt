@@ -25,7 +25,7 @@ class GlassSlider @JvmOverloads constructor(context: Context, attrs: AttributeSe
     private var callback: SeekBar.OnSeekBarChangeListener?=null
     internal val glassEngaged get()=held
     private val renderer=NativeBackdropRenderer(this) { backdrop ->
-        Box(Modifier.fillMaxSize().padding(horizontal=14.dp)) {
+        Box(Modifier.fillMaxSize().padding(horizontal=32.dp)) {
             LiquidSlider({ model?.floatValue ?: progress.toFloat() }, { value ->
                 val snapped=value.roundToInt().coerceIn(min,max)
                 model?.floatValue=value.coerceIn(min.toFloat(),max.toFloat())
@@ -61,7 +61,7 @@ class GlassSlider @JvmOverloads constructor(context: Context, attrs: AttributeSe
         if(event.actionMasked==MotionEvent.ACTION_DOWN) { held=true;isPressed=true;parent?.requestDisallowInterceptTouchEvent(true);callback?.onStartTrackingTouch(this) }
         // Keep a full-height native touch target, including the generous track-end inset.
         val projected=MotionEvent.obtain(event)
-        val inset=dp(14f).toFloat()
+        val inset=dp(32f).toFloat()
         projected.setLocation(event.x.coerceIn(inset+1,(width-inset-1).coerceAtLeast(inset+1)),height/2f)
         try { renderer.touch(projected) } finally { projected.recycle() }
         if(event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL) {

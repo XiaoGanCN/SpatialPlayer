@@ -21,7 +21,11 @@ class GlassRenderProbeActivity : AppCompatActivity() {
         GlassInstaller.apply(pane)
         pane.postDelayed({
             check(org.spatialplayer.ui.backdrop.NativeBackdropRenderer.recordings > 0) { "GPU lens was not initialized" }
-            val ripple = pane.background as RippleDrawable
+            val glass=checkNotNull(GlassInstaller.material(pane))
+            // Production uses the stateful glass directly. Keep the historical masked-ripple
+            // regression explicit so future wrappers cannot reintroduce software shader crashes.
+            val ripple=RippleDrawable(android.content.res.ColorStateList.valueOf(0x33FFFFFF),glass,
+                org.spatialplayer.ui.SmoothMask(50f))
             check(ripple.findDrawableByLayerId(android.R.id.mask) != null) { "No explicit ripple mask" }
             val bitmap = Bitmap.createBitmap(160, 100, Bitmap.Config.ARGB_8888)
             try {

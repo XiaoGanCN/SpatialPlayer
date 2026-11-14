@@ -93,30 +93,25 @@ half4 main(float2 coord) {
             drawContent()
         }
 
-    val gestureModifier: Modifier =
-        Modifier.pointerInput(animationScope) {
-            inspectDragGestures(
-                onDragStart = { down ->
-                    startPosition = down.position
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.snapTo(startPosition) }
-                    }
-                },
-                onDragEnd = {
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
-                    }
-                },
-                onDragCancel = {
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
-                    }
-                }
-            ) { change, _ ->
-                animationScope.launch { positionAnimation.snapTo(change.position) }
-            }
+    fun pressAt(position:Offset) {
+        startPosition=position
+        animationScope.launch {
+            launch {pressProgressAnimation.animateTo(1f,pressProgressAnimationSpec)}
+            launch {positionAnimation.snapTo(position)}
         }
+    }
+    fun release() {
+        animationScope.launch {
+            launch {pressProgressAnimation.animateTo(0f,pressProgressAnimationSpec)}
+            launch {positionAnimation.animateTo(startPosition,positionAnimationSpec)}
+        }
+    }
+    fun moveTo(position:Offset) {animationScope.launch {positionAnimation.snapTo(position)}}
+    val gestureModifier: Modifier = Modifier.pointerInput(animationScope) {
+        inspectDragGestures(
+            onDragStart={pressAt(it.position)},
+            onDragEnd={release()},
+            onDragCancel={release()}
+        ) { change,_->moveTo(change.position) }
+    }
 }

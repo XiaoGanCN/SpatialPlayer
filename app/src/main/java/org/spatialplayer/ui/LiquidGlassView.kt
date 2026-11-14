@@ -44,6 +44,7 @@ class LiquidGlassView @JvmOverloads constructor(
         }
         clipToOutline = true
     }
+    fun setBackdropFrameRate(rate:Float,rendered:Long) {video.observeFrameRate(rate,rendered)}
     fun setBackdropFrameSize(width: Int, height: Int) { video.setFrameSize(width,height); start() }
     fun start() { if (isAttachedToWindow) video.start() }
     fun stop() = video.stop()
@@ -60,6 +61,10 @@ class LiquidGlassView @JvmOverloads constructor(
         LightSourceController.unregister(this)
         glass.release()
         super.onDetachedFromWindow()
+    }
+    override fun onVisibilityChanged(changedView:View,visibility:Int) {
+        super.onVisibilityChanged(changedView,visibility)
+        if(isAttachedToWindow && visibility==VISIBLE)start()
     }
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)

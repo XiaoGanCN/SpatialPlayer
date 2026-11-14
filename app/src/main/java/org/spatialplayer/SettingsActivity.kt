@@ -107,7 +107,7 @@ class SettingsActivity : AppCompatActivity() {
                 val panel = org.spatialplayer.ui.GlassSheetLayout(this@SettingsActivity, "Playback diagnostics", { dialog.dismiss() })
                 buildDevice(panel.content)
                 buildDiagnostics(panel.content)
-                dialog.setContentView(panel)
+                org.spatialplayer.ui.GlassTheme.setSheetContent(dialog,panel)
                 dialog.show()
                 org.spatialplayer.ui.GlassTheme.configureSheet(dialog, (resources.displayMetrics.heightPixels * .75f).toInt())
                 GlassInstaller.apply(panel)
@@ -238,7 +238,7 @@ class SettingsActivity : AppCompatActivity() {
         renderEditor()
         activeSheet = panel
         dialog.setOnDismissListener { activeSheet = null }
-        dialog.setContentView(panel)
+        org.spatialplayer.ui.GlassTheme.setSheetContent(dialog,panel)
         dialog.show()
         org.spatialplayer.ui.GlassTheme.configureSheet(dialog, minOf(dp(680), (resources.displayMetrics.heightPixels * .82f).toInt()))
         GlassInstaller.apply(panel)

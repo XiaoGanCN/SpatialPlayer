@@ -7,7 +7,8 @@ and Android spatial audio with head tracking on supported headsets.
 - Embedded and external subtitles, Matroska chapters, decoder selection, and scaling controls.
 - Poweramp integration, picked folders, and MediaStore files.
 - Background music with media controls; separate music/video background settings.
-- Kyant0 Backdrop glass controls, sensor highlights, progressive scroll-edge blur, and live scrubbing.
+- Kyant0 Backdrop glass controls, live video backdrops, sensor highlights, and progressive scroll-edge blur.
+- Live track dragging, stable player drawer navigation, spring button feedback, and a 120Hz UI preference.
 - Settings → Glass playground offers an adjustable material sandbox.
 
 Build with **JDK 21** and **Android SDK 36**. Media3 and nextlib remain pinned in the version catalog.

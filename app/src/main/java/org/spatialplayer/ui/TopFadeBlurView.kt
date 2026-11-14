@@ -15,6 +15,8 @@ import kotlin.math.ceil
 class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
     var sourceView: View? = null
         set(value) { field = value; invalidate() }
+    var solidHeightPx=0f
+        set(value) {if(field!=value){field=value;sizeKey=0L;invalidate()}}
     private val capture = BackdropCapture()
     private val source = RenderNode("scroll-edge-source")
     private val levels = Array(4) { RenderNode("scroll-edge-$it") }
@@ -22,9 +24,10 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
         uniform shader image;
         uniform float height;
         uniform float margin;
+        uniform float solidHeight;
         uniform float level;
         half4 main(float2 p) {
-            float y = clamp((p.y-margin) / height, 0.0, 1.0);
+            float y = clamp((p.y-margin-solidHeight) / max(1.0,height-solidHeight), 0.0, 1.0);
             float ramp = 1.0 - smoothstep(0.0, 1.0, y);
             float weight = max(0.0, 1.0 - abs(ramp * 3.0 - level));
             float fade = 1.0 - smoothstep(0.60, 1.0, y);
@@ -69,7 +72,7 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
                 node.setPosition(-margin,-margin,w+margin,h+margin)
                 node.setUseCompositingLayer(true, additive)
                 val mask = masks[i]
-                mask.setFloatUniform("height", h.toFloat()); mask.setFloatUniform("margin",margin.toFloat()); mask.setFloatUniform("level", i.toFloat())
+                mask.setFloatUniform("solidHeight",solidHeightPx*scale);mask.setFloatUniform("height", h.toFloat()); mask.setFloatUniform("margin",margin.toFloat()); mask.setFloatUniform("level", i.toFloat())
                 val opacity = RenderEffect.createRuntimeShaderEffect(mask, "image")
                 val radius = 24f * resources.displayMetrics.density * scale * i / 3f
                 node.setRenderEffect(if (i == 0) opacity else RenderEffect.createChainEffect(opacity,

@@ -9,6 +9,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.GraphicsLayerScope
@@ -20,6 +21,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
@@ -43,32 +45,47 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         internal var recordings=0L;private set
         internal val hostCount get()=renderers.values.sumOf {it.size}
         fun invalidate(view: View) { renderers[view]?.toList()?.forEach { it.refresh() } }
+        fun invalidatePosition(view:View) {renderers[view]?.toList()?.forEach {it.owner.invalidate()}}
+        fun invalidateMoved(view:View) {renderers[view]?.toList()?.forEach {it.checkPosition()}}
+        fun invalidateLight(view:View) {renderers[view]?.toList()?.forEach {it.refreshLight()}}
     }
+    private var paintPadding=0
     private var host: BridgeView? = null
     private var hostRoot: ViewGroup? = null
     private var forwardingTouch=false
-    private var revision by mutableIntStateOf(0)
     private var angle by mutableFloatStateOf(30f)
     private var drawing = false
     private val visibleBounds = android.graphics.Rect()
     private val displayList = android.graphics.RenderNode("native-backdrop")
     private var displayListDirty = true
+    private val sourceNode = android.graphics.RenderNode("live-glass-source")
+    private var sourceDirty = true
+    private var wasVisible = false
+    private val sourcePosition = IntArray(2)
+    private var sourceX = Int.MIN_VALUE
+    private var sourceY = Int.MIN_VALUE
+    private val outset = (96 * owner.resources.displayMetrics.density).toInt()
     private val backdrop = object : Backdrop {
         override val isCoordinatesDependent = true
         override fun DrawScope.drawBackdrop(density: Density, coordinates: LayoutCoordinates?, layerBlock: (GraphicsLayerScope.() -> Unit)?) {
             recordings++
-            revision // observed by the draw node, refreshed by scroll/video/source invalidation
             val offset = coordinates?.positionInRoot() ?: androidx.compose.ui.geometry.Offset.Zero
-            withTransform({ translate(-offset.x,-offset.y) }) {
-                GlassBackdrop.draw(drawContext.canvas.nativeCanvas,owner)
+            withTransform({ translate(-offset.x+paintPadding,-offset.y+paintPadding) }) {
+                drawContext.canvas.nativeCanvas.drawRenderNode(sourceNode)
             }
         }
     }
     private inner class BridgeView(context: Context) : AbstractComposeView(context) {
+        init {clipChildren=false;clipToPadding=false}
+        override fun onWindowVisibilityChanged(visibility:Int) {
+            super.onWindowVisibilityChanged(visibility)
+            if(visibility==View.VISIBLE)owner.post {refreshLight();refresh()}
+            else wasVisible=false
+        }
         override fun dispatchTouchEvent(event: MotionEvent): Boolean = if(forwardingTouch) super.dispatchTouchEvent(event) else false
         @Composable override fun Content() {
             CompositionLocalProvider(LocalGlassAngle provides { angle }) {
-                Box(Modifier.fillMaxSize()) { content(backdrop) }
+                Box(Modifier.fillMaxSize().padding((paintPadding/owner.resources.displayMetrics.density).dp)) { content(backdrop) }
             }
         }
         override fun onDescendantInvalidated(child: View, target: View) {
@@ -97,6 +114,7 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
             decor.setViewTreeSavedStateRegistryOwner(activity)
             decor.setViewTreeViewModelStoreOwner(activity)
         }
+        paintPadding=if(owner.isClickable && owner !is android.widget.SeekBar && owner !is android.widget.CompoundButton)outset else 0
         val view = BridgeView(owner.context)
         view.setViewTreeLifecycleOwner(activity)
         view.setViewTreeSavedStateRegistryOwner(activity)
@@ -104,36 +122,70 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         view.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         view.alpha=0f
         view.importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-        decor.addView(view,android.widget.FrameLayout.LayoutParams(owner.width.coerceAtLeast(1),owner.height.coerceAtLeast(1)))
+        decor.addView(view,android.widget.FrameLayout.LayoutParams(owner.width.coerceAtLeast(1)+paintPadding*2,owner.height.coerceAtLeast(1)+paintPadding*2))
         hostRoot=decor
         host=view
         renderers.getOrPut(owner) { LinkedHashSet() }.add(this)
+        refreshLight()
         refresh()
         owner.invalidate()
     }
     fun refresh() {
         // ScrollView keeps offscreen children attached. Invalidating their compositions on every
         // scroll/sensor sample forces work for the entire settings page instead of its viewport.
-        if(!owner.isShown || !owner.getLocalVisibleRect(visibleBounds))return
-        displayListDirty=true
-        revision++
-        val light=LightSourceController.lightFor(owner,LightSourceController.DEFAULT_X,LightSourceController.DEFAULT_Y)
-        angle=(atan2(light.second,light.first)*180f/Math.PI.toFloat())
+        if(!visible())return
+        sourceDirty=true
         owner.invalidate()
+    }
+    private fun visible():Boolean {
+        if(owner.windowVisibility!=View.VISIBLE || !owner.isShown)return false
+        var view:View?=owner
+        while(view!=null) {
+            if(view.alpha<=.001f)return false
+            view=view.parent as? View
+        }
+        return owner.getLocalVisibleRect(visibleBounds)
+    }
+    private fun checkPosition() {
+        if(!visible()) {wasVisible=false;return}
+        if(!wasVisible) {wasVisible=true;sourceDirty=true;refreshLight()}
+        owner.getLocationOnScreen(sourcePosition)
+        if(sourceDirty || sourcePosition[0]!=sourceX || sourcePosition[1]!=sourceY)owner.invalidate()
+    }
+    private fun refreshLight() {
+        if(!visible())return
+        val light=LightSourceController.lightFor(owner,LightSourceController.DEFAULT_X,LightSourceController.DEFAULT_Y)
+        val next=atan2(light.second,light.first)*180f/Math.PI.toFloat()
+        if(kotlin.math.abs(next-angle)>.1f)angle=next
     }
     fun draw(canvas: Canvas): Boolean {
         val view=host ?: return false
         if (!canvas.isHardwareAccelerated || owner.width<=0 || owner.height<=0) return false
         layoutHost(view)
-        if(displayList.width!=owner.width || displayList.height!=owner.height) {
-            displayList.setPosition(0,0,owner.width,owner.height)
+        owner.getLocationOnScreen(sourcePosition)
+        if(sourceNode.width!=owner.width+outset*2 || sourceNode.height!=owner.height+outset*2) {
+            sourceNode.setPosition(-outset,-outset,owner.width+outset,owner.height+outset)
+            sourceDirty=true
+        }
+        if(sourceDirty || sourceX!=sourcePosition[0] || sourceY!=sourcePosition[1]) {
+            sourceX=sourcePosition[0];sourceY=sourcePosition[1]
+            val sourceCanvas=sourceNode.beginRecording(owner.width+outset*2,owner.height+outset*2)
+            try {
+                sourceCanvas.translate(outset.toFloat(),outset.toFloat())
+                GlassBackdrop.draw(sourceCanvas,owner)
+            } finally {sourceNode.endRecording()}
+            sourceDirty=false
+        }
+        val paintOutset=paintPadding
+        if(displayList.width!=owner.width+paintOutset*2 || displayList.height!=owner.height+paintOutset*2) {
+            displayList.setPosition(-paintOutset,-paintOutset,owner.width+paintOutset,owner.height+paintOutset)
             displayListDirty=true
         }
         // A pane can be drawn normally and sampled again by the fade in the same frame.
         // Reuse its GPU display list; do not traverse the Compose tree for every sample.
         if(displayListDirty || !displayList.hasDisplayList()) {
             displayListDirty=false
-            val recording=displayList.beginRecording(owner.width,owner.height)
+            val recording=displayList.beginRecording(owner.width+paintOutset*2,owner.height+paintOutset*2)
             drawing=true
             try { view.draw(recording) } finally {drawing=false;displayList.endRecording()}
         }
@@ -142,23 +194,22 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         return true
     }
     private fun layoutHost(view: BridgeView, forTouch: Boolean = false) {
-        if(view.layoutParams.width!=owner.width || view.layoutParams.height!=owner.height) {
-            view.layoutParams=view.layoutParams.apply {width=owner.width;height=owner.height}
+        val width=owner.width+paintPadding*2;val height=owner.height+paintPadding*2
+        if(view.layoutParams.width!=width || view.layoutParams.height!=height) {
+            view.layoutParams=view.layoutParams.apply {this.width=width;this.height=height}
         }
-        if(view.measuredWidth!=owner.width || view.measuredHeight!=owner.height) {
-            view.measure(View.MeasureSpec.makeMeasureSpec(owner.width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(owner.height,View.MeasureSpec.EXACTLY))
+        if(view.measuredWidth!=width || view.measuredHeight!=height) {
+            view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY))
         }
-        // Drawing uses local coordinates. Moving this invisible decor sibling on every scroll
-        // would run Compose global-position/layout work for each pane. Only input needs its
-        // physical screen origin aligned with the native control's raw pointer coordinates.
+        // Drawing is local; only forwarded input needs a physical origin aligned to its owner.
         var x=view.left;var y=view.top
         if(forTouch) {
             val position=IntArray(2);val origin=IntArray(2)
             owner.getLocationOnScreen(position);hostRoot?.getLocationOnScreen(origin)
-            x=position[0]-origin[0];y=position[1]-origin[1]
+            x=position[0]-origin[0]-paintPadding;y=position[1]-origin[1]-paintPadding
         }
-        if(view.left!=x || view.top!=y || view.width!=owner.width || view.height!=owner.height) {
-            view.layout(x,y,x+owner.width,y+owner.height)
+        if(view.left!=x || view.top!=y || view.width!=width || view.height!=height) {
+            view.layout(x,y,x+width,y+height)
         }
     }
     fun touch(event: MotionEvent): Boolean {
@@ -180,6 +231,8 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
     fun detach() {
         val view=host ?: return
         host=null
+        sourceNode.discardDisplayList()
+        sourceDirty=true
         displayList.discardDisplayList()
         displayListDirty=true
         view.disposeComposition()

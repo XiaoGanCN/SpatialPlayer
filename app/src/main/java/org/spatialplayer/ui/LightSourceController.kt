@@ -95,6 +95,7 @@ object LightSourceController : SensorEventListener {
 
     /** Registers [view] as needing a redraw when the light moves. Idempotent. */
     fun register(view: View) {
+        if(synchronized(listeners) {listeners.contains(view)})return
         if (useless(view.context)) return
         synchronized(listeners) {
             if (!listeners.add(view)) return
@@ -229,7 +230,7 @@ object LightSourceController : SensorEventListener {
             lastLoggedAt = now
             Log.i(TAG, "light dir ${"%.3f".format(nx)}, ${"%.3f".format(ny)} tilt=${"%.2f".format(tilt)}")
         }
-        synchronized(listeners) { listeners.toList() }.forEach { org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidate(it); it.postInvalidateOnAnimation() }
+        synchronized(listeners) { listeners.toList() }.forEach { org.spatialplayer.ui.backdrop.NativeBackdropRenderer.invalidateLight(it); it.postInvalidateOnAnimation() }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

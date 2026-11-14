@@ -21,11 +21,11 @@ class GlassDrawable(private val owner:View,material:GlassStyle=GlassStyle()):Dra
     private val materialState=mutableStateOf(material)
     private val pressed=mutableStateOf(false)
     private val touch=mutableStateOf(Offset.Zero)
-    private val renderer=NativeBackdropRenderer(owner) {backdrop->BackdropSurface(backdrop,materialState.value,pressed.value,owner.resources.displayMetrics.density,touch.value)}
+    private val renderer=NativeBackdropRenderer(owner) {backdrop->BackdropSurface(backdrop,materialState.value,pressed.value,owner.resources.displayMetrics.density,touch.value,owner.isClickable)}
     internal var renderedFrames=0L;private set
     var radiusPx=material.cornerRadiusPx
     var style:GlassStyle=material
-        set(value){if(field==value)return;field=value;materialState.value=value;radiusPx=value.cornerRadiusPx;invalidateSelf()}
+        set(value){if(field==value)return;field=value;materialState.value=value;radiusPx=value.cornerRadiusPx;GlassBackdrop.invalidateSource(owner);invalidateSelf()}
     fun setTouchPoint(x:Float,y:Float){touch.value=Offset(x,y)}
     override fun isStateful()=true
     override fun onStateChange(state:IntArray):Boolean {

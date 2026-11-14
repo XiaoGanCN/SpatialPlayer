@@ -107,7 +107,8 @@ class InspectorSheet @JvmOverloads constructor(
         if (panel == currentPanel) render()
     }
 
-    fun show(panel: Panel) {
+    fun show(panel:Panel)=show(panel,null)
+    internal fun show(panel: Panel,reuse:SheetWindow?) {
         currentPanel = panel
         // Before anything is drawn, and whatever route reached here - a tab, an overflow row, a
         // long-press - so the rows always describe the panel that is about to appear.
@@ -118,17 +119,24 @@ class InspectorSheet @JvmOverloads constructor(
             applyWindowFlags(existing)
             return
         }
-        buildDialog()?.also { d ->
+        buildDialog(reuse).also { d ->
             dialog = d
-            d.show()
             render()
             applyWindowFlags(d)
+            if(!d.isShowing)d.show()
             GlassInstaller.apply(sheet!!)
             animateIn()
-            // `show` must happen before the window exists to configure blur reliably.
         }
     }
 
+    internal fun takeWindow():SheetWindow? {
+        val window=dialog as? GlassSheetDialog ?: return null
+        val pane=sheet as? GlassSheetLayout ?: return null
+        window.setOnDismissListener(null);window.setOnCancelListener(null)
+        pane.animate().setListener(null).cancel()
+        dialog=null;sheet=null;titleView=null;contentContainer=null;scrollView=null
+        return SheetWindow(window,pane)
+    }
     /** Dismisses without animation, for lifecycle teardown. */
     fun dismissNow() {
         dialog?.dismiss()
@@ -146,7 +154,6 @@ class InspectorSheet @JvmOverloads constructor(
             return
         }
         sheetView.animate()
-            .translationY(sheetView.height.toFloat())
             .alpha(0f)
             .setDuration(200L)
             .withEndAction {
@@ -159,22 +166,17 @@ class InspectorSheet @JvmOverloads constructor(
 
     // ------------------------------------------------------------------ construction
 
-    private fun buildDialog(): Dialog {
-        val d = object : Dialog(context, R.style.Theme_SpatialPlayer_Glass) {
-            @Deprecated("Platform callback")
-            override fun onBackPressed() {
-                if (onNavigateBack != null) { dismissNow(); onNavigateBack?.invoke() } else hide()
-            }
-        }
-        val panel = GlassSheetLayout(context, context.getString(currentPanel.titleRes), ::hide) {
-            dismissNow()
-            onNavigateBack?.invoke()
-        }
+    private fun buildDialog(reuse:SheetWindow?):Dialog {
+        val d=reuse?.dialog ?: GlassSheetDialog(context)
+        val navigate={if(onNavigateBack!=null)onNavigateBack?.invoke() else hide();Unit}
+        d.navigateBack=navigate
+        val panel=reuse?.panel ?: GlassSheetLayout(context,context.getString(currentPanel.titleRes),::hide)
+        panel.configureHeader(context.getString(currentPanel.titleRes),::hide,if(onNavigateBack!=null)navigate else null)
         sheet = panel
         titleView = panel.title
         contentContainer = panel.content
         scrollView = panel.scroll
-        d.setContentView(panel)
+        if(reuse==null)GlassTheme.setSheetContent(d,panel)
         d.setOnCancelListener { callback?.onSheetClosed() }
         return d
     }
@@ -188,16 +190,10 @@ class InspectorSheet @JvmOverloads constructor(
     // ------------------------------------------------------------------ rendering
 
     private fun animateIn() {
-        val sheetView = sheet ?: return
-        sheetView.post {
-            sheetView.translationY = sheetView.height.coerceAtLeast(dp(400)).toFloat()
-            sheetView.alpha = 0f
-            sheetView.animate()
-                .translationY(0f)
-                .alpha(1f)
-                .setDuration(260L)
-                .setInterpolator(android.view.animation.DecelerateInterpolator())
-                .start()
+        contentContainer?.apply {
+            animate().setListener(null).cancel()
+            alpha=0f
+            animate().alpha(1f).setDuration(180L).start()
         }
     }
 
@@ -354,6 +350,7 @@ class InspectorSheet @JvmOverloads constructor(
             background = GlassTheme.control(context, choice.selected)
             setTag(R.id.glass_role, if (choice.selected) R.id.glass_role_panel_active else R.id.glass_role_panel)
             alpha = if (choice.enabled || choice.value.endsWith("_header")) 1f else 0.42f
+            isSelected = choice.selected
             isClickable = choice.enabled
             isFocusable = choice.enabled
             if (choice.enabled) {
@@ -374,15 +371,6 @@ class InspectorSheet @JvmOverloads constructor(
             },
             LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
         )
-        if (choice.selected) {
-            titleRow.addView(
-                TextView(context).apply {
-                    text = "✓"
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    setTextColor(ContextCompat.getColor(context, R.color.accent))
-                },
-            )
-        }
         container.addView(titleRow)
 
         choice.subtitle?.let { subtitle ->

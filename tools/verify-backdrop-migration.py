@@ -71,7 +71,7 @@ def main():
             state=snap();tap(state['views']['speed_1.0']['bounds']);time.sleep(.2);return snap()
         def slider_geometry(state):
             box=state['views']['speed_slider']['bounds'];d=state['width']/418 if state['width']<state['height'] else state['height']/418
-            left=box[0]+14*d;right=box[2]-14*d
+            left=box[0]+32*d;right=box[2]-32*d
             x=left+(right-left)*(.75/2.75)
             return x,(box[1]+box[3])/2,right-left
         state=reset_speed();x,y,width=slider_geometry(state)

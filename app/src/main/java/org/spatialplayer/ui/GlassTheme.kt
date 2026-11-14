@@ -26,8 +26,32 @@ object GlassTheme {
         }
         return RippleDrawable(ColorStateList.valueOf(0x24FFFFFF), surface(context, 22f, selected), mask)
     }
+    internal fun setSheetContent(dialog:Dialog,panel:GlassSheetLayout) {
+        val frame=android.widget.FrameLayout(dialog.context)
+        frame.addView(panel,android.widget.FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM))
+        frame.setOnClickListener {dialog.cancel()}
+        val visible=android.graphics.Rect()
+        val position=IntArray(2)
+        frame.viewTreeObserver.addOnGlobalLayoutListener {
+            frame.getWindowVisibleDisplayFrame(visible)
+            frame.getLocationOnScreen(position)
+            // Floating dialogs do not consistently receive IME resize/insets on vendor ROMs.
+            // Use the actual visible frame; this also avoids double-padding when resize worked.
+            val overlap=(position[1]+frame.height-visible.bottom).coerceAtLeast(0)
+            if(frame.paddingBottom!=overlap) {
+                frame.setPadding(0,0,0,overlap)
+                val available=(frame.height-overlap).coerceAtLeast(1)
+                val target=panel.preferredHeight(frame.width).coerceAtMost(available)
+                panel.layoutParams=panel.layoutParams.apply {height=target}
+            }
+        }
+        panel.setOnTouchListener {_,_->true}
+        dialog.setContentView(frame)
+    }
     fun configureSheet(dialog: Dialog, height: Int) {
         val window = dialog.window ?: return
+        HighRefreshRate.apply(window)
+        window.setWindowAnimations(0)
         val ctx = dialog.context
         // The shell owns the GPU lens; a second compositor frost makes it opaque and doubles blur.
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
@@ -44,8 +68,25 @@ object GlassTheme {
         val natural=panel?.preferredHeight(width) ?: height
         val cap=minOf(safeHeight-dp(ctx,24f),dp(ctx,860f)).coerceAtLeast(1)
         val bounded=natural.coerceIn(dp(ctx,120f).coerceAtMost(cap),cap)
-        window.setLayout(width,bounded)
-        window.attributes=window.attributes.apply {y=bars.bottom+dp(ctx,12f)}
+        val targetY=bars.bottom+dp(ctx,12f)
+        if(window.attributes.width!=width || window.attributes.height!=cap || window.attributes.y!=targetY) {
+            window.attributes=window.attributes.apply {this.width=width;this.height=cap;y=targetY}
+        }
+        if(panel!=null) {
+            val oldHeight=panel.layoutParams.height
+            val oldWidth=panel.width
+            val animation=panel.getTag(org.spatialplayer.R.id.sheet_height_animation) as? android.animation.ValueAnimator
+            animation?.cancel()
+            if(dialog.isShowing && panel.isLaidOut && oldHeight>0 && oldHeight!=bounded && oldWidth==width) {
+                val animator=android.animation.ValueAnimator.ofInt(panel.height,bounded).apply {
+                    duration=220L
+                    interpolator=android.view.animation.DecelerateInterpolator()
+                    addUpdateListener { value ->panel.layoutParams=panel.layoutParams.apply {this.height=value.animatedValue as Int}}
+                }
+                panel.setTag(org.spatialplayer.R.id.sheet_height_animation,animator)
+                animator.start()
+            } else if(oldHeight!=bounded)panel.layoutParams=panel.layoutParams.apply {this.height=bounded}
+        }
         val key=metrics.bounds.width().toLong().shl(32) or metrics.bounds.height().toLong()
         if(window.decorView.getTag(org.spatialplayer.R.id.sheet_resize)==null) {
             window.decorView.setTag(org.spatialplayer.R.id.sheet_resize,key)

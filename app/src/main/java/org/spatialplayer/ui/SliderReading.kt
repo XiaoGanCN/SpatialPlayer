@@ -151,9 +151,9 @@ object SliderReading {
         }
         activeEditor = panel
         dialog.setOnDismissListener { activeEditor = null }
-        dialog.setContentView(panel)
-        dialog.show()
+        org.spatialplayer.ui.GlassTheme.setSheetContent(dialog,panel)
         GlassTheme.configureSheet(dialog, minOf((310*density).toInt(), (context.resources.displayMetrics.heightPixels*.60f).toInt()))
+        dialog.show()
         GlassInstaller.apply(panel)
         input.requestFocus()
         input.selectAll()
