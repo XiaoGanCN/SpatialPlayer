@@ -126,7 +126,6 @@
     <string name="slider_edit_value">Edit value</string>
     <string name="slider_range_hint">Between %1$s and %2$s</string>
     <string name="slider_not_a_number">That is not a number</string>
-    <string name="slider_hint">Tap the value to type it, double-tap to reset</string>
 
     <!-- Misc -->
     <string name="seek_back">Back 10 seconds</string>

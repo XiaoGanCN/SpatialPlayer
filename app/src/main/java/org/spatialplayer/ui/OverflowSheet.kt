@@ -31,9 +31,8 @@ class OverflowSheet(private val context: Context) {
         val layout = reuse?.panel ?: GlassSheetLayout(context, "Playback controls", {d.dismiss()})
         layout.configureHeader("Playback controls",{d.dismiss()},null)
         d.navigateBack={d.dismiss()}
-        layout.content.removeAllViews()
         panel = layout
-        val column = layout.content
+        layout.replaceContent(true) { column ->
         for (action in actions) {
             val row = LinearLayout(context).apply {
                 tag = "overflow_action_${actions.indexOf(action)}"
@@ -61,6 +60,7 @@ class OverflowSheet(private val context: Context) {
             row.setOnClickListener {action.run()}
             Haptics.attachTo(row)
             column.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        }
         }
         if(reuse==null)GlassTheme.setSheetContent(d,layout)
         d.setOnDismissListener { dialog = null; panel = null; dismissed() }

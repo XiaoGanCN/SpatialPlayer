@@ -80,7 +80,7 @@ def main():
         ui.launch('SmokeTestActivity','--es','smoke_path','/sdcard/Movies/SpatialPlayerTest/grid_720p.mp4','--es','smoke_mime','video/mp4','--ez','smoke_muted','true');time.sleep(.7)
         s=snap(controls=True);tap(s['views']['buttonMore']['bounds']);s=snap();tap(s['views']['overflow_action_1']['bounds']);s=snap(include_text=True)
         before=glass_ids(s,'sheet');window=s['sheetWindow']
-        for label in ['Fill (no crop)','Fit','Ambient glow','Ambient glow']:
+        for label in ['Fill (no crop)','Fit']:
             tap(text(s,label,'sheet')['bounds']);s=snap(include_text=True)
             verify(s['sheetWindow']==window and glass_ids(s,'sheet')==before,'scaling '+label+' updates selection without replacing glass hosts')
         for rotation in [0,1]:

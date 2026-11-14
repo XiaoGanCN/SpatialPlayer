@@ -12,8 +12,8 @@ android {
         applicationId = "org.spatialplayer"
         minSdk = 34
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         ndk {
             // The FFmpeg decoder AAR ships all four; keep the two that matter for phones.
@@ -71,7 +71,7 @@ android {
 }
 
 dependencies {
-    // Isolated comparison playground; production playback stays on native Views / SurfaceView.
+    // Production glass and sandbox controls; HDR video retains its separate native SurfaceView.
     implementation("io.github.kyant0:backdrop:1.0.6")
     implementation("io.github.kyant0:shapes:1.2.0")
     implementation("androidx.compose.foundation:foundation:1.10.3")

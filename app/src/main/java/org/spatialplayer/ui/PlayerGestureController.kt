@@ -13,7 +13,7 @@ import kotlin.math.abs
  *
  *  * single tap - show or hide the controls
  *  * double tap - ask the host to seek, direction chosen by which half was tapped
- *  * horizontal drag - scrub; the drag distance maps to the whole duration
+ *  * horizontal drag - scrub at a fixed time per dp, independent of media duration
  *  * vertical drag on the left half - brightness (left to the activity, which owns the window)
  *  * vertical drag on the right half - volume
  *  * pinch - zoom the picture without changing its aspect ratio
@@ -28,19 +28,18 @@ class PlayerGestureController(
         fun onDoubleTap(forward: Boolean)
         fun onScrubStart()
 
-        /** Signed fraction of the total duration relative to where the drag began. */
-        fun onScrubMove(deltaFraction: Float)
+        /** Signed time offset in milliseconds relative to where the drag began. */
+        fun onScrubMove(deltaMs: Long)
 
-        /** Final signed fraction to commit as a single seek. */
-        fun onScrubStop(deltaFraction: Float)
+        /** Final signed time offset to commit as a single seek. */
+        fun onScrubStop(deltaMs: Long)
+        fun onScrubCancel()
 
         fun onZoom(scale: Float)
         fun onBrightnessDelta(delta: Float)
         fun onVolumeDelta(delta: Float)
     }
 
-    /** Distance the finger must travel for a full-height gesture to mean "100%". */
-    private var durationMs: Long = 0L
 
     private var downX = 0f
     private var lastX = 0f
@@ -49,7 +48,7 @@ class PlayerGestureController(
     private var mode = Mode.NONE
     private var lastY = 0f
     private var lastZoomSpan = 0f
-    private var accumulatedFraction = 0f
+    private var accumulatedMs = 0.0
 
     private enum class Mode { NONE, UNDECIDED, SEEK, BRIGHTNESS, VOLUME, ZOOM }
 
@@ -160,10 +159,6 @@ class PlayerGestureController(
         dragReferenceHeight = height.coerceAtLeast(1)
     }
 
-    fun setDuration(durationMs: Long) {
-        this.durationMs = durationMs
-    }
-
     fun onTouchEvent(event: MotionEvent): Boolean {
         gestureDetector.onTouchEvent(event)
 
@@ -174,12 +169,13 @@ class PlayerGestureController(
                 lastX = event.x
                 lastY = event.y
                 downTime = System.currentTimeMillis()
-                accumulatedFraction = 0f
+                accumulatedMs = 0.0
                 mode = Mode.UNDECIDED
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 if (event.pointerCount >= 2) {
+                    if(mode==Mode.SEEK)host.onScrubCancel()
                     mode = Mode.ZOOM
                     lastZoomSpan = span(event)
                 }
@@ -232,7 +228,7 @@ class PlayerGestureController(
                         // update jumps by the whole slop distance.
                         lastY = event.y
                         lastX = event.x
-                        accumulatedFraction = 0f
+                        accumulatedMs = 0.0
                     }
                 }
 
@@ -251,9 +247,9 @@ class PlayerGestureController(
                     Mode.SEEK -> {
                         // Accumulate movement since the gesture began, so triggering the gesture
                         // does not itself seek.
-                        accumulatedFraction += (event.x - lastX) / viewWidth
+                        accumulatedMs += (event.x-lastX)/context.resources.displayMetrics.density * SEEK_MS_PER_DP
                         lastX = event.x
-                        host.onScrubMove(accumulatedFraction)
+                        host.onScrubMove(accumulatedMs.toLong())
                     }
 
                     Mode.BRIGHTNESS -> {
@@ -278,7 +274,8 @@ class PlayerGestureController(
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (mode == Mode.SEEK) {
-                    host.onScrubStop(accumulatedFraction)
+                    if(event.actionMasked==MotionEvent.ACTION_CANCEL)host.onScrubCancel()
+                    else host.onScrubStop(accumulatedMs.toLong())
                 }
                 mode = Mode.NONE
                 adjustArmed = false
@@ -315,6 +312,7 @@ class PlayerGestureController(
     }
 
     private companion object {
+        const val SEEK_MS_PER_DP = 100.0 // 100dp = 10 seconds in every file.
         /**
          * Touch travel, in dp, before a drag is interpreted as anything.
          *

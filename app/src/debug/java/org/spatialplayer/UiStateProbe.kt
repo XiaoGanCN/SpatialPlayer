@@ -20,6 +20,10 @@ object UiStateProbe {
     const val PLAYER = "org.spatialplayer.debug.UI_PLAYER"
     const val LIBRARY = "org.spatialplayer.debug.UI_LIBRARY"
     fun report(activity: Activity, intent: Intent) {
+        if(intent.getBooleanExtra("rapid_panels",false) && activity is PlayerActivity) {
+            for(panel in listOf(org.spatialplayer.ui.InspectorSheet.Panel.SCALING,org.spatialplayer.ui.InspectorSheet.Panel.AUDIO,
+                org.spatialplayer.ui.InspectorSheet.Panel.SUBTITLES,org.spatialplayer.ui.InspectorSheet.Panel.SPEED))activity.showInspectorForTest(panel)
+        }
         if(intent.hasExtra("restore_ambient")) {
             val value=intent.getBooleanExtra("restore_ambient",true)
             SettingsStore(activity).ambientEnabled=value
@@ -60,7 +64,7 @@ object UiStateProbe {
         if (sheet != null) for (tag in listOf("sheet_close", "sheet_back", "speed_readout", "speed_slider", "speed_1.5", "speed_1.0")) {
             sheet.viewTaggedForTest(tag)?.let { add(tag, it) }
         }
-        if (overflow?.isOpen == true) for (tag in listOf("sheet_close", "overflow_action_0", "overflow_action_1", "overflow_action_2", "overflow_action_3", "overflow_action_4")) {
+        if (overflow?.isOpen == true) for (tag in listOf("sheet_close", "overflow_action_0", "overflow_action_1", "overflow_action_2", "overflow_action_3", "overflow_action_4", "overflow_action_5")) {
             overflow.viewTaggedForTest(tag)?.let { add(tag, it) }
         }
         intent.getStringExtra("restore_gain")?.toFloatOrNull()?.let { SettingsStore(activity).verticalGain = it }
@@ -74,6 +78,7 @@ object UiStateProbe {
                 val position = IntArray(2); view.getLocationOnScreen(position)
                 nodes.put(JSONObject().put("path", path).put("kind", view.javaClass.simpleName)
                     .put("identity",System.identityHashCode(view))
+                    .put("fallbacks",glass?.fallbackFrames ?: 0)
                     .put("bounds", JSONArray(listOf(position[0],position[1],position[0]+view.width,position[1]+view.height)))
                     .put("text",(view as? android.widget.TextView)?.text?.toString())
                     .put("selected", view.isSelected).put("tint",glass?.style?.body ?: 0)
@@ -105,6 +110,9 @@ object UiStateProbe {
         val pass = StereoUpmixProcessor()
         val native = AudioProcessor.AudioFormat(48000, 6, C.ENCODING_PCM_16BIT)
         val bypass = pass.configure(native) == native && !pass.isActive()
+        val stereo=AudioProcessor.AudioFormat(48000,2,C.ENCODING_PCM_16BIT)
+        pass.enabled=false
+        val disabledBypass=pass.configure(stereo)==stereo && !pass.isActive()
         pass.reset()
         val json = JSONObject().put("source", (activity as? MainActivity)?.sourceForTest)
             .put("verticalGain", settings.verticalGain)
@@ -116,10 +124,12 @@ object UiStateProbe {
             .put("light", JSONArray(org.spatialplayer.ui.LightSourceController.lightDirection()?.let { listOf(it.first,it.second) } ?: emptyList<Float>()))
             .put("volume", (activity.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager).getStreamVolume(android.media.AudioManager.STREAM_MUSIC))
             .put("sheetWindow",openSheet?.rootView?.let {System.identityHashCode(it)} ?: 0)
+            .put("publishedRows",(openSheet as? org.spatialplayer.ui.GlassSheetLayout)?.publishedRows ?: 0)
             .put("editorVisibleBottom",editorFrame.bottom)
             .put("uiRefreshRate",activity.window.attributes.preferredRefreshRate).put("displayRefreshRate",activity.display?.refreshRate)
             .put("requestId", intent.getStringExtra("request_id")).put("sheetOpen", sheet?.isOpen ?: false).put("panel", sheet?.shownPanel?.name.orEmpty()).put("views", views).put("width", activity.window.decorView.width).put("height", activity.window.decorView.height)
             .put("media", PlaybackEngine.peek()?.currentMediaUri?.toString()).put("state", sample?.state).put("error", sample?.playerError).put("speed", sample?.playbackSpeed)
+            .put("playerIdentity",PlaybackEngine.peek()?.player?.let {System.identityHashCode(it)} ?: 0)
             .put("decoder", sample?.videoCodecName).put("rendered", sample?.renderedFrames ?: 0).put("dropped", sample?.droppedFrames ?: 0)
             .put("upmix", PlaybackEngine.peek()?.isStereoUpmixActive ?: false).put("channels", sample?.audioChannelCount ?: 0)
             .put("seekDragging", seek?.isScrubbing ?: false).put("seekDisplayed", seek?.displayedFraction ?: 0f)
@@ -137,6 +147,7 @@ object UiStateProbe {
             .put("ambientVisible",ambient?.isShown ?: false)
             .put("ambientUpdates",ambient?.colorUpdates ?: 0)
             .put("surroundBypass", bypass)
+            .put("disabledUpmixBypass",disabledBypass)
             .put("upmixSettings", JSONObject().put("advanced", settings.upmixAdvanced).put("mode", settings.upmixMode).put("matrix", settings.upmixMatrix))
         val bytes = java.io.ByteArrayOutputStream().also { buffer ->
             java.util.zip.GZIPOutputStream(buffer).use { it.write(json.toString().toByteArray(Charsets.UTF_8)) }

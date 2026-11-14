@@ -17,17 +17,27 @@ import org.spatialplayer.R
 /** Adaptive clipped Backdrop shell. Content scrolls under a progressive header instead of a slab. */
 internal class GlassSheetLayout(context:Context,label:String,close:()->Unit,back:(()->Unit)?=null):LinearLayout(context) {
     val title=TextView(context).apply {text=label;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END;textSize=18f;typeface=UiTypography.body(context);setTextColor(Color.WHITE)}
-    val content=LinearLayout(context).apply {orientation=VERTICAL;id=R.id.sheet_content;setPadding(dp(16),dp(4),dp(16),dp(20))}
+    private fun column()=LinearLayout(context).apply {orientation=VERTICAL;id=R.id.sheet_content;setPadding(dp(16),dp(4),dp(16),dp(20))}
+    var content=column()
+        private set
+    private var published=content
+    private var pending:View?=null
+    private var transitionPending=false
+    internal val publishedRows:Int get()=if(published.isShown && published.alpha>.001f)published.childCount else 0
+    private val pages=object:FrameLayout(context) {
+        override fun onInterceptTouchEvent(event:android.view.MotionEvent)=transitionPending || super.onInterceptTouchEvent(event)
+    }.apply {addView(content,FrameLayout.LayoutParams(-1,-2))}
     val scroll=ScrollView(context).apply {
-        overScrollMode=View.OVER_SCROLL_NEVER;isVerticalScrollBarEnabled=false;clipToPadding=false
+        overScrollMode=View.OVER_SCROLL_NEVER;isVerticalScrollBarEnabled=false;clipToPadding=true
         setPadding(0,dp(80),0,0)
-        addView(content,LayoutParams(-1,-2))
+        addView(pages,LayoutParams(-1,-2))
     }
     private var closeAction=close
     private var backAction=back
     private var backButton:ImageButton?=null
     private val header=LinearLayout(context).apply {orientation=VERTICAL}
-    private val fade=TopFadeBlurView(context).apply {sourceView=scroll}
+    private val fade=TopFadeBlurView(context).apply {sourceView=pages;contentOnly=true}
+    private var pageGeneration=0
     private val footer=FrameLayout(context).apply {visibility=GONE;setPadding(dp(16),0,dp(16),dp(16))}
     private val body=FrameLayout(context)
     var adaptToSpace:((width:Int,height:Int)->Boolean)?=null
@@ -65,10 +75,36 @@ internal class GlassSheetLayout(context:Context,label:String,close:()->Unit,back
         body.visibility=if(show)VISIBLE else GONE
         footer.setPadding(dp(16),if(show)0 else dp(12),dp(16),if(show)dp(16) else dp(12))
     }
+    /** Keep the visible page attached while replacement materials compose and record. */
+    fun replaceContent(resetScroll:Boolean=false,build:(LinearLayout)->Unit) {
+        if(!isAttachedToWindow || published.childCount==0) {content.removeAllViews();build(content);return}
+        val generation=++pageGeneration
+        pending?.let {pages.removeView(it)}
+        val old=published
+        transitionPending=true
+        val next=column().apply {alpha=0f}
+        content=next
+        pending=next
+        pages.addView(next,FrameLayout.LayoutParams(-1,-2))
+        build(next)
+        GlassInstaller.apply(next)
+        val publish=object:Runnable {
+            override fun run() {
+                if(generation!=pageGeneration || !next.isAttachedToWindow)return
+                if(!next.isLaidOut || next.width==0 || next.height==0) {next.postOnAnimation(this);return}
+                org.spatialplayer.ui.backdrop.NativeBackdropRenderer.prepareTree(next)
+                // Publish a complete material page atomically; avoid blending two frosted scenes.
+                old.visibility=GONE;next.alpha=1f
+                pages.removeView(old);published=next;pending=null;transitionPending=false
+                if(resetScroll)scroll.scrollTo(0,0)
+                fade.invalidateContent()
+            }
+        }
+        next.post {next.postOnAnimation(publish)}
+    }
     fun configureHeader(label:String,close:()->Unit,back:(()->Unit)?) {
         title.text=label;closeAction=close;backAction=back
         backButton?.visibility=if(back!=null)VISIBLE else GONE
-        scroll.scrollTo(0,0)
     }
     fun preferredHeight(width:Int):Int {
         val side=if(width>dp(500))dp(24) else dp(16)

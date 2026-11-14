@@ -87,6 +87,7 @@ class StereoUpmixProcessor(
 ) : AudioProcessor {
 
     private var active = false
+    @Volatile var enabled=true
 
     /**
      * Bytes carried over from the previous call: fewer than one frame, a source that delivered a
@@ -155,6 +156,7 @@ class StereoUpmixProcessor(
      * hardcoded, so a 44.1 kHz file gets a 120 Hz corner at 44.1 kHz and not a scaled one.
      */
     override fun configure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+        if(!enabled) {active=false;return inputAudioFormat}
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT || inputAudioFormat.channelCount != 2) {
             active = false
             Log.i(TAG, "passing through: not stereo 16-bit PCM ($inputAudioFormat)")

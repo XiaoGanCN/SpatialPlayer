@@ -32,6 +32,7 @@ class InspectorSheet @JvmOverloads constructor(
         SUBTITLES(R.string.subtitle_settings),
         AUDIO(R.string.audio_settings),
         SCALING(R.string.aspect_settings),
+        PLAYBACK(R.string.settings_playback),
         SPEED(R.string.speed),
         CHAPTERS(R.string.chapters),
     }
@@ -96,6 +97,7 @@ class InspectorSheet @JvmOverloads constructor(
     private var renderedPanel:Panel?=null
     private val choiceUpdates=ArrayList<(Choice)->Unit>()
     private var loadingPanel=false
+    private var resetScrollOnRender=false
 
     init {
         visibility = View.GONE
@@ -111,8 +113,7 @@ class InspectorSheet @JvmOverloads constructor(
         if (loadingPanel || panel != currentPanel || contentContainer==null) return
         val stable=renderedPanel==panel && renderedChoices.size==list.size &&
             renderedChoices.zip(list).all { (old,next) ->
-                old.copy(value=next.value,selected=next.selected,enabled=next.enabled,subtitle=next.subtitle)==next &&
-                    (old.subtitle==null)==(next.subtitle==null)
+                old.copy(value=next.value,selected=next.selected,enabled=next.enabled,subtitle=next.subtitle)==next
             }
         if(stable) {
             list.zip(choiceUpdates).forEach {(choice,update)->update(choice)}
@@ -123,6 +124,7 @@ class InspectorSheet @JvmOverloads constructor(
 
     fun show(panel:Panel)=show(panel,null)
     internal fun show(panel: Panel,reuse:SheetWindow?) {
+        resetScrollOnRender=true
         currentPanel = panel
         // Before anything is drawn, and whatever route reached here - a tab, an overflow row, a
         // long-press - so the rows always describe the panel that is about to appear.
@@ -204,7 +206,10 @@ class InspectorSheet @JvmOverloads constructor(
     // ------------------------------------------------------------------ rendering
 
     private fun render() {
-        try { renderContent() } finally {
+        val panel=sheet as? GlassSheetLayout ?: return
+        val reset=resetScrollOnRender || renderedPanel!=currentPanel
+        resetScrollOnRender=false
+        try {panel.replaceContent(reset) {next ->contentContainer=next;renderContent()}} finally {
             sheet?.let { GlassInstaller.apply(it) }
             dialog?.takeIf { it.isShowing }?.let { applyWindowFlags(it) }
         }
@@ -382,22 +387,20 @@ class InspectorSheet @JvmOverloads constructor(
         )
         container.addView(titleRow)
 
-        val subtitleView=choice.subtitle?.let { subtitle ->
-                TextView(context).apply {
-                    text = subtitle
-                    typeface = UiTypography.body(context)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setTextColor(0xD9FFFFFF.toInt())
-                    setPadding(0, dp(4), 0, 0)
-                }.also {container.addView(it)}
-        }
+        val subtitleView=TextView(context).apply {
+            text=choice.subtitle
+            visibility=if(choice.subtitle==null)View.GONE else View.VISIBLE
+            typeface=UiTypography.body(context)
+            textSize=11f;setTextColor(0xD9FFFFFF.toInt());setPadding(0,dp(4),0,0)
+        }.also {container.addView(it)}
         choiceUpdates.add {next ->
             current=next
             container.isSelected=next.selected
             container.isClickable=next.enabled
             container.isFocusable=next.enabled
             container.alpha=if(next.enabled || next.value.endsWith("_header"))1f else .42f
-            subtitleView?.let {if(it.text.toString()!=next.subtitle)it.text=next.subtitle}
+            if(subtitleView.text.toString()!=next.subtitle)subtitleView.text=next.subtitle
+            subtitleView.visibility=if(next.subtitle==null)View.GONE else View.VISIBLE
             container.setTag(R.id.glass_role,if(next.selected)R.id.glass_role_panel_active else R.id.glass_role_panel)
             GlassInstaller.apply(container)
         }
@@ -517,21 +520,6 @@ class InspectorSheet @JvmOverloads constructor(
             slider,
             LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
-
-        // A control nobody can see is a control nobody uses: the reading gives no sign that it is
-        // tappable, so the hint says it. Shown only while it can be true - a row with no default
-        // cannot be reset, and promising that would be a lie.
-        if (choice.defaultValue != null) {
-            wrapper.addView(
-                TextView(context).apply {
-                    text = context.getString(R.string.slider_hint)
-                    typeface = UiTypography.body(context)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    setTextColor(0xD9FFFFFF.toInt())
-                    setPadding(0, dp(2), 0, 0)
-                },
-            )
-        }
 
         wrapper.layoutParams = LinearLayout.LayoutParams(
             LayoutParams.MATCH_PARENT,

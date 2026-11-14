@@ -22,7 +22,7 @@ internal class VideoGlassBackdrop(private val owner: View) {
             generation++
             front = null; previousFront=null; buffers.fill(null)
         }
-    val hasFrame: Boolean get() = front != null && frameWidth > 0 && frameHeight > 0 && source?.holder?.surface?.isValid == true
+    val hasFrame: Boolean get() = front != null && frameWidth > 0 && frameHeight > 0 && source!=null
     var ambientColors: ((Int,Int,Int,Int)->Unit)?=null
     private var sourceFrameRate=30f
     private var rateSampleAt=0L
@@ -46,7 +46,17 @@ internal class VideoGlassBackdrop(private val owner: View) {
     private var lastCopyResult = -1
     internal fun debugState() = "running=$running inFlight=$inFlight frame=${frameWidth}x$frameHeight source=${source?.width}x${source?.height} valid=${source?.holder?.surface?.isValid} shown=${source?.isShown} window=${owner.windowVisibility} panes=${GlassBackdrop.hasVisiblePanes(owner)} copyMs=$copyLatencyMs sourceFps=$sourceFrameRate result=$lastCopyResult"
     private var generation = 0
+    private var waitingForFormat=false
+    private val lastGeometry=RectF()
     fun setFrameSize(width: Int, height: Int) {
+        // Codec rebuilds briefly report UNKNOWN. Retain the last SDR preview for this surface;
+        // new sources still clear it, and copy() waits for a valid surface/positive dimensions.
+        if(width<=0 || height<=0) {
+            if(!waitingForFormat)generation++
+            waitingForFormat=true
+            return
+        }
+        waitingForFormat=false
         if (frameWidth == width && frameHeight == height) return
         frameWidth = width; frameHeight = height
         generation++
@@ -123,6 +133,7 @@ internal class VideoGlassBackdrop(private val owner: View) {
     }
     private fun copy() {
         val surface = source ?: return
+        if(waitingForFormat)return
         if (pending.size>=2 || !surface.isShown || !surface.holder.surface.isValid || frameWidth <= 0 || frameHeight <= 0) return
         val scale = minOf(1f, 768f / maxOf(frameWidth, frameHeight))
         val w = (frameWidth * scale).roundToInt().coerceAtLeast(2)
@@ -173,11 +184,14 @@ internal class VideoGlassBackdrop(private val owner: View) {
     fun draw(canvas: Canvas, pane: View) {
         val surface = source ?: return
         val bitmap = front ?: return
-        surface.getLocationOnScreen(sourcePosition)
         pane.getLocationOnScreen(ownerPosition)
-        val x = (sourcePosition[0] - ownerPosition[0]).toFloat()
-        val y = (sourcePosition[1] - ownerPosition[1]).toFloat()
-        destination.set(x, y, x + surface.width * surface.scaleX, y + surface.height * surface.scaleY)
+        if(!waitingForFormat && surface.holder.surface.isValid || lastGeometry.isEmpty) {
+            surface.getLocationOnScreen(sourcePosition)
+            lastGeometry.set(sourcePosition[0].toFloat(),sourcePosition[1].toFloat(),
+                sourcePosition[0]+surface.width*surface.scaleX,sourcePosition[1]+surface.height*surface.scaleY)
+        }
+        destination.set(lastGeometry)
+        destination.offset(-ownerPosition[0].toFloat(),-ownerPosition[1].toFloat())
         canvas.drawBitmap(bitmap, null, destination, paint)
     }
 }

@@ -166,7 +166,7 @@ internal class PlayerPanels(
         sheet.setChoices(InspectorSheet.Panel.AUDIO, choices)
     }
 
-    fun populateSubtitlePanel(mediaTracks: MediaTracks, subtitleLimitOverridden: Boolean, subtitleSizeSp: Float, subtitlePositionFraction: Float) {
+    fun populateSubtitlePanel(mediaTracks: MediaTracks, subtitleVisibleCount: Int, subtitleSizeSp: Float, subtitlePositionFraction: Float) {
         val sheet = inspectorSheet
         val choices = ArrayList<InspectorSheet.Choice>()
 
@@ -176,7 +176,7 @@ internal class PlayerPanels(
             panel = InspectorSheet.Panel.SUBTITLES,
             value = SUBTITLE_OFF,
             title = getString(R.string.subtitle_off),
-            subtitle = "Hide subtitles for this item",
+            subtitle = null,
             selected = textTracks.none { it.selected },
             enabled = true,
             section = "Tracks",
@@ -185,7 +185,7 @@ internal class PlayerPanels(
         // A remux can carry fifty or more subtitle tracks and building a row for each one makes the
         // panel slow to open and impossible to scan. The cap keeps the common case instant; whatever
         // is selected is always listed, wherever it falls, and the rest are one tap away.
-        val limit = if (subtitleLimitOverridden) Int.MAX_VALUE else settings.subtitleTrackLimit
+        val limit = subtitleVisibleCount
         val selectedTracks = textTracks.filter { it.selected }
         val listed = if (textTracks.size <= limit) {
             textTracks
@@ -225,7 +225,7 @@ internal class PlayerPanels(
             choices += InspectorSheet.Choice(
                 panel = InspectorSheet.Panel.SUBTITLES,
                 value = VALUE_TEXT_SHOW_ALL,
-                title = getString(R.string.subtitle_tracks_show_all, textTracks.size),
+                title = "More tracks (${textTracks.size-listed.size})",
                 subtitle = getString(
                     R.string.subtitle_tracks_limited,
                     listed.size,
@@ -241,7 +241,7 @@ internal class PlayerPanels(
                 panel = InspectorSheet.Panel.SUBTITLES,
                 value = VALUE_TEXT_HEADER,
                 title = "No embedded subtitle tracks",
-                subtitle = "Add a sidecar file, or drop one next to the video",
+                subtitle = null,
                 selected = false,
                 enabled = false,
             )
@@ -281,7 +281,7 @@ internal class PlayerPanels(
         sheet.setChoices(InspectorSheet.Panel.SUBTITLES, choices)
     }
 
-    fun populateScalingPanel(scaleMode: Int, ambientEnabled: Boolean, doubleTapJumpMs: Long) {
+    fun populateScalingPanel(scaleMode: Int) {
         val sheet = inspectorSheet
         val choices = listOf(
             Triple(VideoRectCalculator.SCALE_FIT, R.string.scale_fit, "Fit the whole picture, bars as needed"),
@@ -298,29 +298,34 @@ internal class PlayerPanels(
                 enabled = true,
                 section = if (index == 0) "Scaling" else null,
             )
-        } + InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SCALING,
+        }
+        sheet.setChoices(InspectorSheet.Panel.SCALING,choices)
+    }
+
+    fun populatePlaybackPanel(ambientEnabled:Boolean,doubleTapJumpMs:Long) {
+        val choices=listOf(InspectorSheet.Choice(
+            panel = InspectorSheet.Panel.PLAYBACK,
             value = if (ambientEnabled) "ambient_off" else "ambient_on",
             title = getString(R.string.ambient_glow),
             subtitle = if (ambientEnabled) "On" else "Off",
             selected = ambientEnabled,
             enabled = true,
             section = "Ambient",
-        ) + InspectorSheet.Choice(
-            panel = InspectorSheet.Panel.SCALING,
+        ), InspectorSheet.Choice(
+            panel = InspectorSheet.Panel.PLAYBACK,
             // Seconds, like the range: the setting itself is milliseconds, and feeding ms to a bar
             // whose range is seconds pinned it at the top and printed "10000" as its reading.
             value = (doubleTapJumpMs / 1000f).toString(),
-            title = getString(R.string.double_tap_jump),
-            subtitle = "Double tap the left half to go back, the right half to go forward",
+            title = getString(R.string.settings_jump_length),
+            subtitle = null,
             // A slider over the four lengths people actually ask for; 10s is the default.
-            range = 1f..10f,
+            range = SettingsStore.MIN_JUMP_MS/1000f..SettingsStore.MAX_JUMP_MS/1000f,
             stepSize = 0.5f,
             defaultValue = SettingsStore.DEFAULT_JUMP_MS / 1000f,
             section = "Gestures",
-        )
+        ))
 
-        sheet.setChoices(InspectorSheet.Panel.SCALING, choices)
+        inspectorSheet.setChoices(InspectorSheet.Panel.PLAYBACK, choices)
     }
 
     /** A word for the rates worth naming, so the list is not five bare numbers. */

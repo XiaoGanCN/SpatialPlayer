@@ -187,9 +187,11 @@ class PlayerEngine(
     var onPlayerChanged: (() -> Unit)? = null
 
     private var stereoProcessor: StereoUpmixProcessor? = null
+    private var needsStereoProcessorInstall=false
     val isStereoUpmixActive: Boolean get() = stereoProcessor?.isActive() == true
 
     fun build() {
+        needsStereoProcessorInstall=false
         release()
 
         // Must be decided before the sink exists: a refused channel count fails playback outright
@@ -490,8 +492,8 @@ class PlayerEngine(
      * Asks the platform to spatialise, or not to.
      *
      * This sets `SPATIALIZATION_BEHAVIOR_AUTO` / `SPATIALIZATION_BEHAVIOR_NEVER` on the audio
-     * attributes, which requires rebuilding the player because Media3 fixes the attribute set at
-     * construction.
+     * attributes. Native surround can update its AudioTrack attributes in place; stereo topology
+     * changes still rebuild the sink/player.
      *
      * **It is a request, not a command.** Measured on the reference device: with `NEVER` set and the
      * player rebuilt, `dumpsys audio` still reports `isSpatialized=true` for the 5.1 track. That is
@@ -505,7 +507,13 @@ class PlayerEngine(
         if (enabled == spatialAudioEnabled) return
         spatialAudioEnabled = enabled
         settings.spatialEnabled = enabled
-        rebuildPreservingState()
+        if((player?.audioFormat?.channelCount ?: 0)>2) {
+            needsStereoProcessorInstall=enabled && stereoProcessor==null && decoderProfile!=DecoderProfile.FFMPEG_ONLY
+            // Native surround is bypassing the processor. Update AudioTrack attributes in place;
+            // also gate future stereo configurations without tearing down the video decoder.
+            stereoProcessor?.enabled=enabled
+            player?.setAudioAttributes(buildAudioAttributes(),true)
+        } else rebuildPreservingState()
     }
 
     private fun rebuildPreservingState() {
@@ -887,6 +895,18 @@ class PlayerEngine(
     private var actualAudioDecoder = "—"
 
     private val analyticsListener = object : AnalyticsListener {
+        override fun onAudioInputFormatChanged(eventTime:AnalyticsListener.EventTime,format:androidx.media3.common.Format,
+            decoderReuseEvaluation:androidx.media3.exoplayer.DecoderReuseEvaluation?) {
+            // A surround session built with spatial audio off has no stereo processor. Install
+            // it only if a later track actually becomes stereo, keeping surround toggles seamless.
+            if(format.channelCount==2 && needsStereoProcessorInstall && spatialAudioEnabled && stereoProcessor==null) {
+                val previous=player
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if(player===previous && needsStereoProcessorInstall && spatialAudioEnabled && stereoProcessor==null && player?.audioFormat?.channelCount==2)
+                        rebuildPreservingState()
+                }
+            }
+        }
         override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
             actualVideoDecoder = decoderName
             Log.i(TAG, "actual video decoder: $decoderName")

@@ -9,9 +9,14 @@ and Android spatial audio with head tracking on supported headsets.
 - Background music with media controls; separate music/video background settings.
 - Kyant0 Backdrop glass controls, live video backdrops, sensor highlights, and progressive scroll-edge blur.
 - Live track dragging, stable player drawer navigation, spring button feedback, and a 120Hz UI preference.
+- Fixed-time swipe seeking with a live time chip; subtitle tracks load in batches without losing your place.
 - Settings → Glass playground offers an adjustable material sandbox.
 
 Build with **JDK 21** and **Android SDK 36**. Media3 and nextlib remain pinned in the version catalog.
+
+Downloads: [GitHub releases](https://github.com/XiaoGanCN/SpatialPlayer/releases).
+The app ID is `org.spatialplayer` (`org.spatialplayer.debug` for debug builds). These install separately
+from the legacy `com.gan.spatialplayer` release.
 
 ```sh
 ./gradlew :app:assembleDebug :app:assembleRelease :app:lintDebug

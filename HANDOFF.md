@@ -5,7 +5,8 @@
 - Native HDR video takes priority. Keep video on `SurfaceView`; normal controls stay SDR.
 - Design: calm Apple-inspired glass, readable touch targets, smooth motion, minimal status text.
   User authorizes a full redesign; old single-row geometry and flat-screen decisions are superseded.
-- Work in this original repo on `main`. Commit completed work here; no fork/refactor branch or push needed.
+- Work in this original repo on `main`; no fork/refactor branch. The user explicitly authorized
+  pushing this work and publishing v0.2.0. Future publishing follows the current user request.
 - Preserve device/user data: no `pm clear`, uninstall, reboot, `adb shell monkey`, or full movie copies.
   Keep test sound low/muted; restore changed volume, rotation, settings and preferences.
 - If the phone needs reconnecting/ADB authorization/unlocking, use a Mac `osascript display dialog`
@@ -75,7 +76,8 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   source-generation checks reject stale callbacks. Duplicate pixel copies do not swap the front or invalidate Gaussian layers. Capture uses up to
   two opportunities per source frame (declared rate or observed decoder cadence for Matroska),
   capped at 120; UI animation cadence is independent. Hidden-chrome ambient sampling is slow. New panes
-  wake capture immediately. Native HDR SurfaceView is never replaced or modified by this preview.
+  wake capture immediately. UNKNOWN format during same-surface codec rebuilds retains the last valid
+  SDR preview and geometry; copies pause until a positive format, with old generations rejected. Native HDR SurfaceView is never replaced or modified by this preview.
 - Blu-ray M2TS: `M2tsDataSource` strips four timestamp bytes from each 192-byte packet and maps virtual
   188-byte seek offsets/lengths back to the original file. Other transport streams pass through.
   `BlurayTsExtractor` distinguishes HDMV's DTS-HD type 0x86 from broadcast SCTE-35, excludes the DV
@@ -89,7 +91,11 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 
 - Stereo does not head-track on the reference route unless converted to 5.1. `StereoUpmixProcessor`
   activates only for two-channel 16-bit PCM at supported sample rates. Native 5.1+ must stay inactive.
-- The player audio panel reports actual upmix activation versus native-surround bypass.
+- The player audio panel reports actual upmix activation versus native-surround bypass. Native
+  surround spatial toggles use live Media3 audio attributes, preserving the video decoder. Gate an
+  installed stereo processor for future configurations. If enabling from a sink without one, defer
+  installation until a real stereo format arrives; check player identity and clear the pending flag
+  on build. FFmpeg-only intentionally has no custom processor; never rebuild it in a loop.
 - `setIsContentSpatialized(true)` means already binaural and disables platform head tracking; keep false.
 - Float sink output skips Media3's custom processor chain. The stereo-upmix path requires int16 output.
 - A 7.1 AudioTrack test-open can succeed while the real sink fails. Apply route capabilities and retain
@@ -114,8 +120,9 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   only align the host's physical position for input. Dialog decor needs ViewTree lifecycle owners.
   Preserve layout-parameter types on resize, dispose
   on detach, and defer removing decor siblings until root detachment finishes.
-  Native buttons scale their full View around an explicit center pivot; keep Compose material
-  coordinates untransformed. Ordinary parent rows allow expansion; viewports/sheet outlines clip it.
+  Native buttons scale their full View around an explicit center pivot; the source node cancels
+  owner/ancestor scale so the physical sampling area grows without magnifying its contents. Keep
+  Compose material coordinates untransformed and invalidate sampling when physical scale changes. Ordinary parent rows allow expansion; viewports/sheet outlines clip it.
 - Forwarded touches must rebase both raw and local coordinates. Slider taps and drags use live track
   width after rotation; continuous movement accumulates before the native integer value snaps.
   One full-track gesture handles DOWN and MOVE immediately. Native sliders reserve 32 dp at each
@@ -132,18 +139,24 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   one dialog and shell between Overflow and Inspector: no dismiss/reopen or chrome flash on navigation.
   The window has a fixed safe cap; its bottom-aligned pane animates natural height. Configure before
   showing and disable platform window motion. A shared 260 ms shell entrance supplies popup motion;
-  submenu navigation retains the shell. Option changes update existing rows and callbacks in place.
+  submenu navigation retains the shell. Replacement pages stay alpha-zero until laid out and
+  synchronously primed. Keep published and pending pages separate; supersede only pending content.
+  Header input remains available; page input waits for publication. Option changes update rows and
+  callbacks in place, including nullable subtitles. Same-panel updates preserve scroll position.
   Stereo stage also retains its channel/source/slider views. The wrapper uses the actual visible
   display frame for IME space. Numeric actions sit in a footer; very short landscape IME space uses
   one row containing the field and both actions. Cancel competing height morphs when IME space changes.
-  Header frosting fades within its own bounds, keeping resting content sharp.
+  Sheet headers blur/fade only scrolling content above the continuous sheet material. Clip the
+  normal scroller to its header padding and sample its pages separately. The header foot reaches
+  full content opacity and zero extra blur; never overlay raw scene pixels over the sheet glass.
   Transparent windows have compositor blur disabled to avoid double frost.
 - Native cards, clips and ripple masks use the exact Kyant0 Shapes G2 path; circles/capsules remain circular.
 - `TopFadeBlurView` uses a one-third-size GPU recording and four Gaussian levels with additive masks:
   blur intensity eases down the strip and opacity fades at the foot, with no scrim. It excludes itself
   from recording and never calls live scrolling ancestors' `draw()`. Three-sigma recording outsets
   prevent the top-edge flash. Keep the contrast and repeated source-change fixtures.
-  Its base includes the physical scene even without video; padding must not paint a black slab.
+  Main/Settings fades include the physical scene even without video. Sheet content-only fades
+  intentionally omit that second backdrop, avoiding a sharp seam over the existing glass.
   Capture completed glass/slider/switch display lists for the fade, never run nested live lenses.
   Cache scrolling foreground separately from live video and retain all four blur-level display lists.
   Check visible native descendants inside glass containers for updates. Plain label stamps include
@@ -157,6 +170,11 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
   Folder grants are migrated from the former Activity-scoped preference into stable `spatial_player`.
 - Player drawer and submenus share `GlassSheetLayout`; keyed material roles preserve debug/action tags.
   Dialog glass panes keep the shared video preview refreshing while the underlying chrome is hidden.
+- Horizontal surface seeking uses **100 ms per dp**, independent of duration/orientation. Its chip
+  shows the signed offset and target time while moving; cancellation commits no seek. Timeline
+  scrubbing still covers the full duration. Ambient and skip length live in Playback, not Scaling.
+  Subtitle tracks load eight at a time, retain selected tracks and preserve scroll on More tracks;
+  the obsolete track-count setting and slider reset hint are removed.
 - Timeline scrubbing draws the live finger fraction and commits once on release. Cancellation cancels
   the seek. Its distinct handle animates glass engagement on both press and release. All other sliders
   and switches use the adapted Backdrop catalog with native accessibility wrappers.
@@ -191,7 +209,7 @@ $ADB install -r -d app/build/outputs/apk/debug/app-debug.apk
 
 ## Test media and evidence
 
-Original movie (73 GB; never push the whole file):
+Original movie (73 GB; never copy/upload the whole file):
 `/Volumes/Storage/Medias/Spider-Man.Across.the.Spider-Verse.2023.UHD.Blu-ray.Remux.DV.HDR.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES.mkv`
 
 - Stream-copy test cut: `smoke/media/spiderverse_dv7_truehd_30s.mkv`, on device at
@@ -212,6 +230,8 @@ Original movie (73 GB; never push the whole file):
 - Follow-up: `python3 tools/verify-glass-followup.py` verifies real cached lens pixel changes,
   live bar grabs, both held endpoints, high-refresh vote, stable drawer identity/bottom anchor,
   tint selection, and gap-free header fades in both orientations. Artifacts: `smoke/out/glass-followup/`.
+- Release UI regression: `python3 tools/verify-release-ui.py`; actual screen-space stripe sampling,
+  gesture HUD/time mapping, warm navigation and paging. Artifacts: `smoke/out/release-020/`.
 - Crash regression: `python3 tools/verify-glass-touch.py` (real held presses + software-canvas rendering).
 - Drawer regression: `python3 tools/verify-drawers.py` checks stable selection/slider identities,
   actual matrix gains, centered held presses, header bounds and field/actions above the real IME.
@@ -226,11 +246,13 @@ Original movie (73 GB; never push the whole file):
 ## Current verification / remaining work
 
 - Debug/release builds and debug lint pass with production Backdrop; **36 host checks pass**.
-- **22 drawer checks pass**, including real GPU cache freshness inside a glass container, idle
+- **22 release UI checks pass** (stationary physical lens sampling, fixed-time seeking across
+  durations, warmed pages, rapid replacement, subtitle paging and native-surround live toggles).
+- **20 drawer checks pass**, including real GPU cache freshness inside a glass container, idle
   settling, retained option/matrix controls, centered presses and full numeric field/actions above
   the keyboard in portrait/landscape. A device recording confirms whole-shell popup motion.
-  Astra's stale-descendant and text-layout cache findings are fixed and reviewed.
-- **33 glass experiment checks** and **23 UI polish checks** pass, including
+  Astra's rapid-replacement and pagination scroll findings are fixed and reviewed.
+- **33 glass experiment checks** pass, including
   progressive blur contrast, 150% / typed sensitivity, Stereo stage, new library interaction, stable
   collections, repeated music → video preview recovery, glass holds and menu navigation.
   Stationary descendant updates refresh the fade; idle fades do not poll. Optics sliders expose
@@ -243,18 +265,17 @@ Original movie (73 GB; never push the whole file):
   volume / brightness feedback, haptics and GPU Gaussian blur. Folder picker tests now verify the
   foreground activity (background broadcasts alone can misleadingly report hidden app geometry).
 - **39 HDR/UI checks** and **7 held presses + software-canvas regression** pass. The timed film
-  sample rendered 65 → 300 frames with **0 dropped**, using hardware HEVC, native PQ video and SDR UI.
+  sample used hardware HEVC with **0 dropped**, native PQ video and a separate SDR UI.
 - Existing M2TS probe: hardware 4K PQ + FFmpeg DTS-HD 5.1, 205 frames / 0 dropped / 0 underruns.
   `tools/verify-bluray.py` covers ordinary TS and M2TS seeking; extractor / decoder code is unchanged.
 - Optional logo direction: `design/logo-c.svg` simplifies the spatial orbit and increases small-size
   contrast. Proposal only; the installed launcher icon remains unchanged.
-- **21 follow-up checks pass**, including expanded held-button pixels. The live GPU probe displayed four alternating source colours with
-  **one effect recording**; numeric input remains usable above the keyboard. A 60fps video fixture
-  delivered ~60 distinct preview frames/s after exact native bitmap deduplication. The reference phone reports a
-  120Hz window vote and 120Hz display refresh; this does not guarantee 120 rendered UI fps.
-- Final six alternating landscape HDR drawer scrolls: missed frames **7.3% → 5.7%**, p95 **20 → 21 ms**,
-  with hardware HEVC and zero video drops. Source/sensor separation, stable controls and separately
-  cached header content avoid repeated lens/foreground work. Artifacts: `smoke/out/drawer-fixes/`.
-  These are sampled device results; fast scrolling can still miss individual deadlines.
+- The reference phone reports a 120Hz window vote and 120Hz display refresh. This does not
+  guarantee 120 rendered UI fps. Moving fixtures exercise preview updates; native video FPS and
+  UI animation cadence remain independent.
+- Same-device subtitle scrolling comparison against `8a95341`: missed frames **58% → 38%**,
+  p95 **57 → 42 ms**, with hardware HEVC and zero video drops. Initial subtitle batches now have
+  eight tracks. Menu timing varies with temperature, sensor motion and scroll distance; occasional
+  hitches remain. Artifacts: `smoke/out/release-020/`. Do not promise uninterrupted 120 rendered fps.
 - Physical HDR color accuracy / full original movies and physical tilt remain manual checks.
 - HDMV PGS subtitle extraction, Sony recentering and the lock-screen test limitation remain open.

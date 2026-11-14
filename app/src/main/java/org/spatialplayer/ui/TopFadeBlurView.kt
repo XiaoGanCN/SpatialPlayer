@@ -15,6 +15,8 @@ import kotlin.math.ceil
 class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
     var sourceView: View? = null
         set(value) { field = value; invalidateContent() }
+    var contentOnly=false
+        set(value) {if(field!=value){field=value;sizeKey=0;invalidateContent()}}
     var solidHeightPx=0f
         set(value) {if(field!=value){field=value;sizeKey=0L;invalidate()}}
     private val capture = BackdropCapture()
@@ -30,11 +32,12 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
         uniform float margin;
         uniform float solidHeight;
         uniform float level;
+        uniform float contentOnly;
         half4 main(float2 p) {
             float y = clamp((p.y-margin-solidHeight) / max(1.0,height-solidHeight), 0.0, 1.0);
             float ramp = 1.0 - smoothstep(0.0, 1.0, y);
             float weight = max(0.0, 1.0 - abs(ramp * 3.0 - level));
-            float fade = 1.0 - smoothstep(0.60, 1.0, y);
+            float fade = contentOnly > 0.5 ? smoothstep(0.0,0.85,y) : 1.0 - smoothstep(0.60, 1.0, y);
             return image.eval(p) * half(weight * fade);
         }
     """) }
@@ -82,6 +85,7 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
                 node.setPosition(-margin,-margin,w+margin,h+margin)
                 node.setUseCompositingLayer(true, additive)
                 val mask = masks[i]
+                mask.setFloatUniform("contentOnly",if(contentOnly)1f else 0f)
                 mask.setFloatUniform("solidHeight",solidHeightPx*scale);mask.setFloatUniform("height", h.toFloat()); mask.setFloatUniform("margin",margin.toFloat()); mask.setFloatUniform("level", i.toFloat())
                 val opacity = RenderEffect.createRuntimeShaderEffect(mask, "image")
                 val radius = 24f * resources.displayMetrics.density * scale * i / 3f
@@ -107,13 +111,13 @@ class TopFadeBlurView @JvmOverloads constructor(context: Context, attrs: Attribu
         }
         val recording = source.beginRecording(recW,recH)
         try {
-            recording.drawColor(androidx.core.content.ContextCompat.getColor(context,org.spatialplayer.R.color.bg_deep))
+            if(!contentOnly)recording.drawColor(androidx.core.content.ContextCompat.getColor(context,org.spatialplayer.R.color.bg_deep))
             val base=recording.save()
             recording.translate(margin.toFloat(),margin.toFloat())
             recording.scale(scale, scale)
             // Transparent header padding still needs the physical scene beneath the sheet.
             // Filling it with bg_deep made a dark strip that did not join the shell's blur.
-            GlassBackdrop.draw(recording,this)
+            if(!contentOnly)GlassBackdrop.draw(recording,this)
             recording.restoreToCount(base)
             recording.drawRenderNode(foreground)
         } finally { source.endRecording() }

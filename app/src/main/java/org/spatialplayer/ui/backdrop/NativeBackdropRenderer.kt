@@ -41,7 +41,16 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         private val renderers = IdentityHashMap<View, MutableSet<NativeBackdropRenderer>>()
         internal var frames = 0L; private set
         internal var recordings=0L;private set
-        internal val hostCount get()=renderers.values.sumOf {it.size}
+        internal val hostCount get()=renderers.values.sumOf {items->items.count {it.host!=null}}
+        fun prepareTree(root:View) {
+            val node=android.graphics.RenderNode("prepare-materials")
+            val canvas=node.beginRecording(root.width.coerceAtLeast(1),root.height.coerceAtLeast(1))
+            try {renderers.entries.toList().forEach {(owner,items) ->
+                var parent:View?=owner
+                while(parent!=null && parent!==root)parent=parent.parent as? View
+                if(parent===root && owner.width>0 && owner.height>0)items.toList().forEach {it.attach();it.draw(canvas)}
+            }}finally {node.endRecording();node.discardDisplayList()}
+        }
         fun invalidate(view: View) { renderers[view]?.toList()?.forEach { it.refresh() } }
         fun invalidatePosition(view:View) {renderers[view]?.toList()?.forEach {it.owner.invalidate()}}
         fun invalidateMoved(view:View) {renderers[view]?.toList()?.forEach {it.checkPosition()}}
@@ -61,6 +70,13 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
     private val sourcePosition = IntArray(2)
     private var sourceX = Int.MIN_VALUE
     private var sourceY = Int.MIN_VALUE
+    private var sourceScaleX=1f
+    private var sourceScaleY=1f
+    private fun physicalScale():Pair<Float,Float> {
+        var x=1f;var y=1f;var view:View?=owner
+        while(view!=null) {x*=view.scaleX;y*=view.scaleY;view=view.parent as? View}
+        return x.coerceAtLeast(.01f) to y.coerceAtLeast(.01f)
+    }
     private val outset = (96 * owner.resources.displayMetrics.density).toInt()
     private val backdrop = object : Backdrop {
         override val isCoordinatesDependent = true
@@ -93,10 +109,16 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
     }
     init {
         owner.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: View) { owner.post { attach() } }
+            override fun onViewAttachedToWindow(v: View) {
+                renderers.getOrPut(owner){LinkedHashSet()}.add(this@NativeBackdropRenderer)
+                owner.post { attach() }
+            }
             override fun onViewDetachedFromWindow(v: View) { detach() }
         })
-        if (owner.isAttachedToWindow) owner.post { attach() }
+        if (owner.isAttachedToWindow) {
+            renderers.getOrPut(owner){LinkedHashSet()}.add(this)
+            owner.post { attach() }
+        }
     }
     private fun attach() {
         if (host != null || !owner.isAttachedToWindow) return
@@ -146,7 +168,9 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         if(!visible()) {wasVisible=false;return}
         if(!wasVisible) {wasVisible=true;sourceDirty=true;refreshLight()}
         owner.getLocationOnScreen(sourcePosition)
-        if(sourceDirty || sourcePosition[0]!=sourceX || sourcePosition[1]!=sourceY)owner.invalidate()
+        val scale=physicalScale()
+        if(sourceDirty || sourcePosition[0]!=sourceX || sourcePosition[1]!=sourceY ||
+            scale.first!=sourceScaleX || scale.second!=sourceScaleY)owner.invalidate()
     }
     private fun refreshLight() {
         if(!visible())return
@@ -163,11 +187,16 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
             sourceNode.setPosition(-outset,-outset,owner.width+outset,owner.height+outset)
             sourceDirty=true
         }
-        if(sourceDirty || sourceX!=sourcePosition[0] || sourceY!=sourcePosition[1]) {
+        val scale=physicalScale()
+        if(sourceDirty || sourceX!=sourcePosition[0] || sourceY!=sourcePosition[1] || scale.first!=sourceScaleX || scale.second!=sourceScaleY) {
             sourceX=sourcePosition[0];sourceY=sourcePosition[1]
+            sourceScaleX=scale.first;sourceScaleY=scale.second
             val sourceCanvas=sourceNode.beginRecording(owner.width+outset*2,owner.height+outset*2)
             try {
                 sourceCanvas.translate(outset.toFloat(),outset.toFloat())
+                // The lens grows in physical space; its scene must stay anchored to the screen.
+                // Cancel native owner/ancestor scaling only in the sample, never in its shape.
+                sourceCanvas.scale(1f/sourceScaleX,1f/sourceScaleY)
                 GlassBackdrop.draw(sourceCanvas,owner)
             } finally {sourceNode.endRecording()}
             sourceDirty=false
@@ -179,10 +208,12 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         // A pane can be drawn normally and sampled again by the fade in the same frame.
         // Reuse its GPU display list; do not traverse the Compose tree for every sample.
         if(displayListDirty || !displayList.hasDisplayList()) {
+            val firstFrame=!displayList.hasDisplayList()
             displayListDirty=false
             val recording=displayList.beginRecording(owner.width,owner.height)
             drawing=true
             try { view.draw(recording) } finally {drawing=false;displayList.endRecording()}
+            if(firstFrame)GlassBackdrop.materialChanged(owner)
         }
         canvas.drawRenderNode(displayList)
         frames++
@@ -230,6 +261,7 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         try { return view.dispatchTouchEvent(forwarded) } finally {forwardingTouch=false;forwarded.recycle()}
     }
     fun detach() {
+        renderers[owner]?.let { it.remove(this);if(it.isEmpty())renderers.remove(owner) }
         val view=host ?: return
         host=null
         sourceNode.discardDisplayList()
@@ -240,6 +272,5 @@ internal class NativeBackdropRenderer(private val owner: View, private val conte
         val root=hostRoot
         hostRoot=null
         android.os.Handler(android.os.Looper.getMainLooper()).post { if(root!=null && view.parent===root)root.removeView(view) }
-        renderers[owner]?.let { it.remove(this);if(it.isEmpty())renderers.remove(owner) }
     }
 }

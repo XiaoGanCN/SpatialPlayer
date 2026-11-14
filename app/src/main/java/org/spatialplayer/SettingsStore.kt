@@ -90,30 +90,6 @@ class SettingsStore(context: Context) {
         }
 
     /**
-     * How many embedded subtitle tracks the picker lists.
-     *
-     * A remux can carry fifty or more - the reference film has 51 - and building a row for every one
-     * of them inflates a panel nobody can read anyway. The cap keeps the common case instant and the
-     * panel navigable; the picker offers the rest behind one more tap, and whatever is currently
-     * selected is always shown regardless of where it falls in the list.
-     */
-    var subtitleTrackLimit: Int
-        get() = prefs.getInt(KEY_SUBTITLE_TRACK_LIMIT, DEFAULT_SUBTITLE_TRACK_LIMIT)
-            .coerceIn(MIN_SUBTITLE_TRACK_LIMIT, MAX_SUBTITLE_TRACK_LIMIT)
-        set(value) {
-            val clamped = value.coerceIn(MIN_SUBTITLE_TRACK_LIMIT, MAX_SUBTITLE_TRACK_LIMIT)
-            prefs.edit().putInt(KEY_SUBTITLE_TRACK_LIMIT, clamped).apply()
-        }
-
-    // ------------------------------------------------------------------ glass
-
-    /**
-     * Which glass material the chrome is drawn with: `REGULAR` or `CLEAR`.
-     *
-     * CLEAR dims what is behind the pane and lets more of it through, which is the readable choice
-     * over dark video; REGULAR is the brighter, more opaque one.
-     */
-    /**
      * Whether music keeps playing with the app in the background or the screen off.
      *
      * On by default, which is what a music player is expected to do - and the media notification is
@@ -170,7 +146,6 @@ class SettingsStore(context: Context) {
         const val KEY_VERTICAL_GAIN = "vertical_gain"
         const val KEY_SUBTITLE_SIZE = "subtitle_size_sp"
         const val KEY_SUBTITLE_POSITION = "subtitle_position"
-        const val KEY_SUBTITLE_TRACK_LIMIT = "subtitle_track_limit"
         const val KEY_UPMIX_MODE = "upmix_mode"
 
         const val KEY_UPMIX_ADVANCED = "upmix_advanced"
@@ -200,9 +175,6 @@ class SettingsStore(context: Context) {
          * Twenty is comfortably more than anyone picks from, and low enough that the panel opens
          * without a visible pause on a phone.
          */
-        const val DEFAULT_SUBTITLE_TRACK_LIMIT = 20
-        const val MIN_SUBTITLE_TRACK_LIMIT = 5
-        const val MAX_SUBTITLE_TRACK_LIMIT = 200
 
         val DEFAULT_DECODER_PROFILE: String = DecoderProfile.AUTO.name
     }

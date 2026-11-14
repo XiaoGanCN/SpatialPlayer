@@ -56,13 +56,17 @@ object GlassTheme {
         panel.alpha=0f
         panel.translationY=dp(dialog.context,28f).toFloat()
         dialog.show()
-        panel.postOnAnimation {
-            if(dialog.isShowing) {
+        val enter=object:Runnable {
+            override fun run() {
+                if(!dialog.isShowing)return
+                if(!panel.isLaidOut || panel.width==0 || panel.height==0) {panel.postOnAnimation(this);return}
+                org.spatialplayer.ui.backdrop.NativeBackdropRenderer.prepareTree(panel)
                 panel.animate().setListener(null).cancel()
                 panel.animate().alpha(1f).translationY(0f).setDuration(260L)
                     .setInterpolator(android.view.animation.PathInterpolator(.2f,.8f,.2f,1f)).start()
             }
         }
+        panel.postOnAnimation(enter)
     }
     fun configureSheet(dialog: Dialog, height: Int) {
         val window = dialog.window ?: return

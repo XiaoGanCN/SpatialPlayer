@@ -125,7 +125,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
      * "51" the first time they open a film with a lot of tracks, and every later item would list all
      * of its tracks too.
      */
-    private var subtitleLimitOverridden = false
+    private var subtitleVisibleCount = 8
 
     /** Last downmix note written to the log, so the per-tick chip rebuild does not repeat it. */
     private var lastDownmixNote: String? = null
@@ -472,7 +472,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         audioDownmixNote = null
         lastDownmixNote = null
         itemHasVideo = null
-        subtitleLimitOverridden = false
+        subtitleVisibleCount = 8
         loadChapters()
         binding.mediaTitle.text = displayName
         updateStreamChips()
@@ -616,6 +616,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
                     iconRes = R.drawable.ic_audio,
                     run = { showInspector(InspectorSheet.Panel.AUDIO) },
                 ),
+                OverflowSheet.Action("Playback",null,R.drawable.ic_play) {showInspector(InspectorSheet.Panel.PLAYBACK)},
             ),
             // The sheet covers the capsule; leaving the chrome drawn underneath shows it through the
             // translucent rows. Take it away while the sheet is up and bring it back afterwards.
@@ -878,26 +879,31 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         showControls()
     }
 
-    override fun onScrubMove(deltaFraction: Float) {
+    override fun onScrubMove(deltaMs: Long) {
         val duration = lastSample.durationMs
         if (duration <= 0) return
         // Duration is a Long; promote to Double for the fraction maths, then clamp as a Long.
-        val target = (scrubAnchorMs + (duration.toDouble() * deltaFraction.toDouble()).toLong())
+        val target = (scrubAnchorMs + deltaMs)
             .coerceIn(0L, duration)
         scrubTargetMs = target
+        showFeedback("${TextSpans.offset(target-scrubAnchorMs)}  ·  ${TextSpans.timecode(target)}")
         binding.timeCurrent.text = TextSpans.timecode(target)
         binding.seekBar.forceProgress((target.toFloat() / duration).coerceIn(0f, 1f))
     }
 
-    override fun onScrubStop(deltaFraction: Float) {
+    override fun onScrubStop(deltaMs: Long) {
         val duration = engine.player?.duration ?: 0L
         if (duration > 0) {
-            val target = (scrubAnchorMs + (duration.toDouble() * deltaFraction.toDouble()).toLong())
+            val target = (scrubAnchorMs + deltaMs)
                 .coerceIn(0L, duration)
             engine.player?.seekTo(target)
             binding.seekBar.forceProgress((target.toFloat() / duration).coerceIn(0f, 1f))
         }
         isScrubbing = false
+        showControlsTemporarily()
+    }
+    override fun onScrubCancel() {
+        isScrubbing=false
         showControlsTemporarily()
     }
 
@@ -1438,7 +1444,6 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun updateDuration() {
         val duration = engine.player?.duration ?: 0L
         if (duration > 0) {
-            gestures.setDuration(duration)
             binding.timeRemaining.text = "-" + TextSpans.timecode(duration)
         }
     }
@@ -1523,10 +1528,10 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
         panels.populateAudioPanel(engine, mediaTracks)
 
     private fun populateSubtitlePanel() =
-        panels.populateSubtitlePanel(mediaTracks, subtitleLimitOverridden, subtitleSizeSp, subtitlePositionFraction)
+        panels.populateSubtitlePanel(mediaTracks, subtitleVisibleCount, subtitleSizeSp, subtitlePositionFraction)
 
     private fun populateScalingPanel() =
-        panels.populateScalingPanel(scaleMode, ambientEnabled, doubleTapJumpMs)
+        panels.populateScalingPanel(scaleMode)
 
     /**
      * Opens a panel with the chrome taken away.
@@ -1754,6 +1759,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             InspectorSheet.Panel.SUBTITLES -> populateSubtitlePanel()
             InspectorSheet.Panel.AUDIO -> populateAudioPanel()
             InspectorSheet.Panel.SCALING -> populateScalingPanel()
+            InspectorSheet.Panel.PLAYBACK -> panels.populatePlaybackPanel(ambientEnabled,doubleTapJumpMs)
             InspectorSheet.Panel.SPEED -> populateSpeedPanel()
             InspectorSheet.Panel.CHAPTERS -> populateChaptersPanel()
             // Inspection and Metadata render from `onReadoutRequested`, so there is nothing to push.
@@ -1808,7 +1814,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
             InspectorSheet.Panel.AUDIO -> handleAudioChoice(choice)
             InspectorSheet.Panel.SUBTITLES -> handleSubtitleChoice(choice)
-            InspectorSheet.Panel.SCALING -> handleScalingChoice(choice)
+            InspectorSheet.Panel.SCALING, InspectorSheet.Panel.PLAYBACK -> handleScalingChoice(choice)
             InspectorSheet.Panel.SPEED -> handleSpeedChoice(choice)
             InspectorSheet.Panel.CHAPTERS -> handleChapterChoice(choice)
             else -> Unit
@@ -1877,7 +1883,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
 
         when {
             choice.value == VALUE_TEXT_SHOW_ALL -> {
-                subtitleLimitOverridden = true
+                subtitleVisibleCount += 8
                 populateSubtitlePanel()
                 return
             }
@@ -1911,7 +1917,7 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
     private fun handleScalingChoice(choice: InspectorSheet.Choice) {
         // Slider rows report a numeric reading rather than an action token, so they are matched on
         // their title before the value-based cases below.
-        if (choice.range != null && choice.title == getString(R.string.double_tap_jump)) {
+        if (choice.range != null && choice.panel == InspectorSheet.Panel.PLAYBACK) {
             val ms = (choice.value.toFloatOrNull() ?: 10f) * 1000f
             doubleTapJumpMs = ms.toLong()
             return
@@ -1938,7 +1944,8 @@ class PlayerActivity : AppCompatActivity(), PlayerEngine.Listener, InspectorShee
             }
         }
         startAmbientSampling()
-        populateScalingPanel()
+        if(inspectorSheet.shownPanel==InspectorSheet.Panel.PLAYBACK)panels.populatePlaybackPanel(ambientEnabled,doubleTapJumpMs)
+        else populateScalingPanel()
     }
 
     /**

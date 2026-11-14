@@ -198,17 +198,7 @@ class SettingsActivity : AppCompatActivity() {
             ) { settings.doubleTapJumpMs = (it * 1000f).toLong() },
         )
 
-        column.addView(
-            sliderRow(
-                title = getString(R.string.settings_subtitle_tracks),
-                from = SettingsStore.MIN_SUBTITLE_TRACK_LIMIT.toFloat(),
-                to = SettingsStore.MAX_SUBTITLE_TRACK_LIMIT.toFloat(),
-                step = 1f,
-                value = settings.subtitleTrackLimit.toFloat(),
-                reading = { getString(R.string.settings_tracks, it.toInt()) },
-                default = SettingsStore.DEFAULT_SUBTITLE_TRACK_LIMIT.toFloat(),
-            ) { settings.subtitleTrackLimit = it.toInt() },
-        )
+
     }
 
     private fun showUpmixEditor() {
@@ -479,12 +469,7 @@ class SettingsActivity : AppCompatActivity() {
             ) { settings.verticalGain = it },
         )
 
-        column.addView(
-            infoRow(
-                getString(R.string.double_tap_jump),
-                "Left half seeks back, right half forward; the capsule's skip buttons match",
-            ),
-        )
+
     }
 
     private fun buildDevice(column: LinearLayout) {
@@ -554,7 +539,6 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("profile: ${settings.decoderProfile}")
             appendLine("jump: ${settings.doubleTapJumpMs} ms")
             appendLine("vertical gain: ${settings.verticalGain}")
-            appendLine("subtitle cap: ${settings.subtitleTrackLimit}")
         }
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Spatial Player", report))

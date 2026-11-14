@@ -34,7 +34,11 @@ def main():
         before=s['haptics'];x=str(s['width']//2);adb('shell','input','swipe',x,'1800',x,'850','400');s=snap('LIBRARY')
         verify(s['haptics']==before,'scrolling the media list is silent')
         ui.shot('library.png');tap(s['views']['buttonSettings']['bounds']);time.sleep(.6);s=snap('SETTINGS')
-        verify(sum(n['kind']=='GlassSwitch' for n in s['nodes'])>=3 and sum(n['kind']=='GlassSlider' for n in s['nodes'])>=3,'production settings retain native accessible switch/slider contracts')
+        # Subtitle pagination replaced its obsolete track-count slider. The two remaining
+        # settings sliders must still be real native controls, not painted replicas.
+        verify(sum(n['kind']=='GlassSwitch' for n in s['nodes'])>=3 and sum(n['kind']=='GlassSlider' for n in s['nodes'])==2 and
+            {'settings_row:Skip and double-tap length','settings_row:Drag sensitivity'} <= {n.get('tag') for n in s['nodes']},
+            'production settings retain native switches and the two remaining accessible sliders')
         switch=next(n for n in s['nodes'] if n['kind']=='GlassSwitch');b=switch['bounds'];density=s['width']/418
         x=b[0]+density*(13 if spatial else 67);y=(b[1]+b[3])/2
         tap([x,y,x,y]);changed=snap('SETTINGS')

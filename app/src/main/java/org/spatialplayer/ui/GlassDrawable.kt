@@ -24,6 +24,7 @@ class GlassDrawable(private val owner:View,material:GlassStyle=GlassStyle()):Dra
     private val motion=GlassPressMotion(owner)
     private val renderer=NativeBackdropRenderer(owner) {backdrop->BackdropSurface(backdrop,materialState.value,pressed.value,owner.resources.displayMetrics.density,touch.value,owner.isClickable)}
     internal var renderedFrames=0L;private set
+    internal var fallbackFrames=0L;private set
     var radiusPx=material.cornerRadiusPx
     var style:GlassStyle=material
         set(value){if(field==value)return;field=value;materialState.value=value;radiusPx=value.cornerRadiusPx;GlassBackdrop.materialChanged(owner);invalidateSelf()}
@@ -40,6 +41,14 @@ class GlassDrawable(private val owner:View,material:GlassStyle=GlassStyle()):Dra
         if(bounds.isEmpty)return
         if(canvas.isHardwareAccelerated && GlassBackdrop.snapshotting && renderer.drawCached(canvas))return
         if(canvas.isHardwareAccelerated && !GlassBackdrop.capturing && !GlassBackdrop.snapshotting && renderer.draw(canvas)){renderedFrames++;return}
+        if(canvas.isHardwareAccelerated && !GlassBackdrop.capturing && !GlassBackdrop.snapshotting) {
+            // Android may record alpha-zero staged children before they are published. Count only
+            // exposed fallback paint, not that intentionally hidden preparation work.
+            var ancestor:View?=owner
+            var exposed=owner.isShown && owner.windowVisibility==View.VISIBLE
+            while(ancestor!=null && exposed) {exposed=ancestor.alpha>.001f;ancestor=ancestor.parent as? View}
+            if(exposed)fallbackFrames++
+        }
         fallbackPaint.color=style.fallbackFill
         if(path.isEmpty || pathRadius!=radiusPx) {
             SmoothCorners.path(rect,radiusPx,path)
